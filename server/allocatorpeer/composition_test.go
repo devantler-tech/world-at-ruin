@@ -14,7 +14,7 @@ import (
 
 const packagePath = "github.com/devantler-tech/world-at-ruin/server/allocatorpeer"
 
-// Examine every production Go source; require real entrypoints so the walk
+// uncomposed examines every production Go source; require real entrypoints so the walk
 // cannot silently succeed from an empty or wrong working directory.
 func uncomposed(root string) error {
 	required := map[string]bool{"cmd/zone/main.go": false, "cmd/nakama/main.go": false, "nakamaruntime/module.go": false, "agonesresources/adapter.go": false}
@@ -55,6 +55,7 @@ func uncomposed(root string) error {
 	return nil
 }
 
+// rejectComposition parses imports so aliases and escaped literals cannot hide activation.
 func rejectComposition(data []byte) error {
 	source, err := parser.ParseFile(token.NewFileSet(), "composition.go", data, parser.ImportsOnly)
 	if err != nil {
@@ -72,12 +73,14 @@ func rejectComposition(data []byte) error {
 	return nil
 }
 
+// TestProductionDoesNotActivatePeerTransport checks actual production sources and entrypoints.
 func TestProductionDoesNotActivatePeerTransport(t *testing.T) {
 	if err := uncomposed(".."); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// TestCompositionGuardControls rejects activated imports and vacuous directory walks.
 func TestCompositionGuardControls(t *testing.T) {
 	if err := uncomposed(t.TempDir()); err == nil {
 		t.Fatal("empty production walk passed")

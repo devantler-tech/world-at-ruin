@@ -45,11 +45,19 @@ type nativeAllocator struct {
 
 type observedServerTLS struct {
 	credentials.TransportCredentials
-	errors chan error
+	errors      chan error
+	connections chan net.Conn
 }
 
+// ServerHandshake records the native authentication result and authenticated socket.
 func (s observedServerTLS) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
 	connection, info, err := s.TransportCredentials.ServerHandshake(raw)
+	if err == nil {
+		select {
+		case s.connections <- raw:
+		default:
+		}
+	}
 	select {
 	case s.errors <- err:
 	default:
@@ -57,11 +65,13 @@ func (s observedServerTLS) ServerHandshake(raw net.Conn) (net.Conn, credentials.
 	return connection, info, err
 }
 
+// Allocate counts actual generated RPC handler entries before applying the test effect.
 func (s *nativeAllocator) Allocate(ctx context.Context, req *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
 	s.calls.Add(1)
 	return s.handle(ctx, req)
 }
 
+// responseFor returns valid sealed metadata bound to the received allocation request.
 func responseFor(req *allocationpb.AllocationRequest) *allocationpb.AllocationResponse {
 	fingerprint := strings.Repeat("a", 52)
 	return &allocationpb.AllocationResponse{GameServerName: "zone-17", Ports: []*allocationpb.AllocationResponse_GameServerStatusPort{{Name: "tls", Port: 8443}},
@@ -81,10 +91,11 @@ type nativeFixture struct {
 	handshakeStarted chan struct{}
 	resumeHandshake  chan struct{}
 	authentication   chan error
+	connections      chan net.Conn
 	reads            int
 }
 
-// Use a real private non-loopback interface so the production address guard is
+// privateListener uses a real private non-loopback interface so the address guard is
 // exercised without test exceptions. No address or topology is reported.
 func privateListener(t *testing.T) net.Listener {
 	t.Helper()
@@ -120,6 +131,7 @@ func privateListener(t *testing.T) net.Listener {
 	return nil
 }
 
+// fixture composes real generation decoding, typed HTTPS discovery and native mutual TLS.
 func fixture(t *testing.T, scenario string) *nativeFixture {
 	t.Helper()
 	f := &nativeFixture{config: baseConfig(t), storage: nakamastoragetest.New()}
@@ -189,7 +201,8 @@ func fixture(t *testing.T, scenario string) *nativeFixture {
 		return responseFor(request), nil
 	}}
 	f.authentication = make(chan error, 16)
-	server := grpc.NewServer(grpc.Creds(observedServerTLS{TransportCredentials: credentials.NewTLS(tlsConfig), errors: f.authentication}))
+	f.connections = make(chan net.Conn, 16)
+	server := grpc.NewServer(grpc.Creds(observedServerTLS{TransportCredentials: credentials.NewTLS(tlsConfig), errors: f.authentication, connections: f.connections}))
 	allocationpb.RegisterAllocationServiceServer(server, f.allocator)
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.Serve(listener) }()
@@ -248,6 +261,7 @@ func fixture(t *testing.T, scenario string) *nativeFixture {
 	return f
 }
 
+// newClient requires fixture construction to pass the production constructor.
 func (f *nativeFixture) newClient(t *testing.T) *Client {
 	t.Helper()
 	client, err := NewClient(f.sources, f.config)
@@ -256,10 +270,13 @@ func (f *nativeFixture) newClient(t *testing.T) *Client {
 	}
 	return client
 }
+
+// allocationRequest supplies bounded opaque correlation values without player data.
 func allocationRequest() agonesalloc.Request {
 	return agonesalloc.Request{ReservationID: "reservation-1", AttemptID: "attempt-1", LeaseObjectID: strings.Repeat("0", 64)}
 }
 
+// TestNativeCompositionAndOwnedInputs observes allocation after mutating caller-owned inputs.
 func TestNativeCompositionAndOwnedInputs(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	t.Setenv("ALL_PROXY", "http://127.0.0.1:1")
@@ -286,6 +303,7 @@ func TestNativeCompositionAndOwnedInputs(t *testing.T) {
 	}
 }
 
+// TestNativeCertificateRefusals requires native TLS verdicts beside a successful control.
 func TestNativeCertificateRefusals(t *testing.T) {
 	control := fixture(t, "")
 	if _, err := control.newClient(t).Reserve(t.Context(), allocationRequest()); err != nil || control.allocator.calls.Load() != 1 {
@@ -315,8 +333,44 @@ func TestNativeCertificateRefusals(t *testing.T) {
 	}
 }
 
+// TestNativeConnectionLossAfterEffectDoesNotReplay drops TCP while the allocator remains available.
+func TestNativeConnectionLossAfterEffectDoesNotReplay(t *testing.T) {
+	control := fixture(t, "")
+	if _, err := control.newClient(t).Reserve(t.Context(), allocationRequest()); err != nil || control.allocator.calls.Load() != 1 {
+		t.Fatalf("native positive control failed: %v", err)
+	}
+	f := fixture(t, "")
+	effects := atomic.Int32{}
+	closed := make(chan error, 16)
+	f.allocator.handle = func(_ context.Context, req *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
+		effects.Add(1)
+		select {
+		case connection := <-f.connections:
+			// Keep the listener and handler available: a replay can reconnect and
+			// repeat the effect, so stopping the service cannot hide one.
+			closed <- connection.Close()
+		default:
+			closed <- errors.New("missing authenticated socket")
+		}
+		return responseFor(req), nil
+	}
+	result, err := f.newClient(t).Reserve(t.Context(), allocationRequest())
+	if !errors.Is(err, ErrUncertain) || result != (Result{}) || effects.Load() != 1 || f.allocator.calls.Load() != 1 {
+		t.Fatalf("native response loss repeated or hid an allocation: err=%v effects=%d calls=%d", err, effects.Load(), f.allocator.calls.Load())
+	}
+	select {
+	case closeErr := <-closed:
+		if closeErr != nil {
+			t.Fatal("native socket was not closed after the effect")
+		}
+	default:
+		t.Fatal("no native connection-loss observation")
+	}
+}
+
+// TestNativeResponsesStayUncertainWithoutRetry observes errors and effects after caller return.
 func TestNativeResponsesStayUncertainWithoutRetry(t *testing.T) {
-	for _, scenario := range []string{"lost response", "unallocated", "malformed", "deadline", "cancel"} {
+	for _, scenario := range []string{"lost response", "unallocated", "malformed", "deadline", "cancel", "remote deadline", "remote cancel"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := fixture(t, "")
 			effects := atomic.Int32{}
@@ -346,12 +400,19 @@ func TestNativeResponsesStayUncertainWithoutRetry(t *testing.T) {
 					return r, nil
 				case "cancel", "deadline":
 					return nil, callCtx.Err()
+				case "remote deadline":
+					return nil, status.Error(codes.DeadlineExceeded, "private upstream deadline")
+				case "remote cancel":
+					return nil, status.Error(codes.Canceled, "private upstream cancellation")
 				default:
 					panic("unknown test scenario")
 				}
 			}
 			if scenario == "deadline" {
 				f.config.Timeout = 200 * time.Millisecond
+			}
+			if strings.HasPrefix(scenario, "remote ") {
+				f.config.Timeout = 10 * time.Second
 			}
 			client := f.newClient(t)
 			type outcome struct {
@@ -387,11 +448,14 @@ func TestNativeResponsesStayUncertainWithoutRetry(t *testing.T) {
 			if !errors.Is(err, ErrUncertain) || errors.Is(err, agonesalloc.ErrUnallocated) || result != (Result{}) || f.allocator.calls.Load() != 1 || effects.Load() != 1 || strings.Contains(err.Error(), "private upstream") {
 				t.Fatalf("unsafe outcome: %v calls=%d effects=%d", err, f.allocator.calls.Load(), effects.Load())
 			}
-			if scenario == "deadline" && !errors.Is(err, context.DeadlineExceeded) {
+			if (scenario == "deadline" || scenario == "remote deadline") && !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("lost deadline: %v", err)
 			}
-			if scenario == "cancel" && !errors.Is(err, context.Canceled) {
+			if (scenario == "cancel" || scenario == "remote cancel") && !errors.Is(err, context.Canceled) {
 				t.Fatalf("lost cancellation: %v", err)
+			}
+			if strings.HasPrefix(scenario, "remote ") && ctx.Err() != nil {
+				t.Fatal("remote interruption control canceled the caller context")
 			}
 		})
 	}
@@ -402,12 +466,14 @@ type afterDiscovery struct {
 	after func()
 }
 
+// Discover changes storage after a complete discovery result to probe the final source read.
 func (s afterDiscovery) Discover(ctx context.Context) (allocatordiscovery.Snapshot, error) {
 	snapshot, err := s.next.Discover(ctx)
 	s.after()
 	return snapshot, err
 }
 
+// TestNativeChangesBeforeRPCAndNextOperation refuses stale versions and alternate endpoints.
 func TestNativeChangesBeforeRPCAndNextOperation(t *testing.T) {
 	for _, scenario := range []string{"generation after discovery", "readiness after connect", "generation next operation", "no alternate endpoint"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -469,6 +535,7 @@ func TestNativeChangesBeforeRPCAndNextOperation(t *testing.T) {
 	}
 }
 
+// TestNativeObservationChangeDuringPausedHandshake proves readiness cannot preserve a stale join.
 func TestNativeObservationChangeDuringPausedHandshake(t *testing.T) {
 	for _, change := range []string{"generation", "readiness"} {
 		t.Run(change, func(t *testing.T) {

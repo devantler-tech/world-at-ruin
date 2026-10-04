@@ -30,6 +30,7 @@ type generationSource struct {
 	err    error
 }
 
+// Load records the requested generation and returns the injected source observation.
 func (s *generationSource) Load(_ context.Context, id string) (nakamageneration.Record, error) {
 	s.loads++
 	if id != s.record.GenerationID {
@@ -44,11 +45,13 @@ type discoverySource struct {
 	err      error
 }
 
+// Discover counts whether validation allowed the discovery boundary to run.
 func (s *discoverySource) Discover(context.Context) (allocatordiscovery.Snapshot, error) {
 	s.reads++
 	return s.snapshot, s.err
 }
 
+// recordFor constructs canonical record fields and their matching membership digest.
 func recordFor(t *testing.T, members ...string) nakamageneration.Record {
 	t.Helper()
 	slices.Sort(members)
@@ -60,15 +63,18 @@ func recordFor(t *testing.T, members ...string) nakamageneration.Record {
 	return nakamageneration.Record{GenerationID: "generation-1", MemberPodUIDs: members, MemberSetDigest: hex.EncodeToString(digest[:]), State: "open", Version: "version-1"}
 }
 
+// member supplies one ready actor and eligible literal endpoint for join controls.
 func member(uid, name, address string, port uint16) allocatordiscovery.Member {
 	return allocatordiscovery.Member{Identity: allocatordiscovery.Identity{Namespace: "allocators", Name: name, UID: uid}, ResourceVersion: "pod-1", Phase: corev1.PodRunning, Ready: corev1.ConditionTrue,
 		Endpoints: []allocatordiscovery.Endpoint{{Address: netip.MustParseAddr(address), Port: port, Ready: corev1.ConditionTrue, Serving: corev1.ConditionTrue, Terminating: corev1.ConditionFalse}}}
 }
 
+// snapshotFor provides complete list-version observations for the supplied member set.
 func snapshotFor(members ...allocatordiscovery.Member) allocatordiscovery.Snapshot {
 	return allocatordiscovery.Snapshot{PodResourceVersion: "pods-1", EndpointSliceResourceVersion: "slices-1", Members: members}
 }
 
+// baseConfig builds valid owned credentials and explicit transport opt-in for controls.
 func baseConfig(t *testing.T) Config {
 	t.Helper()
 	ca, caKey := certificate(t, nil, nil, "root", true, false, false)
@@ -83,6 +89,7 @@ func baseConfig(t *testing.T) Config {
 		Allocation:  agonesalloc.Config{Namespace: "zones", Fleet: "zone", TLSPortName: "tls", WrappingKeyFingerprint: strings.Repeat("a", 52)}, Timeout: 500 * time.Millisecond}
 }
 
+// certificate creates a private issuer, client or server identity for native TLS controls.
 func certificate(t *testing.T, parent *x509.Certificate, signer *ecdsa.PrivateKey, name string, ca, client, expired bool) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -121,6 +128,7 @@ func certificate(t *testing.T, parent *x509.Certificate, signer *ecdsa.PrivateKe
 	return cert, key
 }
 
+// TestDisabledHasNoSourceAccess pins inert construction before any reader can run.
 func TestDisabledHasNoSourceAccess(t *testing.T) {
 	_, err := NewClient(Sources{}, Config{})
 	if !errors.Is(err, ErrDisabled) {
@@ -128,6 +136,7 @@ func TestDisabledHasNoSourceAccess(t *testing.T) {
 	}
 }
 
+// TestInvalidConfiguration refuses malformed, incomplete or shared security identities.
 func TestInvalidConfiguration(t *testing.T) {
 	cases := map[string]func(*Config){
 		"missing member":      func(c *Config) { delete(c.Peers, "uid-b") },
@@ -175,6 +184,7 @@ func TestInvalidConfiguration(t *testing.T) {
 	}
 }
 
+// TestSelectionRejectsIncompleteObservations checks complete membership, versions and sockets.
 func TestSelectionRejectsIncompleteObservations(t *testing.T) {
 	cases := map[string]func(*allocatordiscovery.Snapshot){
 		"missing":        func(s *allocatordiscovery.Snapshot) { s.Members = s.Members[:1] },
@@ -211,6 +221,7 @@ func TestSelectionRejectsIncompleteObservations(t *testing.T) {
 	}
 }
 
+// TestDeterministicSelectedUIDAndIPv6 pins actor selection and literal IPv6 formatting.
 func TestDeterministicSelectedUIDAndIPv6(t *testing.T) {
 	cfg := baseConfig(t)
 	a := member("uid-a", "a", "2001:db8::2", 6000)
@@ -229,6 +240,7 @@ func TestDeterministicSelectedUIDAndIPv6(t *testing.T) {
 	}
 }
 
+// TestGenerationRefusalPrecedesDiscovery prevents a stale generation from reaching discovery.
 func TestGenerationRefusalPrecedesDiscovery(t *testing.T) {
 	cfg := baseConfig(t)
 	g := &generationSource{record: cfg.Record}

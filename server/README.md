@@ -582,8 +582,12 @@ empty-pool answer, malformed response, cancellation or lost response.
 
 Bindings are observations. They do not authorize native commit fencing,
 quarantine release or durable incarnation recovery. Configured retries are
-disabled, but gRPC's pre-commit transparent retries remain possible; this is
-not an at-most-once guarantee. See [ADR 0018](../docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md).
+disabled and the zero replay buffer commits this pinned unary request before
+reading its response. Native connection loss after an effect causes one uncertain
+return and no repeated handler, with the listener still available for reconnection.
+Transparent retries can occur during stream creation before request DATA; this
+does not guarantee at-most-once execution across separate operations or restarts.
+See [ADR 0018](../docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md).
 Production commit-boundary work in #793 and provider evaluation in #569 remain
 open. No persisted schema, collection, writer or runtime activation changes.
 

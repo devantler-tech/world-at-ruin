@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 )
 
+// staticTLS parses bounded owned credentials and preserves ordinary TLS 1.3 verification.
 func staticTLS(input Credentials) (*tls.Config, error) {
 	if len(input.RootDER) == 0 || len(input.RootDER) > 16 || len(input.CertificateDER) == 0 || len(input.CertificateDER) > 8 || len(input.PrivateKeyDER) == 0 || len(input.PrivateKeyDER) > 16384 {
 		return nil, ErrInvalidArgument
@@ -52,6 +53,7 @@ func staticTLS(input Credentials) (*tls.Config, error) {
 	return &tls.Config{RootCAs: roots, Certificates: []tls.Certificate{{Certificate: chain, PrivateKey: privateKey, Leaf: leaf}}, MinVersion: tls.VersionTLS13}, nil
 }
 
+// verifyPeer checks the selected key only after normal chain and hostname verification.
 func verifyPeer(expected [32]byte) func(tls.ConnectionState) error {
 	return func(state tls.ConnectionState) error {
 		if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 || sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo) != expected {

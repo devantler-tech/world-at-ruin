@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// nilSource also rejects typed nil readers before any operation can call them.
 func nilSource(value any) bool {
 	if value == nil {
 		return true
@@ -27,6 +28,7 @@ func nilSource(value any) bool {
 	return false
 }
 
+// validConfig requires a complete distinct peer map and bounded transport and allocation inputs.
 func validConfig(cfg Config) bool {
 	if !validGeneration(cfg.Record) || !handoffidentity.DNSLabel(cfg.AllocatorNamespace) || cfg.Timeout < 0 || cfg.Timeout > 30*time.Second || len(cfg.Peers) != len(cfg.Record.MemberPodUIDs) {
 		return false
@@ -45,6 +47,7 @@ func validConfig(cfg Config) bool {
 	return selected && handoffidentity.DNSLabel(a.Namespace) && len(a.Fleet) <= 63 && handoffidentity.DNSSubdomain(a.Fleet) && handoffidentity.DNSLabel(a.TLSPortName) && handoffidentity.Fingerprint(a.WrappingKeyFingerprint)
 }
 
+// validGeneration checks canonical membership and the store's domain-separated digest.
 func validGeneration(record nakamageneration.Record) bool {
 	if !handoffidentity.OpaqueUTF8(record.GenerationID, 128) || !handoffidentity.OpaqueUTF8(record.Version, 1024) || record.Version == "*" || record.State != "open" || len(record.MemberPodUIDs) == 0 || len(record.MemberPodUIDs) > 256 {
 		return false
@@ -62,10 +65,12 @@ func validGeneration(record nakamageneration.Record) bool {
 	return record.MemberSetDigest == hex.EncodeToString(digest[:])
 }
 
+// sameGeneration binds the complete open record to its exact private storage version.
 func sameGeneration(got, want nakamageneration.Record) bool {
 	return validGeneration(got) && got.GenerationID == want.GenerationID && got.Version == want.Version && got.State == want.State && got.MemberSetDigest == want.MemberSetDigest && slices.Equal(got.MemberPodUIDs, want.MemberPodUIDs)
 }
 
+// selectBinding validates the complete join and deterministically chooses the selected actor's socket.
 func selectBinding(cfg Config, snapshot allocatordiscovery.Snapshot) (Binding, error) {
 	if !handoffidentity.OpaqueUTF8(snapshot.PodResourceVersion, 1024) || !handoffidentity.OpaqueUTF8(snapshot.EndpointSliceResourceVersion, 1024) || len(snapshot.Members) != len(cfg.Record.MemberPodUIDs) {
 		return Binding{}, ErrObservation
@@ -117,6 +122,7 @@ func selectBinding(cfg Config, snapshot allocatordiscovery.Snapshot) (Binding, e
 	return Binding{GenerationID: cfg.Record.GenerationID, SourceVersion: cfg.Record.Version, MemberSetDigest: cfg.Record.MemberSetDigest, ActorUID: cfg.ActorUID, PodName: selected.Identity.Name, PodResourceVersion: selected.ResourceVersion, PodListResourceVersion: snapshot.PodResourceVersion, EndpointSliceResourceVersion: snapshot.EndpointSliceResourceVersion, Address: netip.AddrPortFrom(endpoints[0].Address, endpoints[0].Port), ServerName: cfg.Peers[cfg.ActorUID].ServerName}, nil
 }
 
+// condition refuses values outside Kubernetes's three-valued condition vocabulary.
 func condition(value corev1.ConditionStatus) bool {
 	return value == corev1.ConditionTrue || value == corev1.ConditionFalse || value == corev1.ConditionUnknown
 }
