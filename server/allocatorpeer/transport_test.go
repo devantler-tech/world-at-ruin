@@ -363,7 +363,7 @@ func TestNativeConnectionLossAfterEffectDoesNotReplay(t *testing.T) {
 		if closeErr != nil {
 			t.Fatal("native socket was not closed after the effect")
 		}
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("no native connection-loss observation")
 	}
 }

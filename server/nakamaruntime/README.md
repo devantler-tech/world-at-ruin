@@ -96,8 +96,13 @@ certificates in either direction, and the server key is not a workload root.
 Initialization reserves the socket before registering `war_handoff` and begins
 serving only after shutdown registration succeeds. Every initialization failure
 releases the listener and acquired transports. The listener is HTTPS only,
-requires verified workload certificates and serves only the existing `/v1/claim`
-contract. Claim and session-end operations are never registered as public RPCs.
+requires verified workload certificates and serves `/v1/claim` (empty admission
+acknowledgement) and `/v2/claim` (the original durable claim receipt). The zone
+command uses v1; receipt-aware admission requires explicit source composition.
+The separately constructed session-end handler is not registered on this listener
+or on a public RPC. It requires independent, irreversible termination authority
+as well as verified workload identity; no production verifier is supplied. See
+[ADR 0020](../../docs/adr/0020-retain-exact-claim-receipts-for-private-completion.md).
 
 The listener permits at most 64 connected clients, uses HTTP/1.1 without stream
 multiplexing, sets an 8 KiB header limit (plus the HTTP server's framing allowance),
