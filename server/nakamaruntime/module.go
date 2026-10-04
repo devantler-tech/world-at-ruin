@@ -16,6 +16,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/handoffalloc"
 	"github.com/devantler-tech/world-at-ruin/server/nakamaauth"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"github.com/devantler-tech/world-at-ruin/server/orphanreaper"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/heroiclabs/nakama-common/runtime"
 	"google.golang.org/grpc/codes"
@@ -36,14 +37,21 @@ type dependencies struct {
 }
 type connector func(config) (dependencies, error)
 
-// Initialize registers the opt-in handoff RPC, expiry reconciler and optional
-// private claim listener under one shutdown-owned lifetime. Deployment values
+// Initialize registers the opt-in handoff RPC, expiry reconciler, optional
+// orphan worker and private claim listener under one shutdown-owned lifetime. Deployment values
 // come only from Nakama's runtime.env context.
 func Initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	return initialize(ctx, nk, initializer, connectRuntime)
 }
 
-func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer, connect connector) error {
+// InitializeWithLogger supplies the native plugin's logger for aggregate orphan
+// outcomes. Logging carries no resource or player identity and does not activate
+// the module or orphan worker without their independent runtime.env flags.
+func InitializeWithLogger(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, initializer runtime.Initializer) error {
+	return initialize(ctx, nk, initializer, connectRuntime, logger)
+}
+
+func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer, connect connector, loggers ...runtime.Logger) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
 	cfg, err := readConfig(env)
 	if err != nil || !cfg.enabled {
@@ -51,6 +59,10 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	}
 	if nk == nil || initializer == nil {
 		return errors.New("nakama handoff: runtime dependencies required")
+	}
+	var logger runtime.Logger
+	if len(loggers) != 0 {
+		logger = loggers[0]
 	}
 	deps, err := connect(cfg)
 	if err != nil {
@@ -64,7 +76,7 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 			}
 		})
 	}
-	service, coordinator, claim, err := compose(cfg, nk, deps)
+	service, coordinator, claim, orphans, err := compose(cfg, nk, deps)
 	if err != nil {
 		closeDependencies()
 		return errors.New("nakama handoff: compose dependencies")
@@ -82,6 +94,7 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	}
 	rollback := func() {
 		cancel()
+		close(done) // No worker is launched until registration succeeds.
 		if private != nil {
 			_ = private.listener.Close()
 		}
@@ -99,15 +112,27 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 			defer stop()
 			private.stop(shutdownCtx)
 		}
-		drain(shutdownCtx, cancel, handlers, done)
-		closeDependencies()
+		finished := drain(shutdownCtx, cancel, handlers, done)
+		select {
+		case <-finished:
+			closeDependencies()
+		default:
+			// A bounded hook may return before a slow transport honours
+			// cancellation. Retirement remains owned by the actual drain.
+			go func() { <-finished; closeDependencies() }()
+		}
 	}); err != nil {
 		rollback()
 		return errors.New("nakama handoff: register shutdown")
 	}
 	go func() {
 		defer close(done)
-		_ = coordinator.RunExpiryReconciler(life) // Returns only on lifecycle cancellation.
+		var workers sync.WaitGroup
+		workers.Go(func() { _ = coordinator.RunExpiryReconciler(life) })
+		if orphans != nil {
+			workers.Go(func() { _ = orphans.Run(life, orphanObservation(logger)) })
+		}
+		workers.Wait()
 	}()
 	if private != nil {
 		private.start(cancel)
@@ -115,22 +140,22 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	return nil
 }
 
-func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.Service, *handoffalloc.Coordinator, http.Handler, error) {
+func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.Service, *handoffalloc.Coordinator, http.Handler, *orphanreaper.Reconciler, error) {
 	keyring, err := admissionref.NewKeyring(deps.keys...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	fingerprint, err := admissionref.Fingerprint(&deps.keys[0].PublicKey)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	allocator, err := agonesalloc.NewClient(deps.allocator, agonesalloc.Config{Namespace: cfg.namespace, Fleet: cfg.fleet, TLSPortName: cfg.tlsPort, WrappingKeyFingerprint: fingerprint})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	resources, err := gameserverapi.NewClient(deps.resources, gameserverapi.Config{Namespace: cfg.namespace, Fleet: cfg.fleet, TLSPortName: cfg.tlsPort})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	adapter, err := agonesresources.NewAdapter(allocator, resources, keyring, agonesresources.Config{
 		ZoneDomain: cfg.zoneDomain,
@@ -140,25 +165,34 @@ func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.S
 		Observer: func(handoff.AllocationRequest) (sim.EntityID, error) { return 1, nil },
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	leases, err := nakamalease.NewStore(nk)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	coordinator, err := handoffalloc.NewCoordinator(adapter, leases, handoffalloc.Config{LeaseTTL: cfg.leaseTTL})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
+	}
+	var orphans *orphanreaper.Reconciler
+	if cfg.orphans.enabled {
+		settings := cfg.orphans.settings
+		settings.Namespace, settings.Fleet = cfg.namespace, cfg.fleet
+		orphans, err = orphanreaper.New(deps.resources, leases, settings)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
 	}
 	var claim http.Handler
 	if cfg.claims.enabled {
 		claim, err = claimrpc.NewHandler(leases, adapter, claimrpc.Config{Namespace: cfg.namespace, TrustDomain: cfg.claims.trustDomain, Timeout: 5 * time.Second})
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
 	service, err := handoff.NewService(nakamaauth.NewRuntimeVerifier(nk), coordinator, handoff.Config{ZoneDomain: cfg.zoneDomain})
-	return service, coordinator, claim, err
+	return service, coordinator, claim, orphans, err
 }
 
 // handlerGate admits public and private handlers until shutdown closes it, then reports when
@@ -197,18 +231,23 @@ func (g *handlerGate) close() <-chan struct{} {
 	return idle
 }
 
-// drain stops the module lifecycle, then waits within shutdownCtx for the
-// expiry reconciler and every in-flight handler before dependencies close.
-func drain(shutdownCtx context.Context, cancel context.CancelFunc, handlers *handlerGate, reconciler <-chan struct{}) {
+// drain stops admission and the module lifecycle. Its returned channel proves
+// both workers and all admitted handlers actually returned, even when the hook's
+// deadline ends its synchronous wait. Only that completion permits retirement.
+func drain(shutdownCtx context.Context, cancel context.CancelFunc, handlers *handlerGate, reconciler <-chan struct{}) <-chan struct{} {
 	idle := handlers.close()
 	cancel()
-	for _, finished := range []<-chan struct{}{reconciler, idle} {
-		select {
-		case <-finished:
-		case <-shutdownCtx.Done():
-			return
-		}
+	finished := make(chan struct{})
+	go func() {
+		<-reconciler
+		<-idle
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-shutdownCtx.Done():
 	}
+	return finished
 }
 
 func rpcHandler(life context.Context, handlers *handlerGate, service *handoff.Service, timeout time.Duration) func(context.Context, runtime.Logger, *sql.DB, runtime.NakamaModule, string) (string, error) {

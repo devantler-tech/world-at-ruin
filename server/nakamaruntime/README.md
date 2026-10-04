@@ -4,6 +4,8 @@ The Go plugin at `cmd/nakama` registers `war_handoff` over the real handoff
 service, durable lease coordinator, Agones resource adapter and admission
 keyring. It supervises no-show cleanup until Nakama invokes its shutdown hook.
 An independent opt-in hosts the private claim handler over mutual TLS.
+Another independent opt-in supervises orphan cleanup after complete resource
+and private lease observations.
 The module is **off by default**. No deployment manifest or client call enables it.
 
 ## Build and configure
@@ -119,6 +121,46 @@ network exposure: deployment must restrict reachability and issue attested
 per-GameServer identities. No platform resource is changed by this option.
 See [ADR 0009](../../docs/adr/0009-host-private-claims-in-the-nakama-runtime.md).
 
+## Orphan supervision
+
+With `WAR_HANDOFF_ENABLED=true`, these runtime.env settings enable the existing
+orphan reconciler. Absent or disabled opt-in performs no orphan scan; other orphan
+settings are ignored. The enclosing module's disabled state ignores all of them.
+
+| Setting | Contract |
+| --- | --- |
+| `WAR_HANDOFF_ORPHANS_ENABLED` | Exactly `true` to enable; absent or `false` keeps cleanup off. Other values fail startup. |
+| `WAR_HANDOFF_ORPHANS_GRACE` | Optional Go duration, `30s`–`1h`, default `2m`. At least two complete observations and the full grace precede deletion. |
+| `WAR_HANDOFF_ORPHANS_INTERVAL` | Optional Go duration, `1s`–`1h`, default `30s`. Startup sweeps immediately; subsequent sweeps are serial. |
+| `WAR_HANDOFF_ORPHANS_TIMEOUT` | Optional Go duration, `1ms`–`1m`, default `30s`. Bounds the whole resource/lease/cleanup sweep; the existing Kubernetes request timeout may be shorter. |
+| `WAR_HANDOFF_ORPHANS_MAX_PAGES` | Optional canonical decimal integer, `1`–`1000`, default `100`. Each resource and private lease scan has this page budget, with 100 objects per page. |
+
+Malformed enabled settings fail before connection or registration. Namespace and
+Fleet come from the existing handoff configuration; there is no second cleanup
+scope, credential surface or lease store. GameServer enumeration completes before
+the private lease scan. Any extant attempt protects its resources, including
+expired, staging, dispatched, claimed, releasing and reader-only leases. Only the
+coordinator may retire a lease through its existing barriers. Malformed, partial,
+inconsistent, timed-out or over-budget observations authorize no delete and
+discard earlier grace history. A restart also starts with fresh history.
+
+Cleanup excludes Ready pool members and resources without attempt labels. A
+fresh read must retain namespace, Fleet, attempt, Allocated state and exact UID;
+deletion also requires UID and resource-version preconditions. A lost delete
+acknowledgement is observed once and retried on a later complete sweep if still
+unresolved. Transient failures do not stop the periodic worker.
+
+The native plugin forwards its Nakama logger for aggregate observations: one
+fixed outcome and scanned/waiting/protected/deleted/changed/failed counts per
+sweep. Raw provider errors, identities, paths and lease contents never enter
+these records. Legacy callers of `Initialize` may omit logging; use
+`InitializeWithLogger` to supply it.
+
+This option supplies source composition. It does not activate a deployed module,
+grant RBAC, add allocator fencing or establish session-end authority. Production
+artifact/cluster proof and flag retirement remain tracked by #1177. See
+[ADR 0021](../../docs/adr/0021-supervise-orphan-cleanup-in-the-nakama-runtime.md).
+
 ## RPC contract
 
 Send a Nakama-authenticated RPC with an empty object:
@@ -160,11 +202,14 @@ is a later protocol change, not something this module infers.
 
 Initialization's context is detached after composition because its request
 lifetime is not the module lifetime. RPC and shutdown registration must both
-succeed before the expiry goroutine and optional private listener start. Initialization
+succeed before the expiry/orphan workers and optional private listener start. Initialization
 failures close acquired clients. Shutdown cancels public and private admission,
-closes the listener, and waits for the reconciler and every admitted handler
+closes the listener, and waits for both workers and every admitted handler
 (including detached fence-and-cleanup work) within the earlier of the supplied
-deadline or five seconds when the private listener is enabled, then closes transports once.
+deadline or five seconds when the private listener is enabled. Transports close
+exactly once after both workers and every handler actually return. If the hook's
+deadline expires first, retirement continues asynchronously after the drain;
+a timeout never permits closing a transport underneath ongoing work.
 With the listener disabled, the supplied shutdown context bounds the drain. Remaining connections
 are force-closed at the deadline. An unexpected private serving failure cancels
 module admission, so new public handoffs are refused until runtime replacement. Storage clients must
@@ -190,3 +235,8 @@ Private-listener tests send real verified HTTPS claims through the runtime's
 lease store and resource adapter, reject anonymous/untrusted peers, preserve
 claims against no-show cleanup, exercise initialization rollback, and prove
 connection bounds plus cancellation/drain before dependency retirement.
+Orphan tests compose the real private store and generated Agones HTTP client,
+exercise elapsed grace, restart and failed-observation history, retained lease
+fixtures, scoped lists, UID/resource-version deletes, resource replacement and
+lost delete acknowledgements. Held-worker tests prove a shutdown deadline cannot
+retire dependencies early.

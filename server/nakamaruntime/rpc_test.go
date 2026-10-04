@@ -145,17 +145,30 @@ func TestShutdownWaitIsBoundedByItsContext(t *testing.T) {
 	if !handlers.enter() {
 		t.Fatal("open gate refused a handler")
 	}
-	defer handlers.leave()
 	shutdownCtx, stop := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer stop()
 	returned := make(chan struct{})
+	reconciler := make(chan struct{})
+	var finished <-chan struct{}
 	go func() {
-		drain(shutdownCtx, func() {}, handlers, make(chan struct{}))
+		finished = drain(shutdownCtx, func() {}, handlers, reconciler)
 		close(returned)
 	}()
 	select {
 	case <-returned:
 	case <-time.After(time.Second):
 		t.Fatal("shutdown ignored its deadline while a handler was stuck")
+	}
+	select {
+	case <-finished:
+		t.Fatal("hook timeout was mistaken for actual drain completion")
+	default:
+	}
+	handlers.leave()
+	close(reconciler)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("returned worker and handler never completed the drain")
 	}
 }

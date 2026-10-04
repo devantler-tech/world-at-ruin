@@ -327,9 +327,13 @@ cannot release a newer session.
 The sweep may list managed GameServer metadata and private Nakama leases. It
 never lists Kubernetes Secrets because this protocol creates none.
 
-`server/orphanreaper` implements this sweep without activating it in the zone
-command or Nakama runtime. `New` performs no I/O; composition explicitly calls
-`Run` for a startup sweep followed by periodic reconciliation. Defaults are a
+`server/orphanreaper` implements this sweep. The zone command does not activate
+it. The Nakama runtime composes it with the same private lease store and resource
+scope only when both `WAR_HANDOFF_ENABLED=true` and the independent default-off
+`WAR_HANDOFF_ORPHANS_ENABLED=true` are supplied through runtime.env, per
+[ADR 0021](0021-supervise-orphan-cleanup-in-the-nakama-runtime.md). `New` performs
+no I/O; successful RPC and shutdown registration precede `Run`, which performs
+a startup sweep followed by periodic reconciliation. Defaults are a
 two-minute grace, thirty-second interval and sweep deadline, and 100 pages of
 100 objects for each store. Configured grace is bounded to 30 seconds–1 hour,
 interval to 1 second–1 hour, deadline to 1 millisecond–1 minute, and each scan to

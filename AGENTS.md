@@ -737,8 +737,11 @@ everything shipped afterwards is held to.
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,
   requires consecutive orphan observations plus grace, and deletes only the
-  revalidated UID and resource version; startup/periodic supervision is explicit
-  and remains inactive until production composition), and the **combat first
+  revalidated UID and resource version; the Nakama module supervises startup/periodic sweeps
+  only with the independent default-off `WAR_HANDOFF_ORPHANS_ENABLED` runtime.env flag,
+  shares its existing private lease store and resource scope, and drains both workers before
+  transport retirement; count-only observations and bounded settings are documented in that
+  package and ADR 0021), and the **combat first
   slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -749,7 +752,8 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; orphan supervision, session-end recovery,
+  `zone -agones -agones-admission-public-key <path>`; production activation of orphan supervision
+  and its flag retirement (#1177), session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` contains the opt-in private zone trial's tenant manifests. The host

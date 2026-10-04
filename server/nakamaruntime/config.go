@@ -19,6 +19,7 @@ type config struct {
 	namespace, fleet, tlsPort, zoneDomain                      string
 	leaseTTL, rpcTimeout                                       time.Duration
 	claims                                                     privateConfig
+	orphans                                                    orphanConfig
 }
 
 func readConfig(env map[string]string) (config, error) {
@@ -83,6 +84,9 @@ func readConfig(env map[string]string) (config, error) {
 	}
 	cfg.claims, err = readPrivateConfig(env)
 	cfg.claims.allocatorCA, cfg.claims.allocatorCert = cfg.allocatorCA, cfg.allocatorCert
+	if err == nil {
+		cfg.orphans, err = readOrphanConfig(env)
+	}
 	return cfg, err
 }
 

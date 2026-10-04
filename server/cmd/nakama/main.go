@@ -9,8 +9,8 @@ import (
 )
 
 // InitModule is Nakama's plugin entry point. The handoff feature is default-off.
-func InitModule(ctx context.Context, _ runtime.Logger, _ *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
-	return nakamaruntime.Initialize(ctx, nk, initializer)
+func InitModule(ctx context.Context, logger runtime.Logger, _ *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
+	return nakamaruntime.InitializeWithLogger(ctx, logger, nk, initializer)
 }
 
 func main() {}
