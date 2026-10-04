@@ -46,8 +46,16 @@ func _run() -> void:
 				OS.delay_msec(2100)
 			return fixture["observed_at"])
 	var elapsed := Time.get_ticks_msec() - before
+	if result["trusted"]:
+		var facts: Dictionary = fixture["installed"].duplicate(true)
+		facts["observed_at"] = result["observed_at"]
+		result = UpdateHistory.accept(fixture["history_path"], facts, fixture["config"],
+			result["manifest"], result["head"], fixture["observed_at"])
 	if result["trusted"] != fixture["accepted"]:
 		_fail("unexpected authentication result: " + str(result["error"]))
+		return
+	if fixture.has("expected_error") and result["error"] != fixture["expected_error"]:
+		_fail("unexpected refusal reason: " + str(result["error"]))
 		return
 	if fixture["accepted"] and result["decision"].get("action") != UpdateDecision.UP_TO_DATE:
 		_fail("accepted fixture did not reach the decision core")

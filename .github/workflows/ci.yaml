@@ -328,6 +328,53 @@ jobs:
             echo "::error::Shipped boot-recovery version(s) removed from $LEDGER ($(echo "$removed" | tr '\n' ' ')) — recovery history is never disposable (no-resets law)"
             exit 1
           fi
+      - name: Authenticated update-history versions and goldens are permanent
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          LEDGER=client/tests/data/shipped_update_history_versions.txt
+          test -f "$LEDGER" && git cat-file -e "$BASE_SHA"
+          export LC_ALL=C
+          read_versions() {
+            awk '
+              {
+                value = $0
+                sub(/^[[:space:]]*/, "", value)
+                sub(/[[:space:]]*$/, "", value)
+                if (value == "" || value ~ /^#/) next
+                if (value !~ /^[1-9][0-9]*$/ || value != ++expected) {
+                  print "::error::Update-history ledger must contain canonical, contiguous versions from 1" > "/dev/stderr"
+                  invalid = 1
+                  exit 1
+                }
+                print value
+              }
+              END {
+                if (invalid || expected == 0) exit 1
+              }
+            ' "$1"
+          }
+          base_raw=$(mktemp)
+          base_versions=$(mktemp)
+          head_versions=$(mktemp)
+          trap 'rm -f "$base_raw" "$base_versions" "$head_versions"' EXIT
+          if git cat-file -e "$BASE_SHA:$LEDGER" 2>/dev/null; then
+            git show "$BASE_SHA:$LEDGER" > "$base_raw"
+            read_versions "$base_raw" > "$base_versions"
+          fi
+          sort -u "$base_versions" -o "$base_versions"
+          read_versions "$LEDGER" > "$head_versions"
+          sort -u "$head_versions" -o "$head_versions"
+          removed=$(comm -23 "$base_versions" "$head_versions")
+          if [ -n "$removed" ]; then
+            echo "::error::Authenticated update-history versions were removed"
+            exit 1
+          fi
+          while IFS= read -r version; do
+            fixture="client/tests/data/golden_update_history_v${version}.json"
+            git show "$BASE_SHA:$fixture" | cmp - "$fixture"
+          done < "$base_versions"
       - name: Attunement ledger is append-only (no-resets law)
         # The LIVE-NAME half of the vault law (#254 review). A golden fixture
         # proves a shipped attunement name survives a round-trip; it cannot prove

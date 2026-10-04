@@ -4,20 +4,23 @@ var _boot: SaveIsolation
 var _main: Node
 var _before_enable := ""
 var _before_config := ""
+var _before_history := ""
 
 
 func _ready() -> void:
 	_before_enable = OS.get_environment("WAR_UPDATE_CHECK")
 	_before_config = OS.get_environment("WAR_UPDATE_CHECK_CONFIG")
+	_before_history = OS.get_environment(UpdateHistory.PATH_ENV)
 	OS.set_environment("WAR_UPDATE_CHECK", "1")
 	OS.set_environment("WAR_UPDATE_CHECK_CONFIG", "user://must-not-contact-origin.json")
+	OS.set_environment(UpdateHistory.PATH_ENV, "user://must-not-touch-update-history.json")
 	_boot = SaveIsolation.new("user://update_check_boot_probe.json")
 	if not _boot.begin():
 		_fail("isolated boot was refused")
 		return
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	_main = scene.instantiate()
-	if OS.get_environment("WAR_UPDATE_CHECK") == "1":
+	if OS.get_environment("WAR_UPDATE_CHECK") == "1" or UpdateHistory.history_path() == "user://must-not-touch-update-history.json":
 		_fail("save isolation left ambient update networking enabled")
 		return
 	add_child(_main)
@@ -79,6 +82,9 @@ func _ready() -> void:
 	if OS.get_environment("WAR_UPDATE_CHECK") != "1" or OS.get_environment("WAR_UPDATE_CHECK_CONFIG") != "user://must-not-contact-origin.json":
 		_fail("test isolation did not restore ambient update configuration")
 		return
+	if UpdateHistory.history_path() != "user://must-not-touch-update-history.json":
+		_fail("test isolation did not restore ambient update-history path")
+		return
 	_restore()
 	print("TEST PASS — opt-in update refusal leaves actual isolated game boot playable; ambient checks stay isolated")
 	get_tree().quit(0)
@@ -94,6 +100,7 @@ func _has_property(object: Object, property: String) -> bool:
 func _restore() -> void:
 	OS.set_environment("WAR_UPDATE_CHECK", _before_enable)
 	OS.set_environment("WAR_UPDATE_CHECK_CONFIG", _before_config)
+	OS.set_environment(UpdateHistory.PATH_ENV, _before_history)
 
 
 func _fail(message: String) -> void:

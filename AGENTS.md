@@ -887,6 +887,9 @@ everything shipped afterwards is held to.
   probes, so a seam added there reaches every harness without a single test changing.
   It also disables ambient experimental update checks before scene loading and restores their
   environment after the test. A networking control opts in only after isolation has succeeded.
+  Authenticated update history is the fourth seam (`UpdateHistory.history_path()` /
+  `WAR_UPDATE_HISTORY_PATH`), covered by the same real-file byte assertion. Its separate bounded
+  schema and locked acceptance rules are defined in [ADR 0017](docs/adr/0017-retain-authenticated-update-floors-at-locked-acceptance.md).
   Boot with **`IsolatedBoot`** (`tests/isolated_boot.gd`): `boot()` redirects every seam and returns
   the instantiated scene, or `null` when the redirect did not take — so a caller cannot hold a
   booted scene and an unisolated save at the same time. Drive `SaveIsolation` directly only when the
@@ -897,8 +900,8 @@ everything shipped afterwards is held to.
   prose** — a doc comment saying a test never boots `main.tscn` is not a violation (#309 was filed
   off a grep that made exactly that mistake and accused five correct files). A developer running the
   suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
-  WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
-  three fully out of reach.
+  WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json
+  WAR_UPDATE_HISTORY_PATH=/tmp/probe_update_history.json` to keep all four fully out of reach.
 - **Allocator fence reference:** `server/internal/fencereference/` is default-off,
   owns only an in-memory ledger and is not imported by production composition.
   Its generation check and owned mutation share one authority lock; its real TLS
