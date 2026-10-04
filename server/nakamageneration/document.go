@@ -57,7 +57,7 @@ func validIdentity(value string, maxBytes int) bool {
 	return handoffidentity.OpaqueUTF8(value, maxBytes)
 }
 
-// decodeDocument accepts exactly the shipped schema and refuses ambiguous JSON.
+// decodeDocument accepts every readable schema and refuses ambiguous JSON.
 // Persisted membership must already be canonical and match its recorded digest.
 func decodeDocument(value string) (document, error) {
 	if len(value) > maxDocumentBytes || !validJSONUnicode(value) {
@@ -98,7 +98,9 @@ func decodeDocument(value string) (document, error) {
 			return document{}, ErrStorage
 		}
 	}
-	if nakamastorage.EndObject(decoder) != nil || len(seen) != 5 || got.Schema != 1 || got.State != "open" {
+	if nakamastorage.EndObject(decoder) != nil || len(seen) != 5 ||
+		(got.Schema != 1 && got.Schema != 2) ||
+		(got.State != "open" && (got.Schema != 2 || got.State != "draining")) {
 		return document{}, ErrStorage
 	}
 	want, err := openDocument(got.GenerationID, got.MemberPodUIDs)
@@ -155,5 +157,6 @@ func (d document) record(version string) Record {
 	return Record{
 		GenerationID: d.GenerationID, MemberPodUIDs: slices.Clone(d.MemberPodUIDs),
 		MemberSetDigest: d.MemberSetDigest, State: d.State, Version: version,
+		readerOnly: d.Schema != 1,
 	}
 }

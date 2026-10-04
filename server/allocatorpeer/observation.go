@@ -49,7 +49,7 @@ func validConfig(cfg Config) bool {
 
 // validGeneration checks canonical membership and the store's domain-separated digest.
 func validGeneration(record nakamageneration.Record) bool {
-	if !handoffidentity.OpaqueUTF8(record.GenerationID, 128) || !handoffidentity.OpaqueUTF8(record.Version, 1024) || record.Version == "*" || record.State != "open" || len(record.MemberPodUIDs) == 0 || len(record.MemberPodUIDs) > 256 {
+	if record.ReaderOnly() || !handoffidentity.OpaqueUTF8(record.GenerationID, 128) || !handoffidentity.OpaqueUTF8(record.Version, 1024) || record.Version == "*" || record.State != "open" || len(record.MemberPodUIDs) == 0 || len(record.MemberPodUIDs) > 256 {
 		return false
 	}
 	for i, uid := range record.MemberPodUIDs {

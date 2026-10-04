@@ -335,9 +335,13 @@ zone/dungeon server:
   (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
   schema, omit the raw user/reservation identifiers and admission-secret bytes,
   and expose only sanitized errors. The reader permanently accepts every
-  ledgered schema-one through schema-three lifecycle shape, with base-anchored
+  ledgered schema-one through schema-four lifecycle shape, with base-anchored
   ledgers and complete goldens preventing a shipped shape from being rewritten
-  or removed. Schema-three writes add a durable `dispatched` point of no return
+  or removed. Schema-four reads preserve the three-scalar allocator binding in
+  all seven lifecycle shapes, including finalized records after dispatch flags
+  are cleared. They remain read-only: fresh durable checks refuse every legacy
+  mutation, cleanup, allocation and private claim path before external work.
+  Schema-three writes add a durable `dispatched` point of no return
   and unique dispatch-call identity, while the existing durable `releasing`
   barrier atomically decides whether zone admission or external cleanup owns
   an attempt. A paginated private-collection sweep exact-version

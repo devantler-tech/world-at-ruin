@@ -2,9 +2,7 @@ package nakamalease
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
@@ -40,7 +38,7 @@ func (s *Store) ProtectedAttempts(ctx context.Context, maxPages int) (map[string
 			return nil, ErrStorage
 		}
 		for _, object := range objects {
-			if !validListedObject(object) || object.GetVersion() == "*" || len(object.GetVersion()) > 1024 || !unambiguousLeaseObject(object.GetValue()) {
+			if !validListedObject(object) {
 				return nil, ErrStorage
 			}
 			if _, duplicate := keys[object.GetKey()]; duplicate {
@@ -67,37 +65,4 @@ func (s *Store) ProtectedAttempts(ctx context.Context, maxPages int) (map[string
 		cursor = next
 	}
 	return nil, ErrStorage
-}
-
-// A corrupt duplicate member cannot hide one attempt behind another. Keep the
-// general reader's accepted field casing, but reject every repeated spelling.
-func unambiguousLeaseObject(value string) bool {
-	if len(value) > 65536 {
-		return false
-	}
-	decoder, err := nakamastorage.BeginObject(value)
-	if err != nil {
-		return false
-	}
-	seen := make(map[string]bool)
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return false
-		}
-		key, ok := token.(string)
-		if !ok {
-			return false
-		}
-		key = strings.ToLower(key)
-		if seen[key] {
-			return false
-		}
-		seen[key] = true
-		var member json.RawMessage
-		if err := decoder.Decode(&member); err != nil {
-			return false
-		}
-	}
-	return nakamastorage.EndObject(decoder) == nil
 }
