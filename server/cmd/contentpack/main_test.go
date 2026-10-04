@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestDefaultOffNeverReadsOrWrites covers experimental refusal before filesystem admission.
 func TestDefaultOffNeverReadsOrWrites(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "untouched")
 	if err := run([]string{"-source", "missing", "-output", out}); err == nil || !strings.Contains(err.Error(), "experimental") {

@@ -2,6 +2,7 @@ extends SceneTree
 ## Native pack construction runs only inside the operator's private imported snapshot.
 
 
+## Packages the validated source and its generated import closure in sorted native order.
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() != 3:
@@ -100,11 +101,13 @@ func _initialize() -> void:
 	quit(0)
 
 
+## Reports a native build refusal instead of producing a success marker.
 func _fail(message: String) -> void:
 	push_error(message)
 	quit(1)
 
 
+## Assigns deterministic resource IDs while visiting shared resources only once.
 func _stable_resource_ids(value: Variant, seen: Dictionary) -> void:
 	if value is Resource:
 		var resource: Resource = value
@@ -127,5 +130,6 @@ func _stable_resource_ids(value: Variant, seen: Dictionary) -> void:
 			_stable_resource_ids(value[key], seen)
 
 
+## Orders serialization traversal by property name, independent of discovery order.
 func _property_name_less(a: Dictionary, b: Dictionary) -> bool:
 	return str(a["name"]) < str(b["name"])

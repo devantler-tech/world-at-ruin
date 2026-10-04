@@ -2,6 +2,8 @@
 # Native exported base + cumulative overlay, with an executable no-mount ablation.
 set -euo pipefail
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+# shellcheck source=tools/contentpack-native.sh
+source "$root/tools/contentpack-native.sh"
 probe=$(mktemp -d)
 trap 'rm -rf -- "$probe"' EXIT
 go -C "$root/server" build -o "$probe/contentpack" ./cmd/contentpack
@@ -45,8 +47,8 @@ cat > "$fixture/assets/material.tres" <<'MATERIAL'
 [resource]
 resource_name = "base"
 MATERIAL
-godot --headless --editor --import --path "$fixture" > "$probe/import-base.log" 2>&1
-godot --headless --path "$fixture" --export-pack Fixture "$probe/base.pck" > "$probe/export.log" 2>&1
+run_native "$probe/import-base.log" --headless --editor --import --path "$fixture"
+run_native "$probe/export.log" --headless --path "$fixture" --export-pack Fixture "$probe/base.pck"
 test -s "$probe/base.pck"
 printf 'candidate must not replace recovery\n' > "$fixture/scripts/shell/identity.txt"
 sed 's/base recovery/candidate recovery/' "$fixture/scripts/boot_recovery.gd" > "$probe/recovery.new"
@@ -72,7 +74,7 @@ func _initialize() -> void:
 		return
 	quit(0)
 TEXTURE
-godot --headless --path "$fixture" --script "$probe/create-texture.gd" > "$probe/texture.log" 2>&1
+run_native "$probe/texture.log" --headless --path "$fixture" --script "$probe/create-texture.gd"
 test -s "$fixture/assets/pixel.png"
 if bash "$root/tools/build-contentpack.sh" "$fixture" "$probe/default-off"; then
  echo 'content pack builder ran without opt-in' >&2; exit 1
@@ -84,13 +86,10 @@ for build in one two; do
 done
 cmp "$probe/one/content.pck" "$probe/two/content.pck"
 cmp "$probe/one/receipt.json" "$probe/two/receipt.json"
-mount_status=0
-godot --headless --main-pack "$probe/base.pck" -- "$probe/one/content.pck" > "$probe/mount.log" 2>&1 || mount_status=$?
-cat "$probe/mount.log"
-if [ "$mount_status" -ne 0 ]; then exit "$mount_status"; fi
+run_native "$probe/mount.log" --headless --main-pack "$probe/base.pck" -- "$probe/one/content.pck"
 grep -q 'PACK MOUNT PASS' "$probe/mount.log"
 if grep -qE 'SCRIPT ERROR|^ERROR:' "$probe/mount.log"; then exit 1; fi
-if godot --headless --main-pack "$probe/base.pck" -- "$probe/one/content.pck" ablate > "$probe/ablate.log" 2>&1; then
+if run_native "$probe/ablate.log" --headless --main-pack "$probe/base.pck" -- "$probe/one/content.pck" ablate; then
  echo 'overlay proof remained green when loading was removed' >&2; exit 1
 fi
 grep -q 'PACK MOUNT REFUSED' "$probe/ablate.log"
@@ -100,6 +99,18 @@ test "$(cat "$probe/existing")" = caller-owned
 printf 'unsupported shape' > "$fixture/assets/refused.exe"
 if bash "$root/tools/build-contentpack.sh" --experimental "$fixture" "$probe/failed"; then exit 1; fi
 test ! -e "$probe/failed"
+cat > "$probe/hang.gd" <<'HANG'
+extends SceneTree
+func _initialize() -> void:
+	print("NATIVE HANG CONTROL STARTED")
+	while true:
+		pass
+HANG
+if CONTENTPACK_NATIVE_TIMEOUT_SECONDS=1 run_native "$probe/hang.log" --headless --path "$fixture" --script "$probe/hang.gd"; then
+ echo 'hung native process escaped its time budget' >&2; exit 1
+fi
+grep -q 'NATIVE HANG CONTROL STARTED' "$probe/hang.log"
+test -f "$probe/hang.log.timeout"
 printf 'altered pack' >> "$probe/one/content.pck"
 if "$probe/contentpack" -experimental -operation verify -output "$probe/one"; then
  echo 'altered pack receipt verified' >&2; exit 1

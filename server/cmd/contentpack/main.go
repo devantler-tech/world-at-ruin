@@ -12,12 +12,15 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/internal/contentpack"
 )
 
+// main reports local operator failures without joining runtime composition.
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "contentpack:", err)
 		os.Exit(1)
 	}
 }
+
+// run requires explicit experimental admission before source or output I/O.
 func run(args []string) error {
 	flags := flag.NewFlagSet("contentpack", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -39,10 +42,10 @@ func run(args []string) error {
 		}
 		return contentpack.Stage(*source, *work)
 	case "finalize":
-		if *work == "" || *output == "" {
-			return errors.New("staging and new output directories are required")
+		if *source == "" || *work == "" || *output == "" {
+			return errors.New("source, staging and new output directories are required")
 		}
-		return contentpack.Finalize(*work, *output)
+		return contentpack.Finalize(*source, *work, *output)
 	case "verify":
 		root, err := os.OpenRoot(*output)
 		if err != nil {

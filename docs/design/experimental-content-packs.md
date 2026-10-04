@@ -14,6 +14,8 @@ Use a new output directory outside the source project. Each build imports a new 
 the source cache is not used as pack input or modified by the driver. Native work is bounded to
 three minutes per process. The snapshot and selected resource counts are bounded before import,
 each resource is at most 32 MiB, and cumulative resource bytes are at most 256 MiB.
+Every import, export and mount uses the shared native process guard. A real infinite-loop control
+lowers its budget to one second and proves forceful termination with visible diagnostics.
 
 The pack contains every supported resource under abilities, assets, devlog, recipes, registries,
 scenes, scripts and shaders, including attribution metadata and shader includes. Exact protected
@@ -42,3 +44,5 @@ The candidate must fit the immutable base's engine and global-class catalog. Exi
 may be replaced; introducing a class unknown to the base requires separate compatible shell work.
 Runtime mounting, health/quarantine, production key custody and retained delivery are tracked in
 the distribution issues. No delivery URL, rollback target or shell download is populated here.
+The path inventory does not prove a transitive immutable execution boundary. Auditing protected
+owners' dependencies after mounting remains an activation prerequisite in #1114.

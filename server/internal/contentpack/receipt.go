@@ -16,6 +16,7 @@ type Receipt struct {
 	Resources       []Resource `json:"resources"`
 }
 
+// NewReceipt binds pack bytes and the complete ordered inventory without granting authority.
 func NewReceipt(pack []byte, resources []Resource) ([]byte, error) {
 	if len(pack) == 0 || len(pack) > MaxPackBytes {
 		return nil, errors.New("pack is empty or exceeds build budget")

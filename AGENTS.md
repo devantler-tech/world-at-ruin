@@ -810,7 +810,7 @@ everything shipped afterwards is held to.
     outside the pack. Run `bash tools/test-contentpack.sh` for the exported-base precedence, receipt
     and no-mount controls. This tooling grants no installation or production publication authority;
     see `docs/adr/0014-build-experimental-cumulative-content-packs.md`.
-  - **Validate before every PR:**
+- **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
   the editor pass imports AND writes the global class-name cache (`--import` alone never writes
   it, and scene-arg runs hang without it); the smoke boot must print the `BOOT_OK` marker AND no

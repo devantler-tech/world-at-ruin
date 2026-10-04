@@ -2,6 +2,7 @@ extends Node
 ## Runs from a real exported base pack; the optional overlay is the only candidate content.
 
 
+## Exercises candidate precedence and base recovery through a real exported fixture.
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.is_empty():
@@ -40,6 +41,7 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 
+## Names the failing invariant and terminates the exported proof with failure.
 func _fail(message: String) -> void:
 	print("PACK MOUNT REFUSED — " + message)
 	get_tree().quit(1)

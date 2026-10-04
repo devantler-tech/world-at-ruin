@@ -35,5 +35,6 @@ The same tooling is exercised over the actual game's imported scene closure.
 Native import executes trusted local project code; this tool is not an untrusted-code sandbox.
 The immutable base must already support the engine, global script class catalog and protected
 owners needed by the candidate. New global classes, production bootstrap, retained pack admission,
-health/quarantine, signing custody and delivery hosting remain separate activation work. Default
+health/quarantine, signing custody, delivery hosting and an audit of protected owners' dependencies
+after mounting remain separate activation work. Default
 release exports and deferred update-manifest delivery fields retain their existing contract.

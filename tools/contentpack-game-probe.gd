@@ -2,13 +2,14 @@ extends SceneTree
 ## Real game resource closure readback after the experimental cumulative pack mounts.
 
 
+## Loads real game content after mounting, or reaches those same loads without a mount.
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
-	if args.size() != 1:
+	if args.is_empty() or args.size() > 2 or (args.size() == 2 and args[1] != "ablate"):
 		_fail("one experimental game pack is required")
 		return
 	var shell_before := FileAccess.get_file_as_bytes("res://scripts/boot_recovery.gd")
-	if not ProjectSettings.load_resource_pack(args[0], true):
+	if args.size() == 1 and not ProjectSettings.load_resource_pack(args[0], true):
 		_fail("game pack could not mount")
 		return
 	var hound: PackedScene = ResourceLoader.load(
@@ -32,6 +33,7 @@ func _initialize() -> void:
 	quit(0)
 
 
+## Emits a specific native proof refusal and a failing process status.
 func _fail(message: String) -> void:
 	push_error(message)
 	quit(1)

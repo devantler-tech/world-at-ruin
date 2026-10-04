@@ -16,22 +16,13 @@ if [ -e "$output" ] || [ -L "$output" ]; then
  echo 'content pack output must be a new directory' >&2; exit 1
 fi
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+# shellcheck source=tools/contentpack-native.sh
+source "$root/tools/contentpack-native.sh"
 probe=$(mktemp -d)
 trap 'rm -rf -- "$probe"' EXIT
 go -C "$root/server" build -o "$probe/contentpack" ./cmd/contentpack
 "$probe/contentpack" -experimental -operation stage -source "$source_project" -work "$probe/work"
-run_native() {
- local log=$1 status=0 native_pid timer_pid
- shift
- godot "$@" > "$log" 2>&1 & native_pid=$!
- ( sleep 180; kill "$native_pid" 2>/dev/null || true ) & timer_pid=$!
- wait "$native_pid" || status=$?
- kill "$timer_pid" 2>/dev/null || true
- wait "$timer_pid" 2>/dev/null || true
- cat "$log"
- if [ "$status" -ne 0 ] || grep -qE 'SCRIPT ERROR|^ERROR:' "$log"; then return 1; fi
-}
 run_native "$probe/import.log" --headless --editor --import --path "$probe/work/project"
 run_native "$probe/pack.log" --headless --path "$probe/work/project" --script "$root/tools/contentpack-packer.gd" -- "$probe/work/selected.json" "$probe/work/content.pck" "$probe/work/resources.json"
-"$probe/contentpack" -experimental -operation finalize -work "$probe/work" -output "$output"
+"$probe/contentpack" -experimental -operation finalize -source "$source_project" -work "$probe/work" -output "$output"
 "$probe/contentpack" -experimental -operation verify -output "$output"

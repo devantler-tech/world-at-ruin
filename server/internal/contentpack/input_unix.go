@@ -9,6 +9,7 @@ import (
 	"syscall"
 )
 
+// ReadRegular binds bounded input policy to an opened no-follow, nonblocking descriptor.
 func ReadRegular(root *os.Root, name string, limit int64) ([]byte, error) {
 	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {

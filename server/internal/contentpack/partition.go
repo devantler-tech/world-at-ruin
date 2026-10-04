@@ -25,8 +25,10 @@ type Resource struct {
 	Size   int64  `json:"size"`
 }
 
+// Digest identifies exact bytes using lowercase SHA-256.
 func Digest(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
 
+// protected fences exact base owners, all companions and the reserved shell namespace.
 func protected(name string) bool {
 	name = strings.ToLower(name)
 	if strings.HasPrefix(name, "scripts/shell/") {
@@ -40,6 +42,7 @@ func protected(name string) bool {
 	return false
 }
 
+// contentPath admits only portable, non-shell paths under the reviewed content roots.
 func contentPath(name string) bool {
 	if !fs.ValidPath(name) || strings.ContainsAny(name, "\\\r\n\t:") || protected(name) {
 		return false
@@ -48,6 +51,7 @@ func contentPath(name string) bool {
 	return found && slices.Contains([]string{"abilities", "assets", "devlog", "recipes", "registries", "scenes", "scripts", "shaders"}, root)
 }
 
+// supported limits source inputs to the actual game formats and provenance metadata.
 func supported(name string) bool {
 	return slices.Contains([]string{".gd", ".uid", ".tscn", ".tres", ".json", ".svg", ".png", ".glb", ".gdshader", ".gdshaderinc", ".wav", ".ogg", ".mp3", ".ttf", ".otf", ".import", ".remap", ".txt", ".md"}, path.Ext(name))
 }
@@ -63,6 +67,7 @@ func Partition(source string) ([]Resource, error) {
 	return result, errors.Join(scanErr, root.Close())
 }
 
+// partition rejects ambiguous shapes and case collisions before native import starts.
 func partition(root *os.Root) ([]Resource, error) {
 	result := []Resource{}
 	names := map[string]bool{}
@@ -115,6 +120,7 @@ func partition(root *os.Root) ([]Resource, error) {
 	return result, nil
 }
 
+// ValidateInventory enforces complete ordered identities within the packaged boundary.
 func ValidateInventory(resources []Resource) error {
 	if len(resources) == 0 || len(resources) > 10000 {
 		return errors.New("resource inventory is empty or exceeds its budget")

@@ -2,19 +2,10 @@
 # Full game bytes must load from a base containing only shell owners and class metadata.
 set -euo pipefail
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
+# shellcheck source=tools/contentpack-native.sh
+source "$root/tools/contentpack-native.sh"
 probe=$(mktemp -d)
 trap 'rm -rf -- "$probe"' EXIT
-run_native() {
- local log=$1 status=0 native_pid timer_pid
- shift
- godot "$@" > "$log" 2>&1 & native_pid=$!
- ( sleep 180; kill "$native_pid" 2>/dev/null || true ) & timer_pid=$!
- wait "$native_pid" || status=$?
- kill "$timer_pid" 2>/dev/null || true
- wait "$timer_pid" 2>/dev/null || true
- cat "$log"
- if [ "$status" -ne 0 ] || grep -qE 'SCRIPT ERROR|^ERROR:' "$log"; then return 1; fi
-}
 # Derive the immutable base's class catalogue through a clean native import,
 # rather than depending on or changing a checkout-local editor cache.
 go -C "$root/server" build -o "$probe/contentpack" ./cmd/contentpack
@@ -35,7 +26,8 @@ while IFS= read -r owner; do
 done < "$root/server/internal/contentpack/shell-resources.txt"
 run_native "$probe/game.log" --headless --path "$base" --script "$root/tools/contentpack-game-probe.gd" -- "$probe/one/content.pck"
 grep -q 'GAME PACK PASS' "$probe/game.log"
-if run_native "$probe/no-pack.log" --headless --path "$base" --script "$root/tools/contentpack-game-probe.gd" -- "$probe/absent.pck"; then
+if run_native "$probe/no-pack.log" --headless --path "$base" --script "$root/tools/contentpack-game-probe.gd" -- "$probe/one/content.pck" ablate; then
  echo 'game closure proof passed without any game pack' >&2; exit 1
 fi
+grep -q 'native imported game scene is missing' "$probe/no-pack.log"
 echo 'TEST PASS — two identical full game packs load from a base without game content'

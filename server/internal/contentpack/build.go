@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// writeNew exclusively creates one artifact; it never replaces a caller-owned path.
 func writeNew(root *os.Root, name string, raw []byte) error {
 	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -22,6 +23,9 @@ func writeNew(root *os.Root, name string, raw []byte) error {
 // Stage snapshots trusted source into a new private directory. Native import
 // runs there through the Bash driver, leaving the original project's cache alone.
 func Stage(source, work string) error {
+	if source == "" || work == "" {
+		return errors.New("source and new staging directory are required")
+	}
 	source, err := filepath.Abs(source)
 	if err != nil {
 		return err
@@ -61,8 +65,19 @@ func Stage(source, work string) error {
 
 // Finalize reads back native bytes and every staged resource before exclusively
 // creating a completed artifact directory. It cannot populate delivery fields.
-func Finalize(work, output string) error {
-	work, err := filepath.Abs(work)
+func Finalize(source, work, output string) error {
+	if source == "" || work == "" || output == "" {
+		return errors.New("source, staging and new output directory are required")
+	}
+	source, err := filepath.Abs(source)
+	if err != nil {
+		return err
+	}
+	source, err = filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
+	work, err = filepath.Abs(work)
 	if err != nil {
 		return err
 	}
@@ -76,6 +91,9 @@ func Finalize(work, output string) error {
 	}
 	if err := requireOutside(work, output); err != nil {
 		return errors.New("final output must be outside private staging")
+	}
+	if err := requireOutside(source, output); err != nil {
+		return errors.New("final output must be outside the source project")
 	}
 	workRoot, err := os.OpenRoot(work)
 	if err != nil {
@@ -93,6 +111,7 @@ func Finalize(work, output string) error {
 	return publishDirectory(output, map[string][]byte{"content.pck": pack, "receipt.json": receipt, "resources.json": inventory})
 }
 
+// physicalDestination resolves existing parents without creating the final path.
 func physicalDestination(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -125,6 +144,7 @@ func requireOutside(anchor, destination string) error {
 	}
 }
 
+// readBuilt binds every selected and generated resource to independently read bytes.
 func readBuilt(workRoot, stageRoot *os.Root) ([]byte, []byte, []byte, error) {
 	inventory, err := ReadRegular(workRoot, "resources.json", 8<<20)
 	if err != nil {
@@ -181,6 +201,7 @@ func readBuilt(workRoot, stageRoot *os.Root) ([]byte, []byte, []byte, error) {
 	return pack, inventory, receipt, nil
 }
 
+// stageProject copies the bounded import context while omitting checkout-local caches.
 func stageProject(source, destination string) error {
 	src, err := os.OpenRoot(source)
 	if err != nil {
@@ -225,6 +246,7 @@ func stageProject(source, destination string) error {
 	return errors.Join(copyErr, src.Close(), dst.Close())
 }
 
+// publishDirectory creates a fresh output and writes its completion receipt last.
 func publishDirectory(output string, files map[string][]byte) error {
 	parent, err := os.OpenRoot(filepath.Dir(output))
 	if err != nil {
