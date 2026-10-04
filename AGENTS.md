@@ -846,7 +846,30 @@ everything shipped afterwards is held to.
   an exact-head-reviewed Actions PR; preserve compatibility with the World base controller and
   harness, pass `tools/required-regression-control.test.sh`, and run live positive and missing-input
   controls. Change the rule itself only through the declarative `.github` release path, then read the
-  live ruleset back. The World repository must not carry a second copy of the ruleset workflow.
+  live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is a latent
+  required-workflow source for unprivileged `pull_request` and `merge_group` events. It runs
+  only when GitHub selects its canonical `refs/heads/main` workflow reference; ordinary
+  candidate-owned invocations skip the job. The resolver binds the GitHub integration SHA to the
+  event's merge commit, verifies the main-base and all three checkout identities, and invokes the
+  verified workflow-source controller and its sibling verdict runner with read-only permissions and
+  no persisted credentials. The event base supplies test scenes, settings, fixtures and ledgers,
+  never host helper selection. Harness and candidate data
+  are fetched anonymously into fresh repositories without credential variables or inherited Git
+  configuration; their exact event identities are independently verified. Candidate Godot runs
+  in a digest-bound, non-root container with no network, capabilities or host credentials; its
+  project and harness are read-only. The protected suite uses reviewed-base project settings and
+  the standard SceneTree loop; alternate binary configuration is refused before import. This
+  tests candidate code under base-owned engine settings. Candidate configuration changes remain
+  covered by ordinary CI; configuration-dependent features may be absent or fail in the frozen suite.
+  Autoloads and editor plugins are unsupported until the controller contract is reviewed.
+  Only disposable import state is writable during the editor scan.
+  Host import and scene logs are captured in a fresh controller-owned directory outside the
+  candidate tree, so candidate log symlinks cannot redirect host writes.
+  The real-container refusal test pins that execution boundary. Activation requires an additive
+  organization ruleset binding to this reviewed main source, live readback, actual nonzero trusted
+  scene execution and tamper canaries. A skipped ordinary job is preparation, never enforcement proof.
+  The external Actions required workflow remains active throughout activation; no ruleset cutover
+  is implied by these source bytes.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
@@ -1009,7 +1032,7 @@ everything shipped afterwards is held to.
     reviewed Actions source and its scenes, harness and runner come from the GitHub-supplied World at
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
-    aggregate, an empty trusted suite fails closed, and the obsolete local workflow cannot return.
+    aggregate, an empty trusted suite fails closed, and only the structurally pinned base-controlled local workflow may invoke the controller.
     The sole candidate test-data exception is the save-capability declaration: the controller
     reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
     every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5

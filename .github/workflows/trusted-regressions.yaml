@@ -1,0 +1,66 @@
+name: World owned trusted regressions
+
+# GitHub's organization ruleset selects the reviewed main definition.
+# Ordinary candidate-owned runs are skipped; the existing Actions gate remains
+# required until this source is deployed and its ruleset invocation is proven.
+on:
+  pull_request: {}
+  merge_group: {}
+
+permissions: {}
+
+env:
+  GODOT_VERSION: 4.7.1
+  GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+
+jobs:
+  trusted-client-regressions:
+    if: github.workflow_ref == 'devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main'
+    name: World owned client regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Check out the exact base-owned workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: devantler-tech/world-at-ruin
+          ref: ${{ github.workflow_sha }}
+          path: workflow-source
+          persist-credentials: false
+
+      - name: Resolve the trusted GitHub event
+        id: resolve
+        run: bash workflow-source/tools/resolve-trusted-regression-event.sh
+
+      - name: Fetch the trusted base harness anonymously
+        env:
+          DATA_SHA: ${{ steps.resolve.outputs.trusted-sha }}
+        run: bash workflow-source/tools/fetch-trusted-regression-data.sh trusted "$DATA_SHA"
+
+      - name: Fetch candidate product bytes anonymously
+        env:
+          DATA_SHA: ${{ steps.resolve.outputs.candidate-sha }}
+        run: bash workflow-source/tools/fetch-trusted-regression-data.sh candidate "$DATA_SHA"
+
+      - name: Verify independent checkout identities
+        env:
+          TRUSTED_SHA: ${{ steps.resolve.outputs.trusted-sha }}
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate-sha }}
+        run: bash workflow-source/tools/verify-trusted-regression-checkouts.sh workflow-source trusted candidate
+
+      - name: Install checksum-verified Godot
+        run: |
+          curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+
+      - name: Run base-owned regressions against the candidate
+        run: bash workflow-source/tools/run-sandboxed-trusted-regressions.sh trusted candidate
