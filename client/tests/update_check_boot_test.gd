@@ -45,6 +45,8 @@ func _ready() -> void:
 	_main.queue_free()
 	await get_tree().process_frame
 	for seam: String in [CharacterStore.SAVE_PATH_ENV, SaveVault.VAULT_PATH_ENV]:
+		CharacterStore.clear_refusals_for_test()
+		SaveVault.clear_refusals_for_test()
 		if not _boot.begin():
 			_fail("future-save isolation was refused")
 			return
@@ -60,6 +62,9 @@ func _ready() -> void:
 		while (_main.get("_update_check_result") as Dictionary).is_empty() and Time.get_ticks_msec() < deadline:
 			await get_tree().process_frame
 		result = _main.get("_update_check_result")
+		if seam == SaveVault.VAULT_PATH_ENV and _main.get("_save_blocked"):
+			_fail("future-vault control was masked by the character refusal latch")
+			return
 		if result.get("error") != "installed save requirements are unknown" or FileAccess.get_sha256(path) != before:
 			_fail("unreadable installed state authorized an update or changed its bytes")
 			return
