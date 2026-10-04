@@ -39,6 +39,58 @@ func _ready() -> void:
 	if not fixture_error.is_empty():
 		_fail(fixture_error)
 		return
+	# Exercise the game's actual handoff, with no pre-existing observation in
+	# installed facts that could mask a missing checker-to-history transfer.
+	var handoff: Node = load("res://scripts/main.gd").new()
+	var handoff_installed := _installed.duplicate(true)
+	handoff_installed.erase("observed_at")
+	var checked_facts := _installed.duplicate(true)
+	checked_facts["observed_at"] = "2030-01-20T00:00:00Z"
+	var checked := UpdateTrust.verify_and_decide(checked_facts, _manifest, _config["root_public_key"], _head)
+	if not checked["trusted"]:
+		handoff.free()
+		_fail("clock handoff control was not authentically verified")
+		return
+	checked["manifest"] = _manifest
+	checked["head"] = _head
+	checked["observed_at"] = checked_facts["observed_at"]
+	var previous_history := OS.get_environment(UpdateHistory.PATH_ENV)
+	OS.set_environment(UpdateHistory.PATH_ENV, _path)
+	var handoff_result: Dictionary = handoff._retain_checked_update(handoff_installed, _config, checked, "2030-01-15T00:00:00Z")
+	OS.set_environment(UpdateHistory.PATH_ENV, previous_history)
+	var handoff_state: Dictionary = _history.read_state(_path, _config)
+	if not handoff_result.get("trusted", false) or handoff_state["state"].get("accepted_at") != checked_facts["observed_at"]:
+		handoff.free()
+		_fail("clock rollback between verification and acceptance lost the checker's observation")
+		return
+	OS.set_environment(UpdateHistory.PATH_ENV, _path)
+	handoff_result = handoff._retain_checked_update(handoff_installed, _config, checked, "2030-01-25T00:00:00Z")
+	OS.set_environment(UpdateHistory.PATH_ENV, previous_history)
+	handoff_state = _history.read_state(_path, _config)
+	if not handoff_result.get("trusted", false) or handoff_state["state"].get("accepted_at") != "2030-01-25T00:00:00Z":
+		handoff.free()
+		_fail("clock advance at acceptance was omitted from retained observation")
+		return
+	var handoff_before := FileAccess.get_sha256(_path)
+	var malformed_checked := checked.duplicate(true)
+	malformed_checked["observed_at"] = null
+	OS.set_environment(UpdateHistory.PATH_ENV, _path)
+	handoff_result = handoff._retain_checked_update(handoff_installed, _config, malformed_checked, "2030-01-25T00:00:00Z")
+	OS.set_environment(UpdateHistory.PATH_ENV, previous_history)
+	if handoff_result.get("trusted", true) or handoff_result.get("error") != "verified observation time is invalid" or FileAccess.get_sha256(_path) != handoff_before:
+		handoff.free()
+		_fail("malformed verified observation was replaced by an acceptance-time fallback")
+		return
+	OS.set_environment(UpdateHistory.PATH_ENV, _path)
+	handoff_result = handoff._retain_checked_update(handoff_installed, _config, checked, "2030-02-02T00:00:00Z")
+	OS.set_environment(UpdateHistory.PATH_ENV, previous_history)
+	handoff.free()
+	var expiry_error := "independently fetched revocation head expired at 2030-02-01T00:00:00Z" \
+		+ " and this installation has already observed 2030-02-02T00:00:00Z"
+	if handoff_result.get("trusted", true) or handoff_result.get("error") != expiry_error or FileAccess.get_sha256(_path) != handoff_before:
+		_fail("clock advance revived evidence expired at acceptance or changed history")
+		return
+	_clean()
 	var accepted: Dictionary = _accept()
 	if not accepted.get("trusted", false):
 		_fail("fresh authenticated history was refused: " + str(accepted.get("error")))

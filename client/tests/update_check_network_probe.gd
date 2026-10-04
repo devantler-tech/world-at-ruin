@@ -47,7 +47,9 @@ func _run() -> void:
 			return fixture["observed_at"])
 	var elapsed := Time.get_ticks_msec() - before
 	if result["trusted"]:
-		result = UpdateHistory.accept(fixture["history_path"], fixture["installed"], fixture["config"],
+		var facts: Dictionary = fixture["installed"].duplicate(true)
+		facts["observed_at"] = result["observed_at"]
+		result = UpdateHistory.accept(fixture["history_path"], facts, fixture["config"],
 			result["manifest"], result["head"], fixture["observed_at"])
 	if result["trusted"] != fixture["accepted"]:
 		_fail("unexpected authentication result: " + str(result["error"]))

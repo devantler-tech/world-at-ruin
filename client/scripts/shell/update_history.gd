@@ -70,6 +70,8 @@ static func accept(path: String, installed: Dictionary, configuration: Dictionar
 		return _refused("experimental update history is disabled")
 	if not _safe_path(path) or not UpdateDecision.is_utc_datetime(observed_at):
 		return _refused("history path or observation time is invalid")
+	if installed.has("observed_at") and not UpdateDecision.is_utc_datetime(installed["observed_at"]):
+		return _refused("verified observation time is invalid")
 	if not FileLock.acquire(path):
 		return _refused("update history is locked by another acceptance")
 	var result := _accept_locked(path, installed, configuration, manifest, head, observed_at, before_commit)
@@ -95,7 +97,11 @@ static func _accept_locked(path: String, installed: Dictionary, config: Dictiona
 	facts["key_certificate_required"] = true
 	facts["key_epoch_high_water"] = state["key_epoch"]
 	facts["manifest_sequence_high_water"] = state["sequence"]
-	facts["observed_at"] = observed_at if observed_at > str(state["accepted_at"]) else str(state["accepted_at"])
+	# Neither a rollback during the handoff nor an older retained observation
+	# can erase a time already used to authenticate this candidate.
+	var verified_at: String = installed.get("observed_at", observed_at)
+	var acceptance_at := verified_at if verified_at > observed_at else observed_at
+	facts["observed_at"] = acceptance_at if acceptance_at > str(state["accepted_at"]) else str(state["accepted_at"])
 	var verdict := UpdateTrust.verify_and_decide(facts, manifest, config["root_public_key"], head)
 	if not verdict["trusted"]:
 		return _refused(str(verdict["error"]))

@@ -22,8 +22,10 @@ there is no unsigned or legacy-key fallback after restart. A higher certified ep
 sequence line while revocation and time remain monotonic. The retained revocation floor is the
 maximum authenticated list version and independent head floor. An unchanged list above an older
 head floor remains eligible; a replayed list below retained knowledge does not. Verification uses
-the later of the current observation and retained accepted time, so clock rollback cannot revive
-expired evidence. Refused or incompatible candidates advance none of these facts.
+the latest of the checker's verified observation, the current acceptance clock and retained accepted
+time. A rollback during the verification-to-history handoff cannot erase an authenticated observation,
+and a clock advance still refuses evidence expired at acceptance. Refused or incompatible candidates
+advance none of these facts.
 
 Network work finishes before the history lock is acquired. The acceptance path reloads current
 history under that lock and re-verifies the entire signed chain before staging. It compares the

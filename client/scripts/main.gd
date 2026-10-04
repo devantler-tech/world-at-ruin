@@ -441,11 +441,20 @@ func _check_updates_after_boot() -> void:
 		if not _update_save_requirements_known():
 			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
 		elif _update_check_result.get("trusted", false):
-			_update_check_result = UpdateHistory.accept(UpdateHistory.history_path(), installed,
-				loaded["document"], _update_check_result["manifest"], _update_check_result["head"],
+			_update_check_result = _retain_checked_update(installed, loaded["document"], _update_check_result,
 				Time.get_datetime_string_from_system(true) + "Z")
 	print("UPDATE_CHECK_FINISHED — %s" % (
 		str(_update_check_result.get("decision", {}).get("action", "refused"))))
+
+
+## Keep the synchronous verification-to-history handoff exercisable without
+## changing the host clock or enabling a test TLS override on the game.
+func _retain_checked_update(installed: Dictionary, config: Dictionary,
+		result: Dictionary, observed_at: String) -> Dictionary:
+	var facts := installed.duplicate(true)
+	facts["observed_at"] = result.get("observed_at")
+	return UpdateHistory.accept(UpdateHistory.history_path(), facts, config,
+		result["manifest"], result["head"], observed_at)
 
 
 func _update_save_requirements_known() -> bool:
