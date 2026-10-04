@@ -880,6 +880,13 @@ jobs:
         run: |
           set -o pipefail
           godot --headless --editor --quit --path client 2>&1 | tee import.log
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+      - name: Experimental native cumulative content packs
+        run: |
+          bash tools/test-contentpack.sh
+          bash tools/test-game-contentpack.sh
       - name: Smoke boot (120 frames)
         run: |
           set -o pipefail

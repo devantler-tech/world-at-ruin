@@ -1,0 +1,11 @@
+scripts/boot_recovery.gd
+scripts/file_lock.gd
+scripts/document_identity.gd
+scripts/private_staging.gd
+scripts/jcs.gd
+scripts/update_trust.gd
+scripts/update_decision.gd
+scripts/rollback_selection.gd
+scripts/update_manifest.gd
+scripts/save_vault.gd
+scripts/character_store.gd
