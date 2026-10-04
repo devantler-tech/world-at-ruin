@@ -61,9 +61,19 @@ test ! -e "$fixture/assets/hijack.gd.uid"
 sed 's/resource_name = "base"/resource_name = "candidate"/' "$fixture/assets/material.tres" > "$probe/material.new"
 mv "$probe/material.new" "$fixture/assets/material.tres"
 printf 'new cumulative content\n' > "$fixture/assets/added.txt"
-cat > "$fixture/assets/pixel.svg" <<'SVG'
-<svg xmlns="http://www.w3.org/2000/svg" width="3" height="2"><rect width="3" height="2" fill="red"/></svg>
-SVG
+# Native generation keeps the temporary image out of repository text and assets.
+cat > "$probe/create-texture.gd" <<'TEXTURE'
+extends SceneTree
+func _initialize() -> void:
+	var image := Image.create(3, 2, false, Image.FORMAT_RGBA8)
+	image.fill(Color.RED)
+	if image.save_png("res://assets/pixel.png") != OK:
+		quit(1)
+		return
+	quit(0)
+TEXTURE
+godot --headless --path "$fixture" --script "$probe/create-texture.gd" > "$probe/texture.log" 2>&1
+test -s "$fixture/assets/pixel.png"
 if bash "$root/tools/build-contentpack.sh" "$fixture" "$probe/default-off"; then
  echo 'content pack builder ran without opt-in' >&2; exit 1
 fi

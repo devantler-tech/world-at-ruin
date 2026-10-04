@@ -21,7 +21,7 @@ func _ready() -> void:
 	if FileAccess.get_file_as_string("res://assets/added.txt") != "new cumulative content\n":
 		_fail("cumulative addition is missing from the old base")
 		return
-	var imported: Texture2D = ResourceLoader.load("res://assets/pixel.svg", "", ResourceLoader.CACHE_MODE_IGNORE)
+	var imported: Texture2D = ResourceLoader.load("res://assets/pixel.png", "", ResourceLoader.CACHE_MODE_IGNORE)
 	if imported == null or imported.get_width() != 3 or imported.get_height() != 2:
 		_fail("freshly imported resource closure cannot load")
 		return
