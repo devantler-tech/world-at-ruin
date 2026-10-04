@@ -22,6 +22,8 @@ type config struct {
 	orphans                                                    orphanConfig
 }
 
+// readConfig validates enabled runtime settings before any dependency is acquired.
+// A disabled module ignores the settings for its optional workers and listener.
 func readConfig(env map[string]string) (config, error) {
 	var cfg config
 	switch env["WAR_HANDOFF_ENABLED"] {

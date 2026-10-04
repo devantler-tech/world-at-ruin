@@ -51,6 +51,8 @@ func InitializeWithLogger(ctx context.Context, logger runtime.Logger, nk runtime
 	return initialize(ctx, nk, initializer, connectRuntime, logger)
 }
 
+// initialize composes dependencies and registers admission and shutdown before
+// starting workers. Failed registration cancels admission and retires resources.
 func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer, connect connector, loggers ...runtime.Logger) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
 	cfg, err := readConfig(env)
@@ -140,6 +142,8 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	return nil
 }
 
+// compose shares one lease store and resource scope across allocation, claims
+// and optional orphan cleanup. Construction starts no reconciliation worker.
 func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.Service, *handoffalloc.Coordinator, http.Handler, *orphanreaper.Reconciler, error) {
 	keyring, err := admissionref.NewKeyring(deps.keys...)
 	if err != nil {

@@ -14,6 +14,8 @@ type orphanConfig struct {
 	settings orphanreaper.Config
 }
 
+// readOrphanConfig consumes cleanup budgets only after the explicit opt-in and
+// refuses invalid values without including their content in an error.
 func readOrphanConfig(env map[string]string) (orphanConfig, error) {
 	var cfg orphanConfig
 	switch env["WAR_HANDOFF_ORPHANS_ENABLED"] {

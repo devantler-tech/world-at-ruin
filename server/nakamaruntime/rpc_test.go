@@ -140,6 +140,8 @@ func TestShutdownWaitsForInFlightHandlersAndRefusesNewOnes(t *testing.T) {
 	}
 }
 
+// TestShutdownWaitIsBoundedByItsContext distinguishes the hook's bounded wait
+// from actual completion of its held handler and reconciliation worker.
 func TestShutdownWaitIsBoundedByItsContext(t *testing.T) {
 	handlers := &handlerGate{}
 	if !handlers.enter() {

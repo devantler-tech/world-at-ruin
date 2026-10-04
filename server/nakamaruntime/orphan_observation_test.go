@@ -16,13 +16,18 @@ type orphanLog struct {
 	messages []string
 }
 
+// Info retains successful observations for assertions on their public vocabulary.
 func (l *orphanLog) Info(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf(format, args...))
 }
+
+// Warn retains failure observations without treating them as worker termination.
 func (l *orphanLog) Warn(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf(format, args...))
 }
 
+// TestOrphanObservationHasOnlyCountsAndClosedOutcomeClasses covers every outcome
+// class and verifies that arbitrary provider content never enters the log.
 func TestOrphanObservationHasOnlyCountsAndClosedOutcomeClasses(t *testing.T) {
 	log := &orphanLog{}
 	observe := orphanObservation(log)

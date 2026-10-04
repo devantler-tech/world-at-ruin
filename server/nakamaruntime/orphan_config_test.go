@@ -41,6 +41,8 @@ func TestOrphanConfigurationRefusesBeforeConnecting(t *testing.T) {
 	}
 }
 
+// TestOrphanConfigurationDefaultsAndSupportedBudgetEdges accepts defaults and
+// both supported bounds without changing the configured reconciliation budget.
 func TestOrphanConfigurationDefaultsAndSupportedBudgetEdges(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -65,6 +67,8 @@ func TestOrphanConfigurationDefaultsAndSupportedBudgetEdges(t *testing.T) {
 	}
 }
 
+// TestDisabledOrphanConfigurationIsInert verifies that disabled cleanup ignores
+// unused settings and cannot activate its enclosing handoff module.
 func TestDisabledOrphanConfigurationIsInert(t *testing.T) {
 	for _, enabled := range []string{"", "false"} {
 		env := validEnvironment()

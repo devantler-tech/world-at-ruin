@@ -45,6 +45,8 @@ type orphanHTTP struct {
 	deleteFailed bool
 }
 
+// newOrphanHTTP copies resource identities into an independent API fixture so
+// conditional mutation and replacement can be checked without changing callers.
 func newOrphanHTTP(t *testing.T, servers ...*agonesv1.GameServer) *orphanHTTP {
 	t.Helper()
 	f := &orphanHTTP{t: t, servers: make(map[string]*agonesv1.GameServer)}
@@ -54,6 +56,8 @@ func newOrphanHTTP(t *testing.T, servers ...*agonesv1.GameServer) *orphanHTTP {
 	return f
 }
 
+// orphanServer creates allocated capacity carrying the exact managed Fleet and
+// hashed attempt labels used by the production resource scan.
 func orphanServer(t *testing.T, name, attempt string) *agonesv1.GameServer {
 	t.Helper()
 	digest, err := agones.CorrelationLabel(attempt)
@@ -67,18 +71,22 @@ func orphanServer(t *testing.T, name, attempt string) *agonesv1.GameServer {
 	}
 }
 
+// setFault changes API failure behavior while the supervised worker is running.
 func (f *orphanHTTP) setFault(fault string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fault = fault
 }
 
+// snapshot returns stable copies of attempted deletions and scan timestamps.
 func (f *orphanHTTP) snapshot() ([]string, []time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.deletes...), append([]time.Time(nil), f.lists...)
 }
 
+// ServeHTTP enforces namespaced enumeration and UID/resource-version deletion
+// preconditions while modeling partial reads, replacement and lost responses.
 func (f *orphanHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -188,8 +196,13 @@ type orphanHTTPLog struct {
 	messages chan string
 }
 
+// Info captures successful sweep observations through Nakama's logger interface.
 func (l orphanHTTPLog) Info(format string, args ...interface{}) { l.record(format, args...) }
+
+// Warn captures unsuccessful sweep observations through the same bounded sink.
 func (l orphanHTTPLog) Warn(format string, args ...interface{}) { l.record(format, args...) }
+
+// record keeps observation capture from blocking the reconciliation worker.
 func (l orphanHTTPLog) record(format string, args ...interface{}) {
 	select {
 	case l.messages <- fmt.Sprintf(format, args...):
@@ -197,6 +210,8 @@ func (l orphanHTTPLog) record(format string, args ...interface{}) {
 	}
 }
 
+// waitOrphanLog requires a bounded observation of the requested outcome and
+// rejects provider error content in every intervening log entry.
 func waitOrphanLog(t *testing.T, log orphanHTTPLog, contains string, timeout time.Duration) string {
 	t.Helper()
 	timer := time.NewTimer(timeout)
@@ -216,6 +231,8 @@ func waitOrphanLog(t *testing.T, log orphanHTTPLog, contains string, timeout tim
 	}
 }
 
+// orphanHTTPDependencies supplies the real generated Agones HTTP client and
+// cryptographic material while replacing only external API service behavior.
 func orphanHTTPDependencies(t *testing.T, f *orphanHTTP) dependencies {
 	t.Helper()
 	server := httptest.NewServer(f)
@@ -230,6 +247,8 @@ func orphanHTTPDependencies(t *testing.T, f *orphanHTTP) dependencies {
 	return dependencies{allocator: allocatorFunction{}, resources: client.AgonesV1().GameServers("world-at-ruin"), keys: []*rsa.PrivateKey{key}}
 }
 
+// startOrphanHTTPRuntime initializes the actual composed module and retains its
+// shutdown hook for cleanup after each test's behavioral observations.
 func startOrphanHTTPRuntime(t *testing.T, env map[string]string, storage *moduleStorage, deps dependencies) (*registration, orphanHTTPLog) {
 	t.Helper()
 	r, log := &registration{}, orphanHTTPLog{messages: make(chan string, 100)}
@@ -240,6 +259,8 @@ func startOrphanHTTPRuntime(t *testing.T, env map[string]string, storage *module
 	return r, log
 }
 
+// orphanHTTPEnvironment uses the minimum supported grace and cadence, keeping
+// elapsed-time assertions real while bounding each API and private-store scan.
 func orphanHTTPEnvironment() map[string]string {
 	env := validEnvironment()
 	env["WAR_HANDOFF_ORPHANS_ENABLED"] = "true"
@@ -250,6 +271,8 @@ func orphanHTTPEnvironment() map[string]string {
 	return env
 }
 
+// historicalOrphanLeases reads the retained schema fixture selected by a test's
+// integer version, preserving its raw records for byte-identity assertions.
 func historicalOrphanLeases(t *testing.T, version int) []json.RawMessage {
 	t.Helper()
 	data, err := os.ReadFile(fmt.Sprintf("../nakamalease/testdata/golden_lease_v%d.json", version))
@@ -382,6 +405,8 @@ func TestComposedOrphansProtectEveryHistoricalLeaseShape(t *testing.T) {
 	}
 }
 
+// TestOrphanRuntimeRefusesIncompleteHTTPOrPrivateEvidence verifies that broken
+// enumeration, expired budgets and malformed leases permit no cleanup mutation.
 func TestOrphanRuntimeRefusesIncompleteHTTPOrPrivateEvidence(t *testing.T) {
 	for _, fault := range []string{"partial", "revision", "cycle", "page budget", "timeout", "malformed lease", "lease page budget"} {
 		t.Run(fault, func(t *testing.T) {
