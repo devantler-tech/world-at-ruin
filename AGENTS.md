@@ -885,6 +885,8 @@ everything shipped afterwards is held to.
   `SaveVault.vault_path()` / `WAR_VAULT_PATH`. `SaveIsolation` (`tests/save_isolation.gd`) is the
   ONE place that lists those seams and redirects them all to throwaway `user://*_boot_probe.json`
   probes, so a seam added there reaches every harness without a single test changing.
+  It also disables ambient experimental update checks before scene loading and restores their
+  environment after the test. A networking control opts in only after isolation has succeeded.
   Boot with **`IsolatedBoot`** (`tests/isolated_boot.gd`): `boot()` redirects every seam and returns
   the instantiated scene, or `null` when the redirect did not take — so a caller cannot hold a
   booted scene and an unisolated save at the same time. Drive `SaveIsolation` directly only when the

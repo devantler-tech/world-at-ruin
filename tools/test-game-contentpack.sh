@@ -21,6 +21,7 @@ mkdir -p "$base/.godot" "$base/scripts"
 printf 'config_version=5\n[application]\nconfig/name="Immutable pack proof base"\n' > "$base/project.godot"
 cp "$probe/catalogue/project/.godot/global_script_class_cache.cfg" "$base/.godot/global_script_class_cache.cfg"
 while IFS= read -r owner; do
+ mkdir -p "$base/$(dirname -- "$owner")"
  cp "$root/client/$owner" "$base/$owner"
  if [ -f "$root/client/$owner.uid" ]; then cp "$root/client/$owner.uid" "$base/$owner.uid"; fi
 done < "$root/server/internal/contentpack/shell-resources.txt"
