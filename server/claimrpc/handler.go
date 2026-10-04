@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"github.com/devantler-tech/world-at-ruin/server/zoneclaim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 )
 
@@ -50,7 +52,7 @@ func NewHandler(store *nakamalease.Store, resolver Resolver, cfg Config) (http.H
 // claimed durably; every refusal uses the same response without private detail.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if r.Method != http.MethodPost || r.URL.Path != "/v1/claim" || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/json" || !verifiedPeer(r.TLS, time.Now()) {
+	if r.Method != http.MethodPost || (r.URL.Path != "/v1/claim" && r.URL.Path != "/v2/claim") || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/json" || !verifiedPeer(r.TLS, time.Now()) {
 		refuse(w)
 		return
 	}
@@ -73,8 +75,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		refuse(w)
 		return
 	}
-	if err := h.claim(ctx, request); err != nil || ctx.Err() != nil {
+	claimed, err := h.claim(ctx, request)
+	if err != nil || ctx.Err() != nil {
 		refuse(w)
+		return
+	}
+	if r.URL.Path == "/v2/claim" {
+		body, err := json.Marshal(receiptDocument(zoneclaim.Receipt{Namespace: request.Namespace, Observer: request.Observer, Fence: nakamalease.SessionFence{
+			LeaseObjectID: request.LeaseObjectID, LeaseVersion: claimed.Version, AttemptDigest: request.AttemptDigest,
+			AllocationID: request.AllocationID, GameServerUID: request.GameServerUID, Generation: claimed.Lease.ClaimedAt,
+		}}))
+		if err != nil {
+			refuse(w)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -82,34 +98,34 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // claim independently resolves the pinned allocation before comparing its token
 // and competing with cleanup on the observed lease version.
-func (h *handler) claim(ctx context.Context, request claimRequest) error {
+func (h *handler) claim(ctx context.Context, request claimRequest) (nakamalease.Record, error) {
 	record, err := h.store.LoadForClaim(ctx, request.LeaseObjectID)
 	if err != nil {
-		return err
+		return nakamalease.Record{}, err
 	}
 	lease := record.Lease
 	if lease.ReaderOnly() {
-		return ErrRefused
+		return nakamalease.Record{}, ErrRefused
 	}
 	digest, err := agones.CorrelationLabel(lease.AttemptID)
 	if err != nil || digest != request.AttemptDigest || lease.AllocationID != request.AllocationID || lease.Observer != request.Observer || lease.Staging || lease.Releasing || !time.Now().Before(lease.ExpiresAt) || !admissionref.ReferenceBinds(lease.SecretRef, request.GameServerUID) {
-		return ErrRefused
+		return nakamalease.Record{}, ErrRefused
 	}
 	callCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 	defer cancel()
 	allocation, err := h.resolver.Resolve(callCtx, lease)
 	if err != nil || callCtx.Err() != nil || allocation.ID != lease.AllocationID || allocation.Observer != lease.Observer || !allocation.LeaseExpiresAt.Equal(lease.ExpiresAt) {
-		return ErrRefused
+		return nakamalease.Record{}, ErrRefused
 	}
 	expected, err := zonesock.MintToken(allocation.AdmissionSecret, lease.AllocationID, lease.Observer, lease.ExpiresAt)
 	if err != nil || !hmac.Equal([]byte(expected), []byte(request.Token)) {
-		return ErrRefused
+		return nakamalease.Record{}, ErrRefused
 	}
-	_, err = h.store.ClaimByKey(callCtx, request.LeaseObjectID, record, time.Now())
+	claimed, err := h.store.ClaimByKey(callCtx, request.LeaseObjectID, record, time.Now())
 	if callCtx.Err() != nil {
-		return ErrRefused
+		return nakamalease.Record{}, ErrRefused
 	}
-	return err
+	return claimed, err
 }
 
 // TLS verifies chains at handshake time. Check their validity again so a

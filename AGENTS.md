@@ -648,7 +648,14 @@ everything shipped afterwards is held to.
   exact namespace/GameServer UID; opaque lease lookup, pinned resource/envelope resolution and
   canonical token verification precede a conditional claim in the existing schema; no-show cleanup
   races on that same version, replay reads durable state, and ambiguous admission retains the claim;
-  strict bounded requests, generic refusals and a verified client with no redirects; attested
+  strict bounded requests, generic refusals and a verified client with no redirects;
+  additive `/v2/claim` returns the original durable version/generation while `/v1/claim`
+  retains its empty acknowledgement. Explicit `zoneclaim.NewReceiptGate` admission retains
+  one immutable receipt across reconnects and failed upgrades; the command keeps the v1 gate.
+  The separately constructed completion handler requires exact workload identity plus a
+  server-injected irreversible termination verifier before original-version fencing and
+  UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
+  attested
   workload certificate issuance, platform listener deployment and session-end recovery remain
   separate work; the command composes the gate only through default-off `-private-claims`,
   requiring sealed Agones admission and separate verified mTLS credentials, loading bounded
@@ -657,7 +664,8 @@ everything shipped afterwards is held to.
   original claimed version, claim stamp, opaque key, attempt digest, allocation and pinned UID
   must all agree before atomically entering the existing release barrier; exact-UID resource
   cleanup precedes conditional reservation deletion; failures retain restart recovery state;
-  no new schema, endpoint, death detector or runtime activation; trusted end-of-session proof
+  no new storage schema or death detector; the private completion interface does not activate
+  a production listener or provide termination proof. Trusted end-of-session proof
   and production lifecycle composition remain #567/#569 work),
   the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
