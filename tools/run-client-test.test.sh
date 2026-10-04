@@ -16,7 +16,7 @@ mkdir -p "${bin_dir}" "${fixture_root}/client/tests"
 # Use a deliberately curated PATH so GNU timeout/gtimeout are absent even on
 # Linux CI. The runner must supervise Godot itself rather than accidentally
 # succeeding because the host happens to carry coreutils.
-for utility in grep mkfifo mktemp rm sleep tail tee; do
+for utility in grep mkfifo mktemp rm sed sleep tail tee; do
 	utility_path="$(command -v "${utility}")"
 	ln -s "${utility_path}" "${bin_dir}/${utility}"
 done
@@ -28,6 +28,9 @@ set -euo pipefail
 case "${FAKE_GODOT_MODE:-success}" in
 success)
 	printf '%s\n' "TEST PASS — fake Godot completed"
+	;;
+workflow-log)
+	printf '%s\n' '::notice::benign fixture data' '##[notice]benign fixture data' 'TEST FAIL -- benign fixture failure'
 	;;
 fail)
 	printf '%s\n' "fake Godot assertion failed"
@@ -150,6 +153,23 @@ if [ "${case_status}" -ne 0 ]; then
 	fail "an expected warning was confused with a script exception: ${case_output}"
 fi
 
+# A failure excerpt remains data after the contained process restores commands.
+run_case workflow-log workflow-log 2
+if [ "${case_status}" -eq 0 ] || [[ "${case_output}" != *'reported TEST FAIL'* ]]; then
+  fail 'workflow-like log fixture did not preserve its failing verdict'
+fi
+excerpt="$(printf '%s\n' "${case_output}" | awk '/^::error::ability_registry_test reported TEST FAIL/ {seen=1;next} seen {print}')"
+if [[ "${excerpt}" == *'::notice::'* || "${excerpt}" == *'##[notice]'* ]]; then
+  fail 'failure excerpt replayed workflow command delimiters'
+fi
+if [[ "${excerpt}" != *': :notice: :benign fixture data'* || "${excerpt}" != *'# #[notice]benign fixture data'* ]]; then
+  fail 'failure excerpt lost its safely displayed diagnostic'
+fi
+if ! grep -Fq '::notice::benign fixture data' "${fixture_root}/ability_registry_test.log" ||
+  ! grep -Fq '##[notice]benign fixture data' "${fixture_root}/ability_registry_test.log"; then
+  fail 'display escaping changed the original verdict log'
+fi
+
 run_case timeout hang 1
 if [ "${case_status}" -eq 0 ]; then
 	fail "a hung Godot process was accepted"
@@ -188,6 +208,28 @@ else
 	fi
 fi
 unset FAKE_GODOT_CHILD_PID_FILE
+
+# The protected controller selects a fresh host-owned log directory.
+private_logs="${tmp_dir}/private-logs"
+mkdir "${private_logs}"
+sentinel="${tmp_dir}/log-sentinel"
+printf 'unchanged inert sentinel\n' >"${sentinel}"
+rm "${fixture_root}/ability_registry_test.log"
+ln -s "${sentinel}" "${fixture_root}/ability_registry_test.log"
+export RUN_CLIENT_TEST_LOG_DIR="${private_logs}"
+run_case private-log success 2
+unset RUN_CLIENT_TEST_LOG_DIR
+if [ "${case_status}" -ne 0 ]; then
+  fail "private host capture did not accept a passing scene: ${case_output}"
+fi
+if [ "$(cat "${sentinel}")" != 'unchanged inert sentinel' ]; then
+  fail 'candidate log symlink redirected the real verdict runner output'
+fi
+if [ ! -f "${private_logs}/ability_registry_test.log" ] ||
+  ! grep -q 'TEST PASS' "${private_logs}/ability_registry_test.log"; then
+  fail 'passing scene output was not captured in the host-owned directory'
+fi
+rm "${fixture_root}/ability_registry_test.log"
 
 mv "${bin_dir}/godot" "${tmp_dir}/godot-disabled"
 run_case missing-godot success 2

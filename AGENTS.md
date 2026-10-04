@@ -861,6 +861,8 @@ everything shipped afterwards is held to.
   covered by ordinary CI; configuration-dependent features may be absent or fail in the frozen suite.
   Autoloads and editor plugins are unsupported until the controller contract is reviewed.
   Only disposable import state is writable during the editor scan.
+  Host import and scene logs are captured in a fresh controller-owned directory outside the
+  candidate tree, so candidate log symlinks cannot redirect host writes.
   The real-container refusal test pins that execution boundary. Activation requires an additive
   organization ruleset binding to this reviewed main source, live readback, actual nonzero trusted
   scene execution and tamper canaries. A skipped ordinary job is preparation, never enforcement proof.

@@ -67,12 +67,14 @@ fi
 
 scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
 evaluation_root="${scratch_root}/candidate"
+host_logs="${scratch_root}/logs"
 # Remove only this invocation's private evaluation tree and reconstructed ledger.
 cleanup() {
 	rm -rf "${scratch_root}"
 }
 trap cleanup EXIT
-mkdir "${evaluation_root}"
+# Host output never follows a path supplied by the copied candidate.
+mkdir "${evaluation_root}" "${host_logs}"
 
 # Accept only the already shipped declaration or the one planned mastery
 # activation. Construct the permitted bytes ourselves: candidate comments,
@@ -145,12 +147,12 @@ rm "${validated_ledger}"
 if ! (
 	cd "${evaluation_root}"
 	set -o pipefail
-	godot --headless --editor --quit --path client 2>&1 | tee trusted-import.log
+	godot --headless --editor --quit --path client 2>&1 | tee "${host_logs}/import.log"
 ); then
 	echo "::error::candidate client failed the trusted headless import" >&2
 	exit 1
 fi
-if grep -qE 'SCRIPT ERROR|^ERROR' "${evaluation_root}/trusted-import.log"; then
+if grep -qE 'SCRIPT ERROR|^ERROR' "${host_logs}/import.log"; then
 	echo "::error::candidate client reported errors during the trusted headless import" >&2
 	exit 1
 fi
@@ -160,7 +162,7 @@ for scene in "${trusted_scenes[@]}"; do
 	name="$(basename "${scene}" .tscn)"
 	(
 		cd "${evaluation_root}"
-		"${trusted_runner}" "${name}" "trusted required regression failed"
+		RUN_CLIENT_TEST_LOG_DIR="${host_logs}" "${trusted_runner}" "${name}" "trusted required regression failed"
 	)
 	ran=$((ran + 1))
 done

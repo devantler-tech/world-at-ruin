@@ -151,6 +151,36 @@ else
 	fi
 fi
 
+# Candidate log links must never redirect host capture into unrelated files.
+cp "${trusted}/tools/run-client-test.sh" "${tmp_dir}/fixture-runner"
+cp "${repo_root}/tools/run-client-test.sh" "${trusted}/tools/run-client-test.sh"
+cat >"${bin_dir}/godot" <<'GODOT'
+#!/bin/bash
+set -euo pipefail
+if [[ " $* " == *" --editor "* ]]; then
+  printf '%s\n' 'benign fixture import'
+else
+  printf '%s\n' 'TEST PASS -- benign fixture scene'
+fi
+GODOT
+for sink in trusted-import alpha_test beta_test; do
+  printf 'unchanged inert sentinel\n' >"${tmp_dir}/${sink}.sentinel"
+  ln -s "${tmp_dir}/${sink}.sentinel" "${candidate}/${sink}.log"
+done
+if ! PATH="${bin_dir}:${PATH}" /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+  fail "real verdict runner did not accept benign scenes with candidate log links: $(<"${control_output}")"
+fi
+for sink in trusted-import alpha_test beta_test; do
+  if [ "$(cat "${tmp_dir}/${sink}.sentinel")" != 'unchanged inert sentinel' ]; then
+    fail "candidate ${sink}.log redirected host output"
+  fi
+  rm "${candidate}/${sink}.log"
+done
+[ "$(grep -c 'TEST PASS -- benign fixture scene' "${control_output}")" -eq 2 ] ||
+  fail 'real verdict runner did not capture both benign scene outcomes'
+cp "${tmp_dir}/fixture-runner" "${trusted}/tools/run-client-test.sh"
+cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
+
 # Missing inputs and import failures refuse before any trusted scene can run.
 for broken in project trusted_project trusted_project_link runner import; do
 	: >"${run_log}"
