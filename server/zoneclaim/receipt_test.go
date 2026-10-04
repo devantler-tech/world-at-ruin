@@ -136,3 +136,34 @@ func TestReceiptGateCanceledWaiterDoesNotWaitForAnotherRPC(t *testing.T) {
 	close(release)
 	<-first
 }
+
+func TestReceiptGateReconnectAcceptsSameGenerationInstant(t *testing.T) {
+	for _, mode := range []string{"different location", "stripped monotonic clock"} {
+		t.Run(mode, func(t *testing.T) {
+			b := agones.ClaimBinding{Namespace: "world", LeaseObjectID: strings.Repeat("0", 64), AttemptDigest: strings.Repeat("a", 52), AllocationID: "zone-1", GameServerUID: "uid-1"}
+			r := Receipt{Namespace: "world", Observer: 1, Fence: nakamalease.SessionFence{LeaseObjectID: b.LeaseObjectID, AttemptDigest: b.AttemptDigest, AllocationID: b.AllocationID, GameServerUID: b.GameServerUID, LeaseVersion: "v2", Generation: time.Now()}}
+			gate, err := NewReceiptGate(&receiptSource{binding: b, current: true}, receiptFunc(func(context.Context, agones.ClaimBinding, string, sim.EntityID) (Receipt, error) { return r, nil }))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := gate.Claim(t.Context(), "token", 1); err != nil {
+				t.Fatal(err)
+			}
+			original, _ := gate.Receipt()
+			r.Fence.Generation = r.Fence.Generation.Round(0)
+			if mode == "different location" {
+				r.Fence.Generation = r.Fence.Generation.In(time.FixedZone("receipt replay", 3600))
+			}
+			if err := gate.Claim(t.Context(), "token", 1); err != nil {
+				t.Fatal("same generation instant refused on reconnect")
+			}
+			if retained, _ := gate.Receipt(); retained != original {
+				t.Fatal("reconnect replaced the original receipt")
+			}
+			r.Fence.Generation = r.Fence.Generation.Add(time.Nanosecond)
+			if gate.Claim(t.Context(), "token", 1) == nil {
+				t.Fatal("different generation instant admitted")
+			}
+		})
+	}
+}

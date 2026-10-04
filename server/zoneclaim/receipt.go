@@ -16,6 +16,16 @@ type Receipt struct {
 	Fence     nakamalease.SessionFence
 }
 
+// Equal compares every identity field and the exact generation instant without
+// requiring the same time zone representation or process-local monotonic clock.
+func (r Receipt) Equal(other Receipt) bool {
+	a, b := r.Fence, other.Fence
+	return r.Namespace == other.Namespace && r.Observer == other.Observer &&
+		a.LeaseObjectID == b.LeaseObjectID && a.LeaseVersion == b.LeaseVersion &&
+		a.AttemptDigest == b.AttemptDigest && a.AllocationID == b.AllocationID &&
+		a.GameServerUID == b.GameServerUID && a.Generation.Equal(b.Generation)
+}
+
 // Matches binds a receipt to the server-observed allocation and player observer.
 // Storage versions are bounded printable opaque values, never wildcard writes.
 func (r Receipt) Matches(binding agones.ClaimBinding, observer sim.EntityID) bool {

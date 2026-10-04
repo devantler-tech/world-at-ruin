@@ -133,6 +133,42 @@ func TestCompletionClientSendsOnceAndRefusesUnexpectedResponses(t *testing.T) {
 	}
 }
 
+func TestCompletionClientAllowsCallerBudgetBeyondClaimTimeout(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	receipt := f.admittedReceipt(t)
+	var cleanupCalls atomic.Int32
+	h, err := NewCompletionHandler(f.store, endVerifierFunc(func(ctx context.Context, _ zoneclaim.Receipt) error {
+		timer := time.NewTimer(5500 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	}), func(context.Context, nakamalease.Lease) error { cleanupCalls.Add(1); return nil }, Config{Namespace: "world", TrustDomain: "claims.example", Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(h)
+	server.TLS = f.serverTLS
+	server.StartTLS()
+	defer server.Close()
+	client, err := NewCompletionClient(server.URL+"/v1/session/end", f.clientTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := client.Complete(ctx, receipt); err != nil {
+		t.Fatal("completion stopped before its caller budget")
+	}
+	if cleanupCalls.Load() != 1 {
+		t.Fatal("completion did not observe exact cleanup")
+	}
+}
+
 func TestReceiptClientRejectsMalformedOrSubstitutedIdentity(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	document := `{"schema":1,"namespace":"world","lease_object_id":"` + f.binding.LeaseObjectID + `","lease_version":"v2","attempt_digest":"` + f.binding.AttemptDigest + `","allocation_id":"zone-1","gameserver_uid":"uid-1","observer":1,"generation_nanos":"2000000000000000001"}`

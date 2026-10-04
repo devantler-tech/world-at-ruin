@@ -67,6 +67,8 @@ func decodeReceipt(reader io.Reader) (zoneclaim.Receipt, error) {
 	return r, nil
 }
 
+// receiptDocument projects the original fence into the non-secret wire shape
+// without refreshing ownership or losing generation precision.
 func receiptDocument(r zoneclaim.Receipt) receiptJSON {
 	return receiptJSON{Schema: 1, Namespace: r.Namespace, LeaseObjectID: r.Fence.LeaseObjectID, LeaseVersion: r.Fence.LeaseVersion, AttemptDigest: r.Fence.AttemptDigest, AllocationID: r.Fence.AllocationID, GameServerUID: r.Fence.GameServerUID, Observer: r.Observer, Generation: strconv.FormatInt(r.Fence.Generation.UnixNano(), 10)}
 }

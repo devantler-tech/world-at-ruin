@@ -72,14 +72,14 @@ func TestCompletionRevalidatesOwnershipAfterTerminationVerification(t *testing.T
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 			r := f.admittedReceipt(t)
-			expand := func() {
+			expand := func() error {
 				object, ok := f.storage.Get(nakamalease.Collection, r.Fence.LeaseObjectID, "")
 				if !ok {
-					t.Fatal("missing claimed fixture")
+					return errors.New("missing claimed fixture")
 				}
 				var fields map[string]json.RawMessage
 				if err := json.Unmarshal([]byte(object.Value), &fields); err != nil {
-					t.Fatal(err)
+					return err
 				}
 				fields["schema"] = json.RawMessage(`4`)
 				fields["allocator_generation_id"] = json.RawMessage(`"generation:1"`)
@@ -87,13 +87,16 @@ func TestCompletionRevalidatesOwnershipAfterTerminationVerification(t *testing.T
 				fields["allocator_pod_uid"] = json.RawMessage(`"pod-allocator-1"`)
 				data, err := json.Marshal(fields)
 				if err != nil {
-					t.Fatal(err)
+					return err
 				}
 				object.Value = string(data)
 				f.storage.Seed(object)
+				return nil
 			}
 			if mode == "expanded before proof" {
-				expand()
+				if err := expand(); err != nil {
+					t.Fatal(err)
+				}
 			}
 			proofCalls := 0
 			cleanupCalls := 0
@@ -101,7 +104,10 @@ func TestCompletionRevalidatesOwnershipAfterTerminationVerification(t *testing.T
 			client, _ := f.completion(t, func(context.Context, zoneclaim.Receipt) error {
 				proofCalls++
 				if mode == "expanded during proof" {
-					expand()
+					if err := expand(); err != nil {
+						t.Error(err)
+						return err
+					}
 				} else {
 					object, _ := f.storage.Get(nakamalease.Collection, r.Fence.LeaseObjectID, "")
 					object.Version = "replacement-version"
@@ -237,15 +243,18 @@ func TestAuthenticatedCompletionFencesBeforeExactUIDCleanup(t *testing.T) {
 				deletes++
 				deletion, ok := action.(kubetesting.DeleteAction)
 				if !ok {
-					t.Fatal("unexpected delete action")
+					t.Error("unexpected delete action")
+					return true, nil, errors.New("unexpected delete action")
 				}
 				options := deletion.GetDeleteOptions()
 				if options.Preconditions == nil || options.Preconditions.UID == nil || string(*options.Preconditions.UID) != "uid-1" {
-					t.Fatal("cleanup lost exact UID")
+					t.Error("cleanup lost exact UID")
+					return true, nil, errors.New("cleanup lost exact UID")
 				}
 				barrier, err := f.store.LoadForClaim(t.Context(), r.Fence.LeaseObjectID)
 				if err != nil || !barrier.Lease.Releasing || !barrier.Lease.ClaimedAt.IsZero() {
-					t.Fatal("deletion preceded durable releasing barrier")
+					t.Error("deletion preceded durable releasing barrier")
+					return true, nil, errors.New("deletion preceded durable releasing barrier")
 				}
 				if fail {
 					return true, nil, errors.New("private cleanup failure")

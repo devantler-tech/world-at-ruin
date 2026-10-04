@@ -26,10 +26,12 @@ type Client struct {
 // NewClient refuses plaintext, unverified TLS and missing client credentials.
 // The caller owns certificate rotation; construct a replacement client on reload.
 func NewClient(endpoint string, config *tls.Config) (*Client, error) {
-	return newClient(endpoint, config, "/v1/claim")
+	return newClient(endpoint, config, "/v1/claim", 5*time.Second)
 }
 
-func newClient(endpoint string, config *tls.Config, path string) (*Client, error) {
+// newClient validates the fixed private route and owns its isolated transport.
+// A zero timeout requires the caller to apply a bounded request context.
+func newClient(endpoint string, config *tls.Config, path string, timeout time.Duration) (*Client, error) {
 	address, err := url.Parse(endpoint)
 	if err != nil || address.Scheme != "https" || address.Host == "" || address.User != nil || address.Path != path || address.RawPath != "" || address.RawQuery != "" || address.Fragment != "" || config == nil || config.InsecureSkipVerify || config.RootCAs == nil || len(config.Certificates) == 0 {
 		return nil, ErrRefused
@@ -38,8 +40,8 @@ func newClient(endpoint string, config *tls.Config, path string) (*Client, error
 	if tlsConfig.MinVersion < tls.VersionTLS12 {
 		tlsConfig.MinVersion = tls.VersionTLS12
 	}
-	transport := &http.Transport{TLSClientConfig: tlsConfig, MaxConnsPerHost: 4, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second, ResponseHeaderTimeout: 5 * time.Second, DisableCompression: true}
-	client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	transport := &http.Transport{TLSClientConfig: tlsConfig, MaxConnsPerHost: 4, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second, ResponseHeaderTimeout: timeout, DisableCompression: true}
+	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return &Client{endpoint: endpoint, http: client, transport: transport}, nil
 }
 

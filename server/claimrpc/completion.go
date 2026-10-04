@@ -41,6 +41,8 @@ func NewCompletionHandler(store *nakamalease.Store, verifier SessionEndVerifier,
 	return &completionHandler{store: store, verifier: verifier, cleanup: cleanup, config: cfg}, nil
 }
 
+// ServeHTTP authenticates a bounded descriptor before consulting termination
+// authority, then revalidates and consumes only that original durable fence.
 func (h *completionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/session/end" || r.URL.RawPath != "" || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/json" || !verifiedPeer(r.TLS, time.Now()) {
@@ -90,6 +92,8 @@ func (h *completionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// completionMatches refuses incompatible reader states and different ownership
+// before any independent authority lookup can have an effect.
 func completionMatches(record nakamalease.Record, r zoneclaim.Receipt) bool {
 	l := record.Lease
 	digest, err := agones.CorrelationLabel(l.AttemptID)
@@ -102,19 +106,26 @@ func completionMatches(record nakamalease.Record, r zoneclaim.Receipt) bool {
 // It is separately constructed and never changes the legacy claim client's path.
 type CompletionClient struct{ client *Client }
 
+// NewCompletionClient validates a fixed mutually authenticated endpoint.
+// Complete applies the caller's deadline with a thirty-second upper bound.
 func NewCompletionClient(endpoint string, config *tls.Config) (*CompletionClient, error) {
-	client, err := newClient(endpoint, config, "/v1/session/end")
+	client, err := newClient(endpoint, config, "/v1/session/end", 0)
 	if err != nil {
 		return nil, err
 	}
 	return &CompletionClient{client: client}, nil
 }
 
+// Close retires this client's idle connections without changing session state.
 func (c *CompletionClient) Close() { c.client.Close() }
 
 // Complete sends once. A lost or refused acknowledgement never invokes cleanup
 // locally, refreshes the descriptor, follows a redirect or automatically retries.
+// The caller's cancellation and deadline apply throughout the request, with a
+// thirty-second ceiling even when the supplied context has no deadline.
 func (c *CompletionClient) Complete(ctx context.Context, r zoneclaim.Receipt) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	body, err := json.Marshal(receiptDocument(r))
 	if err != nil {
 		return ErrRefused

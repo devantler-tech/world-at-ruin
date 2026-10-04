@@ -25,6 +25,8 @@ type ReceiptGate struct {
 	captured  bool
 }
 
+// NewReceiptGate requires explicit receipt-capable admission dependencies and
+// constructs one immutable allocation lifetime; it starts no background work.
 func NewReceiptGate(source BindingSource, backend ReceiptClaimer) (*ReceiptGate, error) {
 	if source == nil || backend == nil {
 		return nil, ErrRefused
@@ -52,7 +54,7 @@ func (g *ReceiptGate) Claim(ctx context.Context, token string, observer sim.Enti
 		return ErrRefused
 	}
 	receipt, err := g.backend.ClaimWithReceipt(ctx, binding, token, observer)
-	if err != nil || !receipt.Matches(binding, observer) || (captured && original != receipt) {
+	if err != nil || !receipt.Matches(binding, observer) || (captured && !original.Equal(receipt)) {
 		return ErrRefused
 	}
 	if !captured {
