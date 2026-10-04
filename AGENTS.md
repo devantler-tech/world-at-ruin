@@ -933,6 +933,11 @@ everything shipped afterwards is held to.
   character, binding and audit tests assert preserved fields; lease fixtures retain each shipped shape's fields
   alongside separate transition tests. Fixture immutability alone does not prove lossless reading.
   Follow [the server save-data contract](docs/design/server-save-data.md) for schema changes.
+- **Offline update publication:** `server/cmd/updatepublisher` requires `-experimental` for every operation.
+  It is not imported by runtime composition and does not configure or publish production keys.
+  Run `GODOT_BIN=godot bash tools/test-updatepublisher.sh` after the client import to prove
+  actual command output reaches the native verifier. See
+  [offline publication](docs/design/offline-update-publisher.md) and ADR 0013.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
   and golden-hash tests), `go build ./...`, and `govulncheck ./...`; run `govulncheck ./...` from

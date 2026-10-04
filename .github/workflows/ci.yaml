@@ -883,6 +883,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
+      - name: Offline update publisher interoperates with the real client
+        run: bash tools/test-updatepublisher.sh
       - name: Experimental native cumulative content packs
         run: |
           bash tools/test-contentpack.sh
