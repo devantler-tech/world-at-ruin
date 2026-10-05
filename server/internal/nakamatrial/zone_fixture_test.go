@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"maps"
 	"math/big"
 	"net"
@@ -26,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,12 +48,13 @@ import (
 var zoneArtifact = flag.String("war-zone", "", "built sealed zone command for the disposable trial")
 
 type trialZone struct {
-	f       *fixture
-	name    string
-	port    int
-	sidecar *agonestest.Sidecar
-	process *nativeProcess
-	roots   *x509.CertPool
+	f                *fixture
+	name             string
+	port             int
+	sidecar          *agonestest.Sidecar
+	process          *nativeProcess
+	roots            *x509.CertPool
+	claimConnections atomic.Int32
 }
 
 // closedFixture selects the real zone pool; it never manufactures admission keys.
@@ -126,7 +129,8 @@ func (f *fixture) startZone(name string, wrapping *rsa.PrivateKey, peer string, 
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	args := []string{"-listen", "127.0.0.1:" + strconv.Itoa(port), "-tls-cert", certPath, "-tls-key", keyPath, "-agones", "-agones-health-interval", "50ms", "-agones-admission-public-key", f.zoneFile(name+"-wrap.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), "-private-claims", "-claim-url", "https://localhost:7443/v1/claim", "-claim-ca", f.env["WAR_HANDOFF_CLAIMS_CA_FILE"], "-claim-cert", f.zoneFile(name+"-peer.pem", peerCert), "-claim-key", f.zoneFile(name+"-peer-key.pem", peerPrivate)}
+	claimAddress := z.claimProbe()
+	args := []string{"-listen", "127.0.0.1:" + strconv.Itoa(port), "-tls-cert", certPath, "-tls-key", keyPath, "-agones", "-agones-health-interval", "50ms", "-agones-admission-public-key", f.zoneFile(name+"-wrap.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), "-private-claims", "-claim-url", "https://localhost:" + claimAddress + "/v1/claim", "-claim-ca", f.env["WAR_HANDOFF_CLAIMS_CA_FILE"], "-claim-cert", f.zoneFile(name+"-peer.pem", peerCert), "-claim-key", f.zoneFile(name+"-peer-key.pem", peerPrivate)}
 	p := &nativeProcess{cmd: exec.Command(*zoneArtifact, args...), done: make(chan struct{}), log: &lockedLog{}}
 	p.cmd.Env = append(os.Environ(), "AGONES_SDK_GRPC_HOST=127.0.0.1", "AGONES_SDK_GRPC_PORT="+sdk.PortString(), "WAR_ZONE_ADMISSION_SECRET=")
 	p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
@@ -151,6 +155,69 @@ func bigSerial(t *testing.T) *big.Int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// claimProbe observes actual private connections without terminating or replacing mutual TLS.
+func (z *trialZone) claimProbe() string {
+	z.f.t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		z.f.t.Fatal(err)
+	}
+	var mu sync.Mutex
+	connections := make(map[net.Conn]struct{})
+	var workers sync.WaitGroup
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			connections[client] = struct{}{}
+			mu.Unlock()
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				defer func() { _ = client.Close(); mu.Lock(); delete(connections, client); mu.Unlock() }()
+				backend, err := net.DialTimeout("tcp", "127.0.0.1:7443", time.Second)
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				connections[backend] = struct{}{}
+				mu.Unlock()
+				defer func() { _ = backend.Close(); mu.Lock(); delete(connections, backend); mu.Unlock() }()
+				z.claimConnections.Add(1)
+				done := make(chan struct{})
+				go func() { _, _ = io.Copy(backend, client); _ = backend.Close(); _ = client.Close(); close(done) }()
+				_, _ = io.Copy(client, backend)
+				_ = backend.Close()
+				_ = client.Close()
+				<-done
+			}()
+		}
+	}()
+	z.f.t.Cleanup(func() {
+		_ = listener.Close()
+		<-acceptDone
+		mu.Lock()
+		for connection := range connections {
+			_ = connection.Close()
+		}
+		mu.Unlock()
+		joined := make(chan struct{})
+		go func() { workers.Wait(); close(joined) }()
+		select {
+		case <-joined:
+		case <-time.After(3 * time.Second):
+			z.f.t.Error("private connection probe failed to join")
+		}
+	})
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	return port
 }
 
 func (z *trialZone) ready() {

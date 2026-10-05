@@ -10,6 +10,8 @@ RUN sha256sum nakama-runtime/go.mod nakama-runtime/go.sum > /tmp/locked-graph.sh
     && sha256sum -c /tmp/locked-graph.sha256
 COPY server/ ./
 COPY tools/nakama-runtime-build/ /source/tools/nakama-runtime-build/
+RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/zone ./cmd/zone \
+ && sha256sum /out/zone > /out/zone.sha256
 RUN GOBIN=/out go install golang.org/x/vuln/cmd/govulncheck@v1.7.0 \
     && GOFLAGS='-mod=readonly -modfile=nakama-runtime/go.mod' /out/govulncheck \
       github.com/heroiclabs/nakama/v3 ./cmd/nakama

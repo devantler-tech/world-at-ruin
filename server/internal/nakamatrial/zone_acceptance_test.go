@@ -134,7 +134,10 @@ func TestClosedLoopWorkloadIdentity(t *testing.T) {
 				f.claimed(leaseKey(uid))
 				return
 			}
-			z.refuse(got)
+			waitFor(t, 2*time.Second, "refused workload reached actual native private TLS", func() bool {
+				z.refuse(got)
+				return z.claimConnections.Load() > 0
+			})
 			after, newVersion, _, _ := f.row(leaseKey(uid))
 			if after != before || newVersion != version {
 				t.Fatal("refused workload changed native ownership")
@@ -226,11 +229,15 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 			case <-time.After(4 * time.Second):
 				t.Fatal("invalidated admission did not settle")
 			}
-			_, claimedVersion := f.claimed(leaseKey(uid))
+			claimed, claimedVersion := f.claimed(leaseKey(uid))
 			if claimedVersion == beforeVersion {
 				t.Fatal("revision control did not exercise a committed native claim")
 			}
-			z.refuse(got)
+			z.snapshot(got)
+			after, afterVersion := f.claimed(leaseKey(uid))
+			if after != claimed || afterVersion != claimedVersion {
+				t.Fatal("fresh observation replaced the committed claim")
+			}
 		})
 	}
 }
@@ -249,6 +256,10 @@ func TestClosedLoopRestartProtection(t *testing.T) {
 	claimed, version := f.claimed(leaseKey(uid))
 	canary, _ := f.account("restart-closed-loop-canary")
 	f.handoff(canary)
+	f.process.stop(t)
+	if f.resource("zone-b") == nil {
+		t.Fatal("unclaimed canary expired before native restart")
+	}
 	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
 	z.snapshot(got)
 	again, againVersion := f.claimed(leaseKey(uid))
@@ -273,6 +284,7 @@ func TestClosedLoopWrappingRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.startZone("zone-aa", f.key, "", false)
 	current := f.startZone("zone-b", newKey, "", false)
 	keys, _ := json.Marshal([]string{f.zoneFile("new-unwrap.pem", pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(newKey)})), filepath.Join(f.dir, "unwrap.pem")})
 	env := maps.Clone(f.env)
@@ -384,8 +396,13 @@ func TestClosedLoopShutdownOwnership(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if _, _, err := conn.Read(ctx); err == nil || ctx.Err() != nil {
-			t.Error("SDK shutdown preceded active socket drain")
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				if ctx.Err() != nil {
+					t.Error("SDK shutdown preceded active socket drain")
+				}
+				break
+			}
 		}
 		select {
 		case err := <-pending:
