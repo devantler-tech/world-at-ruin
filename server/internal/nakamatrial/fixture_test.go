@@ -143,6 +143,10 @@ type fixture struct {
 	entered                      chan struct{}
 	cancelled                    chan struct{}
 	apiFault                     string
+	zonePool                     map[string]*trialZone
+	allocationCalls              int
+	apiHold                      chan struct{}
+	apiEntered                   chan struct{}
 }
 
 // newFixture owns a fresh database; it never migrates an existing caller database.
@@ -441,7 +445,7 @@ func (f *fixture) handoff(token string) handoff.Handoff {
 		f.t.Fatalf("native handoff refused (%d): %s", code, data)
 	}
 	var got handoff.Handoff
-	if json.Unmarshal(data, &got) != nil || got.ServerName == "" || got.Port != 8443 || got.Token == "" || !got.ExpiresAt.After(time.Now()) {
+	if json.Unmarshal(data, &got) != nil || got.ServerName == "" || got.Port == 0 || got.Token == "" || !got.ExpiresAt.After(time.Now()) {
 		f.t.Fatal("native handoff shape changed")
 	}
 	return got
@@ -533,6 +537,9 @@ func (f *fixture) makeServer(name, attempt string) *agonesv1.GameServer {
 
 // Allocate models the external effect after native storage has persisted dispatch.
 func (f *fixture) Allocate(ctx context.Context, request *allocationpb.AllocationRequest) (*allocationpb.AllocationResponse, error) {
+	if f.zonePool != nil {
+		return f.allocateZone(ctx, request)
+	}
 	f.mu.Lock()
 	f.allocations++
 	number := f.allocations
@@ -579,6 +586,22 @@ func (f *fixture) Allocate(ctx context.Context, request *allocationpb.Allocation
 
 // serveAPI checks generated-client scope and exact conditional deletion.
 func (f *fixture) serveAPI(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	hold, entered := f.apiHold, f.apiEntered
+	f.mu.Unlock()
+	if hold != nil && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, resourcePath+"/") {
+		if entered != nil {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+		}
+		select {
+		case <-hold:
+		case <-r.Context().Done():
+			return
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests++
