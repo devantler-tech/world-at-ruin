@@ -130,7 +130,9 @@ func (f *fixture) startZone(name string, wrapping *rsa.PrivateKey, peer string, 
 		f.t.Fatal(err)
 	}
 	claimAddress := z.claimProbe()
-	args := []string{"-listen", "127.0.0.1:" + strconv.Itoa(port), "-tls-cert", certPath, "-tls-key", keyPath, "-agones", "-agones-health-interval", "50ms", "-agones-admission-public-key", f.zoneFile(name+"-wrap.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), "-private-claims", "-claim-url", "https://localhost:" + claimAddress + "/v1/claim", "-claim-ca", f.env["WAR_HANDOFF_CLAIMS_CA_FILE"], "-claim-cert", f.zoneFile(name+"-peer.pem", peerCert), "-claim-key", f.zoneFile(name+"-peer-key.pem", peerPrivate)}
+	// Cover the 40m demo square's diagonal so moving neighbours remain visible
+	// through multi-restart scenarios; admission tests require populated frames.
+	args := []string{"-listen", "127.0.0.1:" + strconv.Itoa(port), "-interest", "60000", "-tls-cert", certPath, "-tls-key", keyPath, "-agones", "-agones-health-interval", "50ms", "-agones-admission-public-key", f.zoneFile(name+"-wrap.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), "-private-claims", "-claim-url", "https://localhost:" + claimAddress + "/v1/claim", "-claim-ca", f.env["WAR_HANDOFF_CLAIMS_CA_FILE"], "-claim-cert", f.zoneFile(name+"-peer.pem", peerCert), "-claim-key", f.zoneFile(name+"-peer-key.pem", peerPrivate)}
 	p := &nativeProcess{cmd: exec.Command(*zoneArtifact, args...), done: make(chan struct{}), log: &lockedLog{}}
 	p.cmd.Env = append(os.Environ(), "AGONES_SDK_GRPC_HOST=127.0.0.1", "AGONES_SDK_GRPC_PORT="+sdk.PortString(), "WAR_ZONE_ADMISSION_SECRET=")
 	p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
@@ -338,8 +340,8 @@ func (z *trialZone) snapshot(got handoff.Handoff) *websocket.Conn {
 		z.f.t.Fatal("zone did not send binary replication")
 	}
 	message, err := wire.Decode(payload)
-	if err != nil || message.Snapshot.Observer != 1 || len(message.Snapshot.Entities) == 0 {
-		z.f.t.Fatal("zone did not send its authoritative observer snapshot")
+	if err != nil || message.Kind != wire.KindSnapshot || message.Snapshot.Observer != 1 || len(message.Snapshot.Entities) == 0 {
+		z.f.t.Fatalf("zone snapshot: kind=%d observer=%d entities=%d decode=%v", message.Kind, message.Snapshot.Observer, len(message.Snapshot.Entities), err)
 	}
 	return conn
 }
