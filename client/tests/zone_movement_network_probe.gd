@@ -84,8 +84,8 @@ func _run() -> void:
 	elif fixture["mode"] == "retained":
 		_check(connection.is_live() and connection.frames_applied() > 0 and not connection.queue_movement(Vector2.RIGHT), "native retained v2 path")
 	else:
-		if fixture["mode"] == "prediction":
-			await _prediction(connection, fixture["url"], transport)
+		if fixture["mode"] in ["prediction", "prediction_delayed"]:
+			await _prediction(connection, fixture["url"], transport, fixture["mode"] == "prediction_delayed")
 		else:
 			await _movement(connection, fixture["url"])
 	connection.close()
@@ -95,7 +95,7 @@ func _run() -> void:
 		quit()
 
 
-func _prediction(connection: ZoneConnection, url: String, transport: VerifiedTransport) -> void:
+func _prediction(connection: ZoneConnection, url: String, transport: VerifiedTransport, delayed: bool) -> void:
 	await _wait_ack(connection, 0, -1)
 	var anchor := connection.movement_state()
 	var predictor := Predictor.new()
@@ -104,6 +104,9 @@ func _prediction(connection: ZoneConnection, url: String, transport: VerifiedTra
 		"collision_mode": "isolated_flat"}
 	if not _check(predictor.configure(spec)["ok"] and predictor.seed(anchor)["ok"], "native prediction anchor/spec"):
 		return
+	if delayed:
+		# Make receipt newer than the local speculative ticks; silence must use the actual ACK.
+		await create_timer(0.4).timeout
 	if not _check(connection.queue_movement(Vector2.RIGHT, true), "native predicted input queued"):
 		return
 	var deadline := Time.get_ticks_msec() + 2000
@@ -126,9 +129,9 @@ func _prediction(connection: ZoneConnection, url: String, transport: VerifiedTra
 	var state := predictor.state()
 	if not _check(state["tick"] == maxi(speculative["tick"], applied["tick"]) and state["x"] >= applied["x"] and state["x"] <= applied["x"] + 133 and reconciled["correction"]["x"] == state["x"] - speculative["x"], "native actual ACK reconciliation"):
 		return
-	await _wait_ack(connection, 1, int(speculative["tick"]) + 3)
+	await _wait_ack(connection, 1, maxi(speculative["tick"], applied["tick"]) + 3)
 	var stopped := connection.movement_state()
-	if not _check(predictor.reconcile(stopped)["ok"] and predictor.state()["x"] == stopped["x"] and predictor.history_count() == 0, "native silence authoritative catch-up"):
+	if not _check(stopped["tick"] > applied["tick"] + 2 and stopped["x"] == anchor["x"] + 266 and predictor.reconcile(stopped)["ok"] and predictor.state()["x"] == stopped["x"] and predictor.history_count() == 0, "native silence authoritative catch-up"):
 		return
 	predictor.step_tick()
 	if not _check(predictor.state()["x"] == stopped["x"], "native catch-up invented held phase"):
