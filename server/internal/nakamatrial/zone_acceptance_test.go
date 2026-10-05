@@ -211,7 +211,11 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 			case "missing":
 				delete(changed.ObjectMeta.Annotations, agones.ClaimLocatorAnnotation)
 			case "conflicting":
-				changed.ObjectMeta.Annotations[agones.ClaimLocatorAnnotation] = "v1." + strings.Repeat("a", 64) + "." + changed.ObjectMeta.Labels[agones.AttemptLabel]
+				digest, err := agones.CorrelationLabel("conflicting-native-attempt")
+				if err != nil || digest == changed.ObjectMeta.Labels[agones.AttemptLabel] {
+					t.Fatal("conflicting locator control did not change the attempt binding")
+				}
+				changed.ObjectMeta.Annotations[agones.ClaimLocatorAnnotation] = "v1." + leaseKey(uid) + "." + digest
 			case "recreated":
 				changed.ObjectMeta.Uid = "replacement-uid"
 			}
