@@ -10,6 +10,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 )
 
+// TestCrossTierDirectionVelocity checks fixture vectors with the production wire converter.
 func TestCrossTierDirectionVelocity(t *testing.T) {
 	raw, err := os.ReadFile("../../client/tests/data/ground_step_goldens.json")
 	if err != nil {

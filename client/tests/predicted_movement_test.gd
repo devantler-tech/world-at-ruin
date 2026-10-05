@@ -98,6 +98,14 @@ func _test_correction() -> void:
 	_check(predictor.reconcile(_ack(1, 20, 400))["ok"] and predictor.history_count() == 0 and predictor.state()["tick"] == 20, "authoritative catch-up fabricated history")
 	predictor.step_tick()
 	_check(predictor.state()["x"] == 400, "catch-up guessed unknown held phase")
+	var active_hold := _new()
+	_check(active_hold.record_sent(1, RIGHT)["ok"], "active hold send refused")
+	_check(active_hold.step_tick()["ok"] and active_hold.state()["x"] == 133, "active hold tick refused")
+	_check(active_hold.reconcile(_ack(1, 12, 400))["ok"], "active hold catch-up refused")
+	_check(active_hold.history_count() == 0 and active_hold.pending_count() == 0, "catch-up retained past history or ownership")
+	_check(active_hold.step_tick()["ok"] and active_hold.state()["x"] == 400, "catch-up retained unknown active hold")
+	_check(active_hold.record_sent(2, RIGHT)["ok"], "fresh send after catch-up refused")
+	_check(active_hold.step_tick()["ok"] and active_hold.state()["x"] == 533, "catch-up discarded fresh held input")
 
 
 func _test_refusals() -> void:

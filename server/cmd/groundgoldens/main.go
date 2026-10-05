@@ -8,6 +8,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/internal/groundgoldens"
 )
 
+// main writes the reproducible corpus to standard output or reports generation failure.
 func main() {
 	raw, err := groundgoldens.Bytes()
 	if err != nil {

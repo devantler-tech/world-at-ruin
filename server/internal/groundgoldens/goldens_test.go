@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestCommittedCorpusIsReproducible rejects drift between generated and committed fixtures.
 func TestCommittedCorpusIsReproducible(t *testing.T) {
 	want, err := Bytes()
 	if err != nil {

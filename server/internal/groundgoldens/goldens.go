@@ -58,13 +58,16 @@ type Fixture struct {
 	Directions []Direction `json:"directions"`
 }
 
+// spec returns the shared isolated bounds and hold limit for the selected speed.
 func spec(speed int64) Spec {
 	return Spec{MaxSpeedMMPerS: speed, MinX: -20000, MinY: 0, MinZ: -20000,
 		MaxX: 20000, MaxY: 4000, MaxZ: 20000, HoldTicks: 2, CollisionMode: "isolated_flat"}
 }
 
+// vector preserves the simulation's integer axes in the client fixture shape.
 func vector(value sim.Vec3) Vector { return Vector{X: value.X, Y: value.Y, Z: value.Z} }
 
+// scenario records every position from an actual isolated World.Step.
 func scenario(name string, speed int64, initial sim.Vec3, inputs ...sim.Vec3) Case {
 	config := spec(speed)
 	world := sim.NewWorld(sim.Bounds{Min: sim.Vec3{X: config.MinX, Y: config.MinY, Z: config.MinZ},
@@ -80,6 +83,7 @@ func scenario(name string, speed int64, initial sim.Vec3, inputs ...sim.Vec3) Ca
 	return row
 }
 
+// direction pins the wire conversion for independent checks against zonesock.
 func direction(speed int64, sample Sample) Direction {
 	capMM := speed
 	if !sample.Sprint {
