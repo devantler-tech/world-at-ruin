@@ -638,7 +638,7 @@ everything shipped afterwards is held to.
   wire-v3 negotiation; retained v1/v2 replication unchanged; bounded newest-input
   mailbox applied only before the simulation step, server-owned ground speed,
   silence expiry and a separate coalesced own-position/applied-sequence acknowledgement;
-  no Godot prediction or production activation, per ADR 0024),
+  no player prediction composition or production activation, per ADR 0024),
   its **default-off client movement networking** (`WAR_ZONE_MOVEMENT=1` selects
   v3 at connect time; `ZoneConnection.queue_movement` submits newest finite planar
   samples at most 30 Hz, with bounded writes, cumulative ACKs and fresh reconnect
@@ -646,6 +646,12 @@ everything shipped afterwards is held to.
   required client CI runs `WAR_GODOT_ZONE_PROOF=1 go -C server test -count=1
   -timeout 90s ./cmd/zone -run '^TestNativeGodotMovement$'` against the built
   verified-TLS zone, with missing prerequisites failed rather than skipped),
+  the **latent integer prediction core** (`GroundStep` and `PredictedMovement`,
+  ADR 0026 — explicit immutable isolated-flat configuration, exact integer
+  ground arithmetic and bounded speculative tick replay independent of sent
+  sequence ownership; shared actual Go position goldens plus the native TLS
+  prediction scenario; no boot, connection or player-controller caller,
+  collision parity, rendered correction or production configuration discovery),
   the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the

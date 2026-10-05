@@ -1,0 +1,605 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "cardinal",
+      "spec": {
+        "max_speed_mm_s": 4000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 4000,
+          "y": 0,
+          "z": 0
+        },
+        {
+          "x": 4000,
+          "y": 0,
+          "z": 0
+        },
+        {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      ],
+      "positions": [
+        {
+          "x": 133,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": 266,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": 266,
+          "y": 147,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "name": "negative-truncation",
+      "spec": {
+        "max_speed_mm_s": 4000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": -31,
+          "y": 0,
+          "z": -29
+        },
+        {
+          "x": -4000,
+          "y": 0,
+          "z": 0
+        },
+        {
+          "x": 0,
+          "y": 0,
+          "z": -4000
+        }
+      ],
+      "positions": [
+        {
+          "x": -1,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": -134,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": -134,
+          "y": 147,
+          "z": -133
+        }
+      ]
+    },
+    {
+      "name": "diagonal-clamp",
+      "spec": {
+        "max_speed_mm_s": 4000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 4000,
+          "y": 0,
+          "z": 4000
+        },
+        {
+          "x": -4000,
+          "y": 0,
+          "z": -4000
+        }
+      ],
+      "positions": [
+        {
+          "x": 94,
+          "y": 147,
+          "z": 94
+        },
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "name": "odd-cap",
+      "spec": {
+        "max_speed_mm_s": 4001,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 4001,
+          "y": 0,
+          "z": 0
+        },
+        {
+          "x": 4001,
+          "y": 0,
+          "z": 4001
+        },
+        {
+          "x": -4001,
+          "y": 0,
+          "z": 0
+        }
+      ],
+      "positions": [
+        {
+          "x": 133,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": 227,
+          "y": 147,
+          "z": 94
+        },
+        {
+          "x": 94,
+          "y": 147,
+          "z": 94
+        }
+      ]
+    },
+    {
+      "name": "sanitized-extremes",
+      "spec": {
+        "max_speed_mm_s": 4000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 2000000000,
+          "y": 999999999,
+          "z": -2000000000
+        },
+        {
+          "x": -2000000000,
+          "y": -999999999,
+          "z": 2000000000
+        }
+      ],
+      "positions": [
+        {
+          "x": 94,
+          "y": 147,
+          "z": -94
+        },
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "name": "vertical-discard",
+      "spec": {
+        "max_speed_mm_s": 4000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 0,
+          "y": 9000,
+          "z": 0
+        },
+        {
+          "x": 0,
+          "y": -9000,
+          "z": 0
+        },
+        {
+          "x": 31,
+          "y": 1000000000,
+          "z": 0
+        }
+      ],
+      "positions": [
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": 1,
+          "y": 147,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "name": "zero-cap",
+      "spec": {
+        "max_speed_mm_s": 0,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 999999999,
+          "y": 0,
+          "z": -999999999
+        }
+      ],
+      "positions": [
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "name": "subtick-cap",
+      "spec": {
+        "max_speed_mm_s": 29,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": -29,
+          "y": 0,
+          "z": 0
+        },
+        {
+          "x": 29,
+          "y": 0,
+          "z": 29
+        }
+      ],
+      "positions": [
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        },
+        {
+          "x": 0,
+          "y": 147,
+          "z": 0
+        }
+      ]
+    },
+    {
+      "name": "bounds",
+      "spec": {
+        "max_speed_mm_s": 4000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 19999,
+        "y": 4000,
+        "z": -19999
+      },
+      "inputs": [
+        {
+          "x": 4000,
+          "y": 0,
+          "z": -4000
+        },
+        {
+          "x": -4000,
+          "y": 0,
+          "z": 4000
+        }
+      ],
+      "positions": [
+        {
+          "x": 20000,
+          "y": 4000,
+          "z": -20000
+        },
+        {
+          "x": 19906,
+          "y": 4000,
+          "z": -19906
+        }
+      ]
+    },
+    {
+      "name": "large-safe-square",
+      "spec": {
+        "max_speed_mm_s": 1000000000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "initial": {
+        "x": 0,
+        "y": 147,
+        "z": 0
+      },
+      "inputs": [
+        {
+          "x": 1000000000,
+          "y": 0,
+          "z": -1000000000
+        },
+        {
+          "x": -1000000000,
+          "y": 0,
+          "z": 1000000000
+        }
+      ],
+      "positions": [
+        {
+          "x": 20000,
+          "y": 147,
+          "z": -20000
+        },
+        {
+          "x": -20000,
+          "y": 147,
+          "z": 20000
+        }
+      ]
+    }
+  ],
+  "directions": [
+    {
+      "spec": {
+        "max_speed_mm_s": 4001,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "sample": {
+        "x": 1000,
+        "z": 0,
+        "sprint": false
+      },
+      "velocity": {
+        "x": 2000,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "spec": {
+        "max_speed_mm_s": 4001,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "sample": {
+        "x": -707,
+        "z": 707,
+        "sprint": true
+      },
+      "velocity": {
+        "x": -2828,
+        "y": 0,
+        "z": 2828
+      }
+    },
+    {
+      "spec": {
+        "max_speed_mm_s": 4001,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "sample": {
+        "x": -707,
+        "z": 707,
+        "sprint": false
+      },
+      "velocity": {
+        "x": -1414,
+        "y": 0,
+        "z": 1414
+      }
+    },
+    {
+      "spec": {
+        "max_speed_mm_s": 1,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "sample": {
+        "x": 1000,
+        "z": 0,
+        "sprint": false
+      },
+      "velocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "spec": {
+        "max_speed_mm_s": 0,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "sample": {
+        "x": 1000,
+        "z": 0,
+        "sprint": true
+      },
+      "velocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "spec": {
+        "max_speed_mm_s": 1000000000,
+        "min_x": -20000,
+        "min_y": 0,
+        "min_z": -20000,
+        "max_x": 20000,
+        "max_y": 4000,
+        "max_z": 20000,
+        "hold_ticks": 2,
+        "collision_mode": "isolated_flat"
+      },
+      "sample": {
+        "x": 707,
+        "z": -707,
+        "sprint": true
+      },
+      "velocity": {
+        "x": 707000000,
+        "y": 0,
+        "z": -707000000
+      }
+    }
+  ]
+}

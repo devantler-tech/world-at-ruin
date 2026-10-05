@@ -1,6 +1,7 @@
 extends SceneTree
 ## Native-only fixture probe. Production TLS options are never weakened.
 
+const Predictor = preload("res://scripts/predicted_movement.gd")
 var _failed := false
 
 
@@ -9,6 +10,7 @@ class VerifiedTransport:
 	var peer := WebSocketPeer.new()
 	var trust: X509Certificate
 	var identity := "zone.test"
+	var successful_writes := 0
 
 	func connect_to_url(url: String, _options: TLSOptions = null) -> int:
 		return peer.connect_to_url(url, TLSOptions.client(trust, identity))
@@ -38,7 +40,10 @@ class VerifiedTransport:
 		return peer.get_current_outbound_buffered_amount()
 
 	func put_packet(bytes: PackedByteArray) -> int:
-		return peer.put_packet(bytes)
+		var result := peer.put_packet(bytes)
+		if result == OK:
+			successful_writes += 1
+		return result
 
 	func set_handshake_headers(headers: PackedStringArray) -> void:
 		peer.handshake_headers = headers
@@ -79,12 +84,66 @@ func _run() -> void:
 	elif fixture["mode"] == "retained":
 		_check(connection.is_live() and connection.frames_applied() > 0 and not connection.queue_movement(Vector2.RIGHT), "native retained v2 path")
 	else:
-		await _movement(connection, fixture["url"])
+		if fixture["mode"] == "prediction":
+			await _prediction(connection, fixture["url"], transport)
+		else:
+			await _movement(connection, fixture["url"])
 	connection.close()
 	await _wait_closed(connection)
 	if not _failed:
 		print("TEST PASS: native zone movement " + str(fixture["mode"]))
 		quit()
+
+
+func _prediction(connection: ZoneConnection, url: String, transport: VerifiedTransport) -> void:
+	await _wait_ack(connection, 0, -1)
+	var anchor := connection.movement_state()
+	var predictor := Predictor.new()
+	var spec := {"max_speed_mm_s": 4000, "min_x": -20000, "min_y": 0, "min_z": -20000,
+		"max_x": 20000, "max_y": 4000, "max_z": 20000, "hold_ticks": 2,
+		"collision_mode": "isolated_flat"}
+	if not _check(predictor.configure(spec)["ok"] and predictor.seed(anchor)["ok"], "native prediction anchor/spec"):
+		return
+	if not _check(connection.queue_movement(Vector2.RIGHT, true), "native predicted input queued"):
+		return
+	var deadline := Time.get_ticks_msec() + 2000
+	while transport.successful_writes == 0 and Time.get_ticks_msec() < deadline:
+		connection.poll()
+		await create_timer(0.005).timeout
+	if not _check(transport.successful_writes == 1 and predictor.record_sent(1, {"x": 1000, "z": 0, "sprint": true})["ok"], "native successful write ownership"):
+		return
+	for _tick: int in 6:
+		if not _check(predictor.step_tick()["ok"], "native speculative tick"):
+			return
+	var speculative := predictor.state()
+	if not _check(speculative["x"] == anchor["x"] + 266 and speculative["y"] == anchor["y"], "native isolated prediction and hold expiry"):
+		return
+	await _wait_ack(connection, 1, int(anchor["tick"]))
+	var applied := connection.movement_state()
+	var reconciled := predictor.reconcile(applied)
+	if not _check(reconciled["ok"] and predictor.pending_count() == 0 and applied["x"] > anchor["x"] and applied["x"] <= anchor["x"] + 266, "native authoritative movement anchor"):
+		return
+	var state := predictor.state()
+	if not _check(state["tick"] == maxi(speculative["tick"], applied["tick"]) and state["x"] >= applied["x"] and state["x"] <= applied["x"] + 133 and reconciled["correction"]["x"] == state["x"] - speculative["x"], "native actual ACK reconciliation"):
+		return
+	await _wait_ack(connection, 1, int(speculative["tick"]) + 3)
+	var stopped := connection.movement_state()
+	if not _check(predictor.reconcile(stopped)["ok"] and predictor.state()["x"] == stopped["x"] and predictor.history_count() == 0, "native silence authoritative catch-up"):
+		return
+	predictor.step_tick()
+	if not _check(predictor.state()["x"] == stopped["x"], "native catch-up invented held phase"):
+		return
+	connection.close()
+	await _wait_closed(connection)
+	predictor.reset()
+	if not _check(predictor.state().is_empty() and predictor.pending_count() == 0 and predictor.history_count() == 0 and connection.connect_to(url), "native prediction reconnect reset"):
+		return
+	await _wait_join(connection)
+	await _wait_ack(connection, 0, -1)
+	if not _check(predictor.seed(connection.movement_state())["ok"], "native fresh prediction anchor"):
+		return
+	predictor.step_tick()
+	_check(predictor.state()["x"] == connection.movement_state()["x"] and predictor.pending_count() == 0, "native reconnect inherited old input")
 
 
 func _movement(connection: ZoneConnection, url: String) -> void:

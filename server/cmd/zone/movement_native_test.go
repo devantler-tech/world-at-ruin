@@ -24,7 +24,7 @@ func TestNativeGodotMovement(t *testing.T) {
 	if _, err := exec.LookPath("godot"); err != nil {
 		t.Fatal("native movement proof requires Godot")
 	}
-	for _, mode := range []string{"retained", "positive", "server_off", "wrong_identity", "wrong_trust"} {
+	for _, mode := range []string{"retained", "positive", "prediction", "server_off", "wrong_identity", "wrong_trust"} {
 		t.Run(mode, func(t *testing.T) { nativeMovementCase(t, mode) })
 	}
 }
