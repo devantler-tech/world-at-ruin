@@ -85,6 +85,7 @@ func _test_step() -> void:
 func _test_direction() -> void:
 	var odd := _spec()
 	odd["max_speed_mm_s"] = 4001
+	_check(_core.direction_velocity({"x": 0, "z": 0, "sprint": true}, odd)["velocity"] == {"x": 0, "y": 0, "z": 0}, "neutral input did not stop")
 	_check(_core.direction_velocity({"x": 1000, "z": 0, "sprint": false}, odd)["velocity"] == {"x": 2000, "y": 0, "z": 0}, "walk cap rounded upwards")
 	_check(_core.direction_velocity({"x": -707, "z": 707, "sprint": true}, odd)["velocity"] == {"x": -2828, "y": 0, "z": 2828}, "sprint conversion drifted")
 	for sample: Dictionary in [{"x": 1001, "z": 0, "sprint": false},
@@ -99,4 +100,3 @@ func _check(condition: bool, detail: String) -> bool:
 		_failed = true
 		print("TEST FAIL: " + detail)
 	return condition
-
