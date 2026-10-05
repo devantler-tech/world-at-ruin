@@ -45,6 +45,7 @@ the built command exercise the capability in both flag states. The mandatory
 disposable native Nakama trial authenticates, consumes a real sealed handoff,
 reads back its durable claim and observes movement through the built zone's TLS
 socket. The launcher requires this scenario with the other 21 on Linux amd64 and
-arm64. These checks do not activate production or complete Godot input,
-prediction and reconciliation under #811. Platform serving and irreversible
+arm64. The nonvisual Godot networking API and its native TLS proof are described
+in ADR 0025; player input, prediction and reconciliation remain under #812.
+These checks do not activate production. Platform serving and irreversible
 session-end authority remain independent gates under #569 and #1177.
