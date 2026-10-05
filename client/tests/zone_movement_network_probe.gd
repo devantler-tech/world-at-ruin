@@ -103,7 +103,7 @@ func _movement(connection: ZoneConnection, url: String) -> void:
 	var stopped := connection.movement_state()
 	await _wait_ack(connection, 1, int(stopped["tick"]) + 3)
 	var later := connection.movement_state()
-	_check(later["x"] == stopped["x"] and later["z"] == stopped["z"], "native movement producer silence stop")
+	_check(later["x"] == stopped["x"] and later["y"] == stopped["y"] and later["z"] == stopped["z"], "native movement producer silence stop")
 	connection.close()
 	await _wait_closed(connection)
 	if not _check(connection.movement_state().is_empty() and connection.pending_movement_count() == 0 and connection.connect_to(url), "native movement reconnect reset"):

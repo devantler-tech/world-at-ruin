@@ -9,6 +9,8 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 )
 
+// TestCrossTierMovementGoldens binds the Go encoders and decoder to the literal
+// movement vectors consumed independently by the Godot client.
 func TestCrossTierMovementGoldens(t *testing.T) {
 	raw, err := os.ReadFile("../../client/tests/data/movement_goldens.json")
 	if err != nil {

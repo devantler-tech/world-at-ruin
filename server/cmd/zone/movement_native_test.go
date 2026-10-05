@@ -29,6 +29,8 @@ func TestNativeGodotMovement(t *testing.T) {
 	}
 }
 
+// nativeMovementCase starts the built TLS zone and observes one bounded Godot
+// client session, requiring the named success or exact refusal boundary.
 func nativeMovementCase(t *testing.T, mode string) {
 	t.Helper()
 	port := closedPort(t)
@@ -127,6 +129,8 @@ func nativeMovementCase(t *testing.T, mode string) {
 	}
 }
 
+// nativeMovementExpectedError accepts only the native error that proves the
+// requested refusal; unrelated engine errors cannot qualify a negative case.
 func nativeMovementExpectedError(mode, line string) bool {
 	switch mode {
 	case "wrong_identity", "wrong_trust":
@@ -138,6 +142,8 @@ func nativeMovementExpectedError(mode, line string) bool {
 	}
 }
 
+// TestNativeMovementRefusalErrorBoundary prevents generic engine failures from
+// satisfying the native TLS identity, trust or protocol-negotiation controls.
 func TestNativeMovementRefusalErrorBoundary(t *testing.T) {
 	for _, row := range []struct {
 		mode, line string
