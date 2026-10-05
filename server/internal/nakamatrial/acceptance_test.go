@@ -347,8 +347,15 @@ func TestNativePrivateClaimPersistsExactWorkload(t *testing.T) {
 	if code == 200 {
 		t.Fatal("native public retry replaced claimed reservation")
 	}
+	canaryToken, _ := f.account("private-native-canary")
+	canary := f.handoff(canaryToken)
+	f.verifyHandoff("zone-2", canary)
+	f.process.stop(t)
+	if f.resource("zone-2") == nil {
+		t.Fatal("unclaimed canary expired before native restart")
+	}
 	f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
-	waitFor(t, 15*time.Second, "claimed lease expiry", func() bool { return time.Now().After(handoff.ExpiresAt.Add(5 * time.Second)) })
+	waitFor(t, 20*time.Second, "post-restart expiry sweep reclaimed the unclaimed canary", func() bool { return f.resource("zone-2") == nil })
 	retained, retainedVersion, _, _ := f.row(key)
 	if retained != claimed || retainedVersion != newVersion || f.resource(gs.Name) == nil {
 		t.Fatal("native restart/expiry reclaimed a claimed lease")
