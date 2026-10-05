@@ -251,18 +251,19 @@ func TestNativePrivateClaimPersistsExactWorkload(t *testing.T) {
 	f := newFixture(t)
 	env := maps.Clone(f.env)
 	env["WAR_HANDOFF_CLAIMS_ENABLED"] = "true"
+	env["WAR_HANDOFF_LEASE_TTL"] = "8s"
 	f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
 	token, uid := f.account("private-native-fixture")
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(f.claimsPEM)
+	peer, _, _ := newCertificate(t, f.claimsCA, f.claimsKey, "spiffe://fixture.example/zone/world-at-ruin/zone-1-uid", false)
+	wrong, _, _ := newCertificate(t, f.claimsCA, f.claimsKey, "spiffe://fixture.example/zone/world-at-ruin/wrong-uid", false)
+	otherCA, otherKey, _ := newCA(t)
+	untrusted, _, _ := newCertificate(t, otherCA, otherKey, "spiffe://fixture.example/zone/world-at-ruin/zone-1-uid", false)
 	handoff := f.handoff(token)
 	gs := f.resource("zone-1")
 	key := leaseKey(uid)
 	binding := agones.ClaimBinding{Namespace: "world-at-ruin", AllocationID: gs.Name, GameServerUID: string(gs.UID), LeaseObjectID: key, AttemptDigest: gs.Labels[agones.AttemptLabel]}
-	roots := x509.NewCertPool()
-	roots.AppendCertsFromPEM(f.claimsPEM)
-	peer, _, _ := newCertificate(t, f.claimsCA, f.claimsKey, "spiffe://fixture.example/zone/world-at-ruin/"+string(gs.UID), false)
-	wrong, _, _ := newCertificate(t, f.claimsCA, f.claimsKey, "spiffe://fixture.example/zone/world-at-ruin/wrong-uid", false)
-	otherCA, otherKey, _ := newCA(t)
-	untrusted, _, _ := newCertificate(t, otherCA, otherKey, "spiffe://fixture.example/zone/world-at-ruin/"+string(gs.UID), false)
 	before, version, _, _ := f.row(key)
 	for _, certificate := range []tls.Certificate{wrong, untrusted} {
 		client, e := claimrpc.NewClient("https://localhost:7443/v1/claim", &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})
@@ -295,11 +296,19 @@ func TestNativePrivateClaimPersistsExactWorkload(t *testing.T) {
 	if e = client.Claim(context.Background(), stale, handoff.Token, 1); e == nil {
 		t.Fatal("native private claim accepted stale attempt")
 	}
+	staleValue, staleVersion, _, _ := f.row(key)
+	if staleValue != before || staleVersion != version {
+		t.Fatal("refused stale claim modified native ownership")
+	}
 	f.mu.Lock()
 	f.servers[gs.Name].UID = "replacement-uid"
 	f.mu.Unlock()
 	if e = client.Claim(context.Background(), binding, handoff.Token, 1); e == nil {
 		t.Fatal("native private claim accepted replacement resource")
+	}
+	replacedValue, replacedVersion, _, _ := f.row(key)
+	if replacedValue != before || replacedVersion != version {
+		t.Fatal("refused replacement claim modified native ownership")
 	}
 	f.mu.Lock()
 	f.servers[gs.Name].UID = gs.UID
@@ -315,6 +324,12 @@ func TestNativePrivateClaimPersistsExactWorkload(t *testing.T) {
 	if code == 200 {
 		t.Fatal("native public retry replaced claimed reservation")
 	}
+	f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
+	waitFor(t, 15*time.Second, "claimed lease expiry", func() bool { return time.Now().After(handoff.ExpiresAt.Add(5 * time.Second)) })
+	retained, retainedVersion, _, _ := f.row(key)
+	if retained != claimed || retainedVersion != newVersion || f.resource(gs.Name) == nil {
+		t.Fatal("native restart/expiry reclaimed a claimed lease")
+	}
 }
 
 // TestNativePeriodicExpiryRetriesExactCleanup runs the real supervised worker.
@@ -328,7 +343,12 @@ func TestNativePeriodicExpiryRetriesExactCleanup(t *testing.T) {
 	f.mu.Lock()
 	f.retryDelete = true
 	f.mu.Unlock()
-	waitFor(t, 15*time.Second, "native expiry retry", func() bool { return f.resource("zone-1") == nil })
+	waitFor(t, 15*time.Second, "native failed cleanup", func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.deleted) > 0 })
+	releasing, _, _, _ := f.row(leaseKey(uid))
+	if !strings.Contains(releasing, `"releasing": true`) {
+		t.Fatal("native failed cleanup lost its durable releasing transition")
+	}
+	waitFor(t, 10*time.Second, "native expiry retry", func() bool { return f.resource("zone-1") == nil })
 	var count int
 	if e := f.db.QueryRow("SELECT count(*) FROM storage WHERE collection=$1 AND key=$2 AND user_id=$3::uuid", collection, leaseKey(uid), zeroOwner).Scan(&count); e != nil || count != 0 {
 		t.Fatal("native expiry did not retire exact lease")
@@ -367,7 +387,7 @@ func TestNativeHistoricalRowsRemainMutationIneligible(t *testing.T) {
 	if before != after || version != afterVersion {
 		t.Fatal("native worker mutated historical reader-only lease")
 	}
-	if allocated, _ := f.counts(); allocated != 0 {
+	if allocated, requests := f.counts(); allocated != 0 || requests != 0 {
 		t.Fatal("historical native lease redispatched allocation")
 	}
 }
@@ -408,6 +428,7 @@ func TestNativeOrphanSupervisionPreservesEvidence(t *testing.T) {
 	env["WAR_HANDOFF_ORPHANS_INTERVAL"] = "1s"
 	env["WAR_HANDOFF_ORPHANS_TIMEOUT"] = "3s"
 	p := f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
+	firstProcess := p
 	waitFor(t, 8*time.Second, "native incomplete observation", func() bool { return strings.Contains(p.log.String(), "outcome=incomplete") })
 	if f.resource(orphan.Name) == nil {
 		t.Fatal("incomplete native evidence deleted orphan")
@@ -424,7 +445,7 @@ func TestNativeOrphanSupervisionPreservesEvidence(t *testing.T) {
 	if time.Since(started) < 29*time.Second || f.resource(protected.Name) == nil {
 		t.Fatal("native orphan cleanup bypassed grace or historical protection")
 	}
-	log := p.log.String()
+	log := firstProcess.log.String() + "\n" + p.log.String()
 	f.mu.Lock()
 	pages := f.pages
 	f.mu.Unlock()
@@ -441,65 +462,148 @@ func TestNativeOrphanSupervisionPreservesEvidence(t *testing.T) {
 	}
 }
 
-// TestNativeSIGTERMStopsAdmissionAndCancelsWork observes the actual shutdown hook.
+// TestNativeSIGTERMStopsAdmissionAndCancelsWork observes native drain and deadline paths.
 func TestNativeSIGTERMStopsAdmissionAndCancelsWork(t *testing.T) {
 	f := newFixture(t)
 	env := maps.Clone(f.env)
 	env["WAR_HANDOFF_CLAIMS_ENABLED"] = "true"
-	p := f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
-	token, _ := f.account("shutdown-native-fixture")
-	f.mu.Lock()
-	f.hold = make(chan struct{})
-	f.entered = make(chan struct{}, 1)
-	f.cancelled = make(chan struct{}, 1)
-	entered, cancelled := f.entered, f.cancelled
-	f.mu.Unlock()
-	returned := make(chan struct{})
-	go func() {
-		defer close(returned)
-		request, _ := http.NewRequest("POST", "http://127.0.0.1:7350/v2/rpc/war_handoff?unwrap", strings.NewReader("{}"))
-		request.Header.Set("Authorization", "Bearer "+token)
-		request.Header.Set("Content-Type", "application/json")
-		response, e := (&http.Client{Timeout: 10 * time.Second}).Do(request)
-		if e == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == 200 {
-				t.Error("cancelled native handoff acknowledged")
+	for index, grace := range []int{10, 1} {
+		p := f.launch(env, filepath.Join(*bundle, "modules"), grace, true)
+		token, uid := f.account(fmt.Sprintf("shutdown-native-fixture-%d", index))
+		newcomer, _ := f.account(fmt.Sprintf("shutdown-newcomer-%d", index))
+		for {
+			select {
+			case <-f.connClosed:
+				continue
+			default:
+			}
+			break
+		}
+		f.mu.Lock()
+		f.hold = make(chan struct{})
+		f.entered = make(chan struct{}, 1)
+		f.cancelled = make(chan struct{}, 1)
+		entered, cancelled := f.entered, f.cancelled
+		f.mu.Unlock()
+		returned := make(chan struct{})
+		go func() {
+			defer close(returned)
+			request, _ := http.NewRequest("POST", "http://127.0.0.1:7350/v2/rpc/war_handoff?unwrap", strings.NewReader("{}"))
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.Header.Set("Content-Type", "application/json")
+			response, e := (&http.Client{Timeout: 12 * time.Second}).Do(request)
+			if e == nil {
+				_ = response.Body.Close()
+				if response.StatusCode == 200 {
+					t.Error("cancelled native handoff acknowledged")
+				}
+			}
+		}()
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("held native allocator was never called")
+		}
+		before, version, _, _ := f.row(leaseKey(uid))
+		lock, e := f.db.Begin()
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Cleanup(func() { _ = lock.Rollback() })
+		lockCtx, cancelLock := context.WithTimeout(context.Background(), 3*time.Second)
+		_, e = lock.ExecContext(lockCtx, "LOCK TABLE storage IN ACCESS EXCLUSIVE MODE")
+		cancelLock()
+		if e != nil {
+			t.Fatal("hold native storage table")
+		}
+		started := time.Now()
+		if e = p.cmd.Process.Signal(syscall.SIGTERM); e != nil {
+			t.Fatal(e)
+		}
+		select {
+		case <-cancelled:
+		case <-time.After(3 * time.Second):
+			t.Fatal("native shutdown did not cancel allocator")
+		}
+		waitFor(t, 2*time.Second, "detached native storage read", func() bool {
+			var count int
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			e := f.admin.QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query LIKE '%storage%'", f.dbName).Scan(&count)
+			return e == nil && count > 0
+		})
+		if grace == 10 {
+			code, _ := f.request("POST", "/v2/rpc/war_handoff?unwrap", newcomer, "{}")
+			if code == 200 {
+				t.Fatal("native grace period admitted a new handoff")
+			}
+			conn, e := net.DialTimeout("tcp", "127.0.0.1:7443", 100*time.Millisecond)
+			if e == nil {
+				_ = conn.Close()
+				t.Fatal("native grace retained private admission")
+			}
+			select {
+			case <-returned:
+				t.Fatal("native handler finished before held storage returned")
+			default:
+			}
+			select {
+			case <-p.done:
+				t.Fatal("native shutdown claimed drain before storage returned")
+			default:
+			}
+			select {
+			case <-f.connClosed:
+				t.Fatal("native allocator transport retired beneath admitted work")
+			default:
+			}
+			if e = lock.Rollback(); e != nil {
+				t.Fatal(e)
+			}
+			select {
+			case <-returned:
+			case <-time.After(8 * time.Second):
+				t.Fatal("native shutdown did not drain admitted handler")
+			}
+			select {
+			case <-f.connClosed:
+			case <-time.After(8 * time.Second):
+				t.Fatal("native drain did not retire allocator transport")
+			}
+		} else {
+			// Nakama's own grace may end while the detached read is still blocked.
+			// Process exit does not certify an external allocator fence or completion.
+			select {
+			case <-p.done:
+			case <-time.After(8 * time.Second):
+				t.Fatal("native deadline did not bound process shutdown")
+			}
+			if time.Since(started) > 7*time.Second {
+				t.Fatal("native deadline overran its bounded shutdown")
+			}
+			if e = lock.Rollback(); e != nil {
+				t.Fatal(e)
+			}
+			select {
+			case <-returned:
+			case <-time.After(3 * time.Second):
+				t.Fatal("native deadline did not end the HTTP request")
 			}
 		}
-	}()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("held native allocator was never called")
-	}
-	if e := p.cmd.Process.Signal(syscall.SIGTERM); e != nil {
-		t.Fatal(e)
-	}
-	select {
-	case <-cancelled:
-	case <-time.After(5 * time.Second):
-		t.Fatal("native shutdown did not cancel allocator")
-	}
-	select {
-	case <-returned:
-	case <-time.After(8 * time.Second):
-		t.Fatal("native shutdown did not drain public handler")
-	}
-	select {
-	case <-p.done:
-	case <-time.After(12 * time.Second):
-		t.Fatal("native shutdown did not finish bounded drain")
-	}
-	if p.err != nil {
-		t.Fatal("native ordinary SIGTERM failed")
-	}
-	conn, e := net.DialTimeout("tcp", "127.0.0.1:7443", 100*time.Millisecond)
-	if e == nil {
-		_ = conn.Close()
-		t.Fatal("native shutdown retained private admission")
-	}
-	if allocations, _ := f.counts(); allocations != 1 {
-		t.Fatal("native shutdown created a replacement attempt")
+		select {
+		case <-p.done:
+		case <-time.After(12 * time.Second):
+			t.Fatal("native shutdown did not finish")
+		}
+		if p.err != nil {
+			t.Fatal("native SIGTERM returned unsuccessful process status")
+		}
+		after, afterVersion, _, _ := f.row(leaseKey(uid))
+		if before != after || version != afterVersion || !strings.Contains(after, `"dispatched": true`) {
+			t.Fatal("native shutdown lost unresolved dispatch ownership")
+		}
+		if allocations, _ := f.counts(); allocations != index+1 {
+			t.Fatal("native shutdown allocated a replacement attempt")
+		}
 	}
 }

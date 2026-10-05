@@ -45,6 +45,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -132,6 +133,7 @@ type fixture struct {
 	servers                      map[string]*agonesv1.GameServer
 	allocations, requests, lists int
 	pages                        int
+	connClosed                   chan struct{}
 	deleted                      []string
 	retryDelete                  bool
 	ambiguous                    bool
@@ -144,7 +146,7 @@ type fixture struct {
 // newFixture owns a fresh database; it never migrates an existing caller database.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{t: t, dir: t.TempDir(), servers: map[string]*agonesv1.GameServer{}}
+	f := &fixture{t: t, dir: t.TempDir(), servers: map[string]*agonesv1.GameServer{}, connClosed: make(chan struct{}, 16)}
 	nonce := make([]byte, 12)
 	if _, err := rand.Read(nonce); err != nil {
 		t.Fatal(err)
@@ -216,7 +218,7 @@ func newFixture(t *testing.T) *fixture {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f.grpc = grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{f.cert}, ClientCAs: f.roots, ClientAuth: tls.RequireAndVerifyClientCert})))
+	f.grpc = grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{f.cert}, ClientCAs: f.roots, ClientAuth: tls.RequireAndVerifyClientCert})), grpc.StatsHandler(connectionObserver{closed: f.connClosed}))
 	allocationpb.RegisterAllocationServiceServer(f.grpc, f)
 	go func() { _ = f.grpc.Serve(listener) }()
 	f.api = httptest.NewUnstartedServer(http.HandlerFunc(f.serveAPI))
@@ -247,7 +249,9 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(e)
 	}
 	f.writeConfig(f.env, filepath.Join(*bundle, "modules"), 10)
-	cmd := exec.CommandContext(ctx, filepath.Join(*bundle, "nakama"), "migrate", "up", "--config", filepath.Join(f.dir, "config.json"))
+	migrationCtx, stopMigration := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stopMigration()
+	cmd := exec.CommandContext(migrationCtx, filepath.Join(*bundle, "nakama"), "migrate", "up", "--config", filepath.Join(f.dir, "config.json"))
 	if bytes, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("native migration failed: %s", bytes)
 	}
@@ -624,7 +628,8 @@ func (f *fixture) serveAPI(w http.ResponseWriter, r *http.Request) {
 		write(gs)
 	case http.MethodDelete:
 		var options metav1.DeleteOptions
-		if json.NewDecoder(r.Body).Decode(&options) != nil || options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != gs.UID || (options.Preconditions.ResourceVersion != nil && *options.Preconditions.ResourceVersion != gs.ResourceVersion) {
+		orphan := name == "true-orphan"
+		if json.NewDecoder(r.Body).Decode(&options) != nil || options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != gs.UID || (orphan && options.Preconditions.ResourceVersion == nil) || (options.Preconditions.ResourceVersion != nil && *options.Preconditions.ResourceVersion != gs.ResourceVersion) {
 			f.t.Error("native deletion lacked exact resource preconditions")
 			fail(409, metav1.StatusReasonConflict)
 			return
@@ -658,3 +663,29 @@ func waitFor(t *testing.T, timeout time.Duration, description string, predicate 
 
 // leaseKey derives the source's stable player reservation; no client chooses it.
 func leaseKey(uid string) string { return nakamalease.ReservationKey(uid, "zone") }
+
+// connectionObserver records native allocator transport retirement separately from RPC return.
+type connectionObserver struct{ closed chan struct{} }
+
+// TagRPC keeps the server's actual RPC context unchanged.
+func (o connectionObserver) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+// HandleRPC observes no payload or credential material.
+func (o connectionObserver) HandleRPC(context.Context, stats.RPCStats) {}
+
+// TagConn keeps transport identity out of the observation stream.
+func (o connectionObserver) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+// HandleConn reports only closure, allowing drain-before-retirement assertions.
+func (o connectionObserver) HandleConn(_ context.Context, event stats.ConnStats) {
+	if _, closed := event.(*stats.ConnEnd); closed {
+		select {
+		case o.closed <- struct{}{}:
+		default:
+		}
+	}
+}
