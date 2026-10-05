@@ -49,13 +49,41 @@ trial_id=$(docker create --network "$network" --read-only --cap-drop ALL \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
   --tmpfs /var/run/secrets/kubernetes.io/serviceaccount:rw,nosuid,nodev,size=1m,uid=10001,gid=10001,mode=0700 \
   -e WAR_NATIVE_DB_PASSWORD "$image" -war-experimental -war-bundle=/out/bundle \
-  -war-postgres=postgres:5432 -test.v -test.timeout=6m)
+  -war-postgres=postgres:5432 -war-zone=/out/zone -test.v -test.timeout=6m)
 docker start -a "$trial_id" | tee "$state/trial.log"
 exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$trial_id")
 if [[ "$exit_code" != 0 ]] || ! grep -q '^PASS$' "$state/trial.log"; then
   echo 'native Nakama acceptance did not produce a complete passing verdict' >&2; exit 1
 fi
-if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != 11 ]]; then
-  echo 'native Nakama acceptance did not execute all eleven scenarios' >&2; exit 1
+scenarios=(
+  "TestLockedBundleLoadsAndRejectsMismatch"
+  "TestDisabledNativeStartup"
+  "TestEnabledNativeStartupRefusesInvalidDependencies"
+  "TestNativeSessionAuthenticatesHandoff"
+  "TestNativePrivateStorageAndCAS"
+  "TestNativeRestartRetainsReplayAndAmbiguity"
+  "TestNativePrivateClaimPersistsExactWorkload"
+  "TestNativePeriodicExpiryRetriesExactCleanup"
+  "TestNativeHistoricalRowsRemainMutationIneligible"
+  "TestNativeOrphanSupervisionPreservesEvidence"
+  "TestNativeSIGTERMStopsAdmissionAndCancelsWork"
+  "TestClosedLoopSealedBootstrap"
+  "TestClosedLoopAccountSnapshot"
+  "TestClosedLoopClaimBeforeUpgrade"
+  "TestClosedLoopWorkloadIdentity"
+  "TestClosedLoopSiblingIsolation"
+  "TestClosedLoopRevisionFence"
+  "TestClosedLoopRestartProtection"
+  "TestClosedLoopWrappingRotation"
+  "TestClosedLoopAmbiguousAllocation"
+  "TestClosedLoopShutdownOwnership"
+)
+if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
+  echo 'native Nakama acceptance did not execute all twenty-one scenarios' >&2; exit 1
 fi
-echo 'NAKAMA NATIVE PASS: eleven scenarios; native plugin; disposable PostgreSQL; non-root'
+for scenario in "${scenarios[@]}"; do
+  if ! grep -qE "^--- PASS: ${scenario} \\(" "$state/trial.log"; then
+    echo "native Nakama acceptance omitted required scenario: ${scenario}" >&2; exit 1
+  fi
+done
+echo 'NAKAMA NATIVE PASS: twenty-one scenarios; native plugin; built sealed zone; TLS snapshot; disposable PostgreSQL; non-root'

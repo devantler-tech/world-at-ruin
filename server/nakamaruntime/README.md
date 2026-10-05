@@ -42,6 +42,7 @@ projection; private key bytes belong in mounted files.
 | `WAR_HANDOFF_TLS_PORT_NAME` | The Fleet's player-facing TLS port name. |
 | `WAR_HANDOFF_ZONE_DOMAIN` | Managed DNS suffix, e.g. `zones.example`. |
 | `WAR_HANDOFF_LEASE_TTL` | Go duration from `2s` to `10m`; typically `1m`. A handoff needs at least one second remaining after allocation. |
+| `WAR_HANDOFF_TOKEN_TTL` | Optional signed handoff lifetime from `1s` to `5m`, default `30s`. It cannot extend the durable lease. |
 | `WAR_HANDOFF_RPC_TIMEOUT` | Optional deadline, `1s` to `1m`, default `30s`. A shorter caller deadline or session expiry wins. |
 
 Enabled initialization rejects missing/malformed settings before connection or
@@ -113,6 +114,10 @@ after its response, so idle zone clients never hold one of the 64 slots. Claim
 bodies remain capped at 4096 bytes. The same lease store and pinned
 Agones resolver used by allocation independently verify the claim and persist
 ownership before success. Lost responses retain the claim for an exact replay.
+The canonical signed token may expire before its durable lease (the handoff
+service defaults to 30 seconds). Claims verify its exact allocation and observer,
+refuse expiry beyond the lease, and bound claim completion by the token's own
+expiry. A shorter token never changes the stored lease window.
 
 The zone's `-claim-url` must use a hostname covered by the server certificate;
 its `-claim-ca` trusts the private server and its separate workload certificate
@@ -266,9 +271,17 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Eleven mandatory scenarios cover ten
-runtime acceptance concerns, using the real loaded plugin, authentication and
-PostgreSQL-backed private storage. The image supplies only disposable fixture
+The image refuses a default invocation. Twenty-one named mandatory scenarios use
+the real loaded plugin, authentication and PostgreSQL-backed private storage.
+Ten scenarios run the built sealed zone command through generated SDK sidecars,
+consume the authenticated handoff and decode a real TLS WebSocket snapshot.
+The command uses its own random admission secret; fixture-side minting is absent
+from this closed-loop path. Normal TLS chain and hostname verification remain
+active while only the exact fixture DNS endpoint routes to loopback.
+Held native storage writes and generated resource lookups expose claim-before-upgrade
+and shutdown ordering. Workload identity, sibling isolation, changed SDK revisions,
+restart cleanup, wrapping-key rotation and ambiguous allocation replies each have
+negative controls. The image supplies only disposable fixture
 credentials; the script publishes no ports and removes its own containers and
 network. Linux amd64 and arm64 CI both execute the packaged runtime. Missing
 trial inputs fail; the `war_native_trial` build tag selects this explicit process
@@ -285,4 +298,5 @@ the full native server/plugin for reachable vulnerabilities.
 These disposable checks establish source behavior. Production serving artifacts,
 rollout, attested credentials and the existing authority/fencing gates remain
 under #569 and #1177. Experimental build retirement is tracked by #1192. See
-[ADR 0022](../../docs/adr/0022-prove-the-native-nakama-runtime-with-disposable-storage.md).
+[ADR 0022](../../docs/adr/0022-prove-the-native-nakama-runtime-with-disposable-storage.md) and
+[ADR 0023](../../docs/adr/0023-exercise-native-handoffs-through-built-sealed-zones.md).
