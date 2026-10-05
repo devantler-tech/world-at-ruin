@@ -165,9 +165,9 @@ type fixture struct {
 	fingerprint string
 }
 
-func (f *fixture) mutateStored(name string, mutate func(*agonesv1.GameServer)) {
+func (f *fixture) mutateStored(mutate func(*agonesv1.GameServer)) {
 	f.t.Helper()
-	gameServer := f.stored(name).DeepCopy()
+	gameServer := f.stored("zone-1").DeepCopy()
 	mutate(gameServer)
 	f.replace(gameServer)
 }
@@ -1079,7 +1079,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 	t.Run("any state is releasable", func(t *testing.T) {
 		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
-			f.mutateStored("zone-1", func(gameServer *agonesv1.GameServer) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
 				gameServer.Status.State = agonesv1.GameServerStateShutdown
 			})
 		})
@@ -1103,7 +1103,7 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	})
 	t.Run("another attempt's object is untouched", func(t *testing.T) {
 		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
-			f.mutateStored("zone-1", func(gameServer *agonesv1.GameServer) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
 				gameServer.Labels[agones.AttemptLabel] = attemptDigest(f.t, "attempt-8")
 			})
 		})
@@ -1449,7 +1449,7 @@ func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
 func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	t.Run("port-less object is still deleted", func(t *testing.T) {
 		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
-			f.mutateStored("zone-1", func(gameServer *agonesv1.GameServer) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
 				gameServer.Status.State = agonesv1.GameServerStateShutdown
 				gameServer.Status.Ports = nil
 				gameServer.Status.NodeName = ""
@@ -1496,7 +1496,7 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	})
 	t.Run("re-sealed object under the same UID is still deleted", func(t *testing.T) {
 		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
-			f.mutateStored("zone-1", func(gameServer *agonesv1.GameServer) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
 				gameServer.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
 					f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("re-sealed"),
 				)
@@ -1514,7 +1514,7 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	})
 	t.Run("object with no envelope at all is still deleted", func(t *testing.T) {
 		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
-			f.mutateStored("zone-1", func(gameServer *agonesv1.GameServer) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
 				delete(gameServer.Annotations, agones.AdmissionEnvelopeAnnotation)
 			})
 		})
