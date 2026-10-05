@@ -21,6 +21,10 @@ exact fixture endpoint to loopback; normal certificate-chain and hostname
 verification remain active. The command calls Nakama's verified private claim
 service before upgrade. Independent PostgreSQL readback proves the exact
 system-owned claim and version precede a decoded observer snapshot.
+The native trial uses a two-minute lease with the ordinary 30-second handoff
+token. Private claims authenticate the canonical token's own expiry, bounded
+by the lease and by the claim operation's deadline. Exact lease-expiry equality
+would incorrectly refuse these legitimate shorter tokens.
 
 Ten process-boundary scenarios cover sealed readiness, authenticated replication,
 commit-before-upgrade, workload identity, sibling isolation, SDK revision fencing,

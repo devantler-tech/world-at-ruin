@@ -117,12 +117,24 @@ func (h *handler) claim(ctx context.Context, request claimRequest) (nakamalease.
 	if err != nil || callCtx.Err() != nil || allocation.ID != lease.AllocationID || allocation.Observer != lease.Observer || !allocation.LeaseExpiresAt.Equal(lease.ExpiresAt) {
 		return nakamalease.Record{}, ErrRefused
 	}
-	expected, err := zonesock.MintToken(allocation.AdmissionSecret, lease.AllocationID, lease.Observer, lease.ExpiresAt)
+	verifier, err := zonesock.NewHMACVerifier(allocation.AdmissionSecret, lease.AllocationID)
+	if err != nil {
+		return nakamalease.Record{}, ErrRefused
+	}
+	observer, expiresAt, err := verifier.VerifyWithExpiry(request.Token)
+	if err != nil || observer != lease.Observer || expiresAt.After(lease.ExpiresAt) {
+		return nakamalease.Record{}, ErrRefused
+	}
+	// Preserve canonical v3 encoding while allowing the handoff service's
+	// shorter token TTL. The signed expiry can never extend the durable lease.
+	expected, err := zonesock.MintToken(allocation.AdmissionSecret, lease.AllocationID, lease.Observer, expiresAt)
 	if err != nil || !hmac.Equal([]byte(expected), []byte(request.Token)) {
 		return nakamalease.Record{}, ErrRefused
 	}
-	claimed, err := h.store.ClaimByKey(callCtx, request.LeaseObjectID, record, time.Now())
-	if callCtx.Err() != nil {
+	claimCtx, cancelClaim := context.WithDeadline(callCtx, expiresAt)
+	defer cancelClaim()
+	claimed, err := h.store.ClaimByKey(claimCtx, request.LeaseObjectID, record, time.Now())
+	if claimCtx.Err() != nil {
 		return nakamalease.Record{}, ErrRefused
 	}
 	return claimed, err

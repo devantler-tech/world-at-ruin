@@ -113,6 +113,10 @@ after its response, so idle zone clients never hold one of the 64 slots. Claim
 bodies remain capped at 4096 bytes. The same lease store and pinned
 Agones resolver used by allocation independently verify the claim and persist
 ownership before success. Lost responses retain the claim for an exact replay.
+The canonical signed token may expire before its durable lease (the handoff
+service defaults to 30 seconds). Claims verify its exact allocation and observer,
+refuse expiry beyond the lease, and bound claim completion by the token's own
+expiry. A shorter token never changes the stored lease window.
 
 The zone's `-claim-url` must use a hostname covered by the server certificate;
 its `-claim-ca` trusts the private server and its separate workload certificate

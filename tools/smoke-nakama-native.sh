@@ -56,27 +56,27 @@ if [[ "$exit_code" != 0 ]] || ! grep -q '^PASS$' "$state/trial.log"; then
   echo 'native Nakama acceptance did not produce a complete passing verdict' >&2; exit 1
 fi
 scenarios=(
-  TestLockedBundleLoadsAndRejectsMismatch
-  TestDisabledNativeStartup
-  TestEnabledNativeStartupRefusesInvalidDependencies
-  TestNativeSessionAuthenticatesHandoff
-  TestNativePrivateStorageAndCAS
-  TestNativeRestartRetainsReplayAndAmbiguity
-  TestNativePrivateClaimPersistsExactWorkload
-  TestNativePeriodicExpiryRetriesExactCleanup
-  TestNativeHistoricalRowsRemainMutationIneligible
-  TestNativeOrphanSupervisionPreservesEvidence
-  TestNativeSIGTERMStopsAdmissionAndCancelsWork
-  TestClosedLoopSealedBootstrap
-  TestClosedLoopAccountSnapshot
-  TestClosedLoopClaimBeforeUpgrade
-  TestClosedLoopWorkloadIdentity
-  TestClosedLoopSiblingIsolation
-  TestClosedLoopRevisionFence
-  TestClosedLoopRestartProtection
-  TestClosedLoopWrappingRotation
-  TestClosedLoopAmbiguousAllocation
-  TestClosedLoopShutdownOwnership
+  "TestLockedBundleLoadsAndRejectsMismatch"
+  "TestDisabledNativeStartup"
+  "TestEnabledNativeStartupRefusesInvalidDependencies"
+  "TestNativeSessionAuthenticatesHandoff"
+  "TestNativePrivateStorageAndCAS"
+  "TestNativeRestartRetainsReplayAndAmbiguity"
+  "TestNativePrivateClaimPersistsExactWorkload"
+  "TestNativePeriodicExpiryRetriesExactCleanup"
+  "TestNativeHistoricalRowsRemainMutationIneligible"
+  "TestNativeOrphanSupervisionPreservesEvidence"
+  "TestNativeSIGTERMStopsAdmissionAndCancelsWork"
+  "TestClosedLoopSealedBootstrap"
+  "TestClosedLoopAccountSnapshot"
+  "TestClosedLoopClaimBeforeUpgrade"
+  "TestClosedLoopWorkloadIdentity"
+  "TestClosedLoopSiblingIsolation"
+  "TestClosedLoopRevisionFence"
+  "TestClosedLoopRestartProtection"
+  "TestClosedLoopWrappingRotation"
+  "TestClosedLoopAmbiguousAllocation"
+  "TestClosedLoopShutdownOwnership"
 )
 if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
   echo 'native Nakama acceptance did not execute all twenty-one scenarios' >&2; exit 1

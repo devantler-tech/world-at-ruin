@@ -387,6 +387,16 @@ func (f *fixture) claimBlock() (func(), func()) {
 	return wait, release
 }
 
+func (f *fixture) blockedClaims() int {
+	ctx, cancel := context.WithTimeout(f.t.Context(), time.Second)
+	defer cancel()
+	var count int
+	if err := f.db.QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query ILIKE '%storage%'", f.dbName).Scan(&count); err != nil {
+		f.t.Fatal("observe native blocked claim writes")
+	}
+	return count
+}
+
 // pending starts real socket admission while its native database write is held.
 func (z *trialZone) pending(got handoff.Handoff) <-chan error {
 	done := make(chan error, 1)

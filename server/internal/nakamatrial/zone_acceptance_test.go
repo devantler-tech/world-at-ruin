@@ -216,10 +216,36 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 				changed.ObjectMeta.Uid = "replacement-uid"
 			}
 			z.sidecar.PublishGameServer(changed)
-			// The SDK watch is asynchronous; keep the acknowledgement held across its delivery window.
-			time.Sleep(150 * time.Millisecond)
+			waitFor(t, 2*time.Second, "SDK invalidation reached local admission", func() bool {
+				before := z.claimConnections.Load()
+				ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+				defer cancel()
+				conn, err := z.dial(ctx, got)
+				if conn != nil {
+					_ = conn.CloseNow()
+					t.Fatal("invalidated observation admitted without claim")
+				}
+				return err != nil && strings.Contains(err.Error(), "zone HTTP 401:") && z.claimConnections.Load() == before
+			})
+			waitFor(t, time.Second, "invalidation probes retired their native writes", func() bool { return f.blockedClaims() == 1 })
 			z.sidecar.PublishGameServer(original)
-			time.Sleep(150 * time.Millisecond)
+			// A second held native write proves restoration reached a fresh zone observation.
+			probeCtx, cancelProbe := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancelProbe()
+			probeDone := make(chan error, 1)
+			go func() {
+				conn, err := z.dial(probeCtx, got)
+				if conn != nil {
+					_ = conn.CloseNow()
+				}
+				probeDone <- err
+			}()
+			waitFor(t, 2*time.Second, "restored observation reached native claim", func() bool { return f.blockedClaims() == 2 })
+			cancelProbe()
+			if err := <-probeDone; err == nil {
+				t.Fatal("restoration probe upgraded while commit remained held")
+			}
+			waitFor(t, time.Second, "restoration probe cancellation reached PostgreSQL", func() bool { return f.blockedClaims() == 1 })
 			release()
 			select {
 			case err := <-pending:
