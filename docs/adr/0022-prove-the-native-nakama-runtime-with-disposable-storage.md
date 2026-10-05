@@ -32,8 +32,7 @@ same-key storage write may create a separate player-owned row; privacy is proved
 by the system-owned row remaining hidden and unchanged.
 
 CI executes these scenarios on native Linux amd64 and arm64 runners. Both results
-feed the required CI aggregate. The separate workflow also verifies unpublished
-work branches before their draft PR is opened when local builds are unavailable.
+feed the required CI aggregate in the pull-request and merge-group workflow.
 The build tag selects the separate acceptance binary; it is not a silent skip
 inside the ordinary unit suite. Missing fixture inputs fail that binary.
 
