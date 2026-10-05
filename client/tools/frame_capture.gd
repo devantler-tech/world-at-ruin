@@ -68,6 +68,7 @@ const SCENARIOS: Array[String] = [
 	"run",
 	"gait_transition",
 	"gait_drive",
+	"slab_crossing",
 	"jump",
 	"light_response",
 	"ash_motion",
@@ -577,6 +578,9 @@ func _ready() -> void:
 		return
 	if scenario == "gait_drive":
 		await _capture_gait_drive(dir, main)
+		return
+	if scenario == "slab_crossing":
+		await load("res://tools/slab_crossing_capture.gd").new().run(self, dir, main)
 		return
 	if scenario == "jump":
 		await _capture_jump(dir, main)

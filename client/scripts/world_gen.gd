@@ -126,6 +126,8 @@ var _cave_apron: Array = []
 ## record of where scenery actually went — and it is the record that carries the
 ## laws worth pinning (determinism, keep-outs, resting on the ground).
 var _foliage: Array[Dictionary] = []
+## Original ash cover, retained so switching the slab preview off restores it.
+var _foliage_candidates: Array[Dictionary] = []
 ## Representative, non-zero phase used by evidence captures. The ordinary game
 ## never calls the capture freeze and keeps its live wind, flame, and light.
 const CAPTURE_ANIMATION_TIME := 1.0
@@ -160,13 +162,11 @@ func _ready() -> void:
 	_build_starter_cave()
 	_scatter_ruins()
 	_build_shrine()
-	# LAST: foliage keeps out of every landmark, so it needs the ruin sites and
-	# the shrine to already exist in the tree.
-	_scatter_foliage()
-	# LAST of all, and only opted in: the raised slab overlay keeps out of the
-	# starter cave, so its hull padding has to be known (#547).
+	# Build opted-in stone before cover: foliage belongs in ash, outside the
+	# built footprints. Both keep out of the already-built landmarks.
 	if _ground_plates_enabled:
 		_build_ground_plates()
+	_scatter_foliage()
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -485,6 +485,7 @@ func set_ground_plates_enabled(on: bool) -> void:
 	if overlay == null:
 		if on:
 			_build_ground_plates()
+			_refresh_foliage()
 		return
 	overlay.visible = on
 	# The stone is solid only while it is drawn: a hidden top a body still
@@ -494,6 +495,7 @@ func set_ground_plates_enabled(on: bool) -> void:
 		for collider in body.get_children():
 			if collider is CollisionShape3D:
 				(collider as CollisionShape3D).set_deferred(&"disabled", not on)
+	_refresh_foliage()
 
 
 ## Height of the surface a body walks on at world (x, z): the top of a raised
@@ -1232,7 +1234,7 @@ func _solid(mesh: Mesh, mat: Material, concave: bool = false) -> StaticBody3D:
 ## snagged on it. It also keeps foliage clear of the ruin structural scan — a
 ## MultiMeshInstance3D is not a scriptless Node3D.
 func _scatter_foliage() -> void:
-	var placements := FoliageGen.scatter({
+	_foliage_candidates = FoliageGen.scatter({
 		"seed": WORLD_SEED + FOLIAGE_SEED_OFFSET,
 		"count": FOLIAGE_COUNT,
 		"half_extent": SIZE / 2.0,
@@ -1243,10 +1245,27 @@ func _scatter_foliage() -> void:
 		"density_field": _foliage_density_at,
 		"kind_weights_field": _foliage_kind_weights_at,
 	})
+	_refresh_foliage()
+
+
+## Filter the original scatter, never redraw it: remaining ash cover keeps
+## its stored position and traits, and opting out restores the exact baseline.
+## Compacted instance IDs can change shader tint/wind phase in the preview.
+func _refresh_foliage() -> void:
+	for kind in FoliageGen.KIND_COUNT:
+		var previous := get_node_or_null("Foliage_%d" % kind)
+		if previous != null:
+			remove_child(previous)
+			previous.queue_free()
+	_foliage.clear()
 	var by_kind: Array = []
 	for _slot in FoliageGen.KIND_COUNT:
 		by_kind.append([])
-	for placement: Dictionary in placements:
+	for candidate: Dictionary in _foliage_candidates:
+		var pos: Vector3 = candidate["pos"]
+		if ground_plate_at(pos.x, pos.z) >= 0:
+			continue
+		var placement := candidate.duplicate(true)
 		var kind: int = placement["kind"]
 		if FoliageGen.is_valid_kind(kind):
 			(by_kind[kind] as Array).append(placement)

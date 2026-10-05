@@ -68,9 +68,16 @@ const STEP_MIN_GAIN := 0.001
 ## rounded edge stands partway up it, and a lip then clears the plane through it
 ## by only a few centimetres.
 const STEP_MIN_LEDGE := 0.01
+## A glancing uphill contact may land on the rounded lip rather than its top.
+## Try one stride turned toward the stone, never adding travel to the stride.
+const STEP_INWARD_TURNS := [deg_to_rad(25.0), deg_to_rad(30.0), deg_to_rad(35.0)]
 ## Set by a jump and cleared on landing, so a body falling from a jump is never
 ## mistaken for one walking off a ledge.
 var _jumped := false
+## Requested stride budget, accelerated independently of collision-shortened
+## velocity. A lip may consume travel; it must not reset the held input's ramp.
+var _step_stride_speed := 0.0
+var _step_stride_direction := Vector3.ZERO
 
 var _cam_yaw: Node3D
 var _spring: SpringArm3D
@@ -301,6 +308,7 @@ func _physics_process(delta: float) -> void:
 	var target_speed := SPRINT_SPEED if sprinting else WALK_SPEED
 	var control := 1.0 if is_on_floor() else AIR_CONTROL
 	var horizontal := Vector3(velocity.x, 0, velocity.z)
+	var stride_before_accel := horizontal
 	horizontal = horizontal.move_toward(wish * target_speed, ACCEL * control * delta)
 	velocity.x = horizontal.x
 	velocity.z = horizontal.z
@@ -311,6 +319,18 @@ func _physics_process(delta: float) -> void:
 	# with it would inch forward and never clear the edge.
 	var intended := wish * target_speed
 	var stepping := step_height > 0.0 and is_on_floor() and velocity.y <= 0.0
+	# This is an input history, not floor admission: projection against a lip
+	# must not erase it. The engine-floor check above still gates every step.
+	if step_height > 0.0 and not _jumped and wish.length() > 0.0001:
+		var direction := wish.normalized()
+		if direction.dot(_step_stride_direction) < 0.999:
+			_step_stride_speed = minf(maxf(stride_before_accel.dot(direction), 0.0), intended.length()) \
+				if _step_stride_direction == Vector3.ZERO else 0.0
+		_step_stride_direction = direction
+		_step_stride_speed = move_toward(_step_stride_speed, intended.length(), ACCEL * delta)
+	else:
+		_step_stride_speed = 0.0
+		_step_stride_direction = Vector3.ZERO
 	var standing_on := get_floor_normal()
 	move_and_slide()
 	if stepping:
@@ -357,38 +377,80 @@ func enable_step(height: float) -> void:
 ## accepted step keeps it, so the stride goes on ramping instead of snapping to
 ## full speed.
 func _step_up(from: Transform3D, intended: Vector3, ramped: Vector3, standing_on: Vector3) -> void:
-	var motion := intended * get_physics_process_delta_time()
+	# Both paths spend only the held input's earned stride budget. Collision
+	# can shorten velocity without erasing that ramp; a from-rest body must
+	# still earn each acceleration interval before spending target-speed travel.
+	var motion := intended.normalized() * minf(_step_stride_speed, intended.length()) * get_physics_process_delta_time()
 	var along := Vector2(motion.x, motion.z)
 	if along.length() <= 0.0001:
 		return
-	along = along.normalized()
+	along = Vector2(intended.x, intended.z).normalized()
 	var slid := global_position - from.origin
 	var slid_progress := Vector2(slid.x, slid.z).dot(along)
+	var candidate := _step_landing(from, motion, standing_on, along, slid_progress)
+	if candidate.is_empty():
+		return
+	global_transform = candidate[&"landed"]
+	velocity.x = ramped.x
+	velocity.z = ramped.z
+	velocity.y = 0.0
+
+
+## A physically swept landing, with bounded same-length inward alternatives.
+func _step_landing(from: Transform3D, motion: Vector3, standing_on: Vector3,
+		along: Vector2, slid_progress: float) -> Dictionary:
 	var lift := _test_motion(from, Vector3.UP * step_height)
 	var raised := from.translated(lift[&"travel"])
 	var over := raised.translated(_test_motion(raised, motion)[&"travel"])
 	var drop := _test_motion(over, Vector3.DOWN * (step_height * 2.0))
+	var candidate := _accept_step_landing(from, over, drop, standing_on, along, slid_progress)
+	if not candidate.is_empty():
+		return candidate
+	if drop[&"hit"] and (drop[&"normal"] as Vector3).angle_to(Vector3.UP) > floor_max_angle:
+		var normal: Vector3 = drop[&"normal"]
+		var inward_candidates: Array[Vector3] = [Vector3(-normal.x, 0.0, -normal.z)]
+		# The rounded lip's contact combines its side with the uphill support
+		# plane. Remove that plane's contribution before aiming into the lip;
+		# otherwise a glancing stride turns along the slope rather than onto stone.
+		if standing_on.y > 0.0:
+			normal -= standing_on * normal.y / standing_on.y
+			inward_candidates.append(Vector3(-normal.x, 0.0, -normal.z))
+		for index in inward_candidates.size():
+			var inward := inward_candidates[index]
+			if inward.length_squared() <= 0.0001:
+				continue
+			# Preserve a valid rounded-contact route before trying the sloped
+			# lip's corrected direction. Every alternative passes every guard.
+			var turns: Array = [deg_to_rad(30.0)] if index == 0 else STEP_INWARD_TURNS
+			for turn_limit: float in turns:
+				var turn := clampf(motion.signed_angle_to(inward, Vector3.UP), -turn_limit, turn_limit)
+				var retry := motion.rotated(Vector3.UP, turn)
+				over = raised.translated(_test_motion(raised, retry)[&"travel"])
+				drop = _test_motion(over, Vector3.DOWN * (step_height * 2.0))
+				candidate = _accept_step_landing(from, over, drop, standing_on, along, slid_progress)
+				if not candidate.is_empty():
+					return candidate
+	return {}
+
+
+func _accept_step_landing(from: Transform3D, over: Transform3D, drop: Dictionary,
+		standing_on: Vector3, along: Vector2, slid_progress: float) -> Dictionary:
 	if not drop[&"hit"] or (drop[&"normal"] as Vector3).angle_to(Vector3.UP) > floor_max_angle:
-		return
+		return {}
 	var landed := over.translated(drop[&"travel"])
 	var rise := landed.origin.y - from.origin.y
 	if rise <= STEP_MIN_RISE or rise > step_height:
-		return
+		return {}
 	var stepped := landed.origin - from.origin
 	if Vector2(stepped.x, stepped.z).dot(along) <= slid_progress + STEP_MIN_GAIN:
-		return
+		return {}
 	# Only a ledge: a full stride up a plain slope lands on the plane the body is
 	# standing on, carried forward; a lip's top stands clear of it.
 	if standing_on.y <= 0.0:
-		return
+		return {}
 	if rise + (standing_on.x * stepped.x + standing_on.z * stepped.z) / standing_on.y <= STEP_MIN_LEDGE:
-		return
-	global_transform = landed
-	# The slide spent this tick's speed against the lip; the step carried the
-	# body over it, so the stride continues at the speed it had built up.
-	velocity.x = ramped.x
-	velocity.z = ramped.z
-	velocity.y = 0.0
+		return {}
+	return {&"landed": landed}
 
 
 ## Whether the body is standing rather than in the air, for the gait. On the

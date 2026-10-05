@@ -792,8 +792,10 @@ everything shipped afterwards is held to.
   EXACTLY: each polygon is split along the terrain grid lines and quad diagonals it crosses so every
   piece lies in one terrain triangle, and the side strips split at the same crossings.
   `exposed_slab_geometry_test` holds that law on a hand-built creased ground and on the real world,
-  proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision, heights and
-  foliage are byte-identical with the flag on — the flag-on node tree is the flag-off tree plus the
+  proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision and heights
+  are unchanged with the flag on. Foliage centres inside built slab polygons are excluded (#895);
+  retained ash placements keep their stored traits, and opting out restores the complete original
+  scatter. The flag-on node tree is the flag-off tree plus the
   overlay node and its collision body. **The tops are solid exactly where drawn (#548):** one
   `GroundPlatesBody` carries a trimesh built from the overlay mesh itself, lips included, so render and
   collision cannot disagree; `WorldGen.walkable_height_at()` answers the raised top inside a built
@@ -809,8 +811,13 @@ everything shipped afterwards is held to.
   seed: collision equals the query at every top and just past every edge (and is the terrain where no
   other top is), a player climbs and descends the thickest lip, crosses a seam and a three-slab
   junction, two fresh builds agree bit for bit, and hiding the overlay removes both. The treatment
-  stays opt-in until it clears the art gate; foliage still stands on the base ground inside a slab (#895), and a glancing
-  approach up a slope can still glide along a lip (#896, measured by `client/tools/plate_crossing_sweep.gd`).
+  stays opt-in until it clears the art gate. The step also tries bounded inward directions when a
+  glancing uphill stride lands on a rounded lip (#896); each path spends the held input's accelerated
+  stride and retains the floor-angle, rise, forward-gain, ledge and headroom guards. The unchanged
+  `client/tools/plate_crossing_sweep.gd` measures 0 stalls in 262 approaches, versus the prior 12.
+  Independent regressions hold actual raised-side support and forbid unearned travel from rest or
+  after changing direction, climbing tall walls, and stepping beneath insufficient headroom. Inspect
+  the [close frames and controller sequence](docs/evidence/issue-895-896-slab-crossings/README.md).
   The overlay keeps out
   of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact
   uniform and the overlay together in a running world so a measurement tool can compare both

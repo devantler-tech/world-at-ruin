@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/player_step_budget_test.gd" id="1_budget"]
+
+[node name="PlayerStepBudgetTest" type="Node"]
+script = ExtResource("1_budget")
