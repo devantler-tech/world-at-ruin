@@ -41,6 +41,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -445,6 +446,28 @@ func (f *fixture) handoff(token string) handoff.Handoff {
 	return got
 }
 
+// verifyHandoff checks admission with the independent allocation's zone key.
+func (f *fixture) verifyHandoff(name string, got handoff.Handoff) {
+	f.t.Helper()
+	verifier, e := zonesock.NewHMACVerifier(fixtureAdmissionSecret(name), name)
+	if e != nil {
+		f.t.Fatal(e)
+	}
+	if observer, e := verifier.Verify(got.Token); e != nil || observer != 1 {
+		f.t.Fatal("native handoff cannot admit its authoritative zone observer")
+	}
+	gs := f.resource(name)
+	if gs == nil || got.ServerName != gs.Status.NodeName+".zones.example" || got.Port != uint16(gs.Status.Ports[0].Port) {
+		f.t.Fatal("native handoff selected another allocation endpoint")
+	}
+}
+
+// fixtureAdmissionSecret keeps independent disposable zones from sharing a key.
+func fixtureAdmissionSecret(name string) []byte {
+	sum := sha256.Sum256([]byte("native-fixture-admission/" + name))
+	return sum[:]
+}
+
 // row inspects the exact system-owned PostgreSQL record independently of the RPC.
 func (f *fixture) row(key string) (string, string, int, int) {
 	f.t.Helper()
@@ -487,11 +510,11 @@ func (f *fixture) makeServer(name, attempt string) *agonesv1.GameServer {
 	f.t.Helper()
 	uid := name + "-uid"
 	label := []byte(strings.Join([]string{"world-at-ruin/zone-admission/v1", "world-at-ruin", name, uid, f.fingerprint}, "\x00"))
-	ciphertext, e := rsa.EncryptOAEP(sha256.New(), rand.Reader, &f.key.PublicKey, bytes.Repeat([]byte{7}, 32), label)
+	ciphertext, e := rsa.EncryptOAEP(sha256.New(), rand.Reader, &f.key.PublicKey, fixtureAdmissionSecret(name), label)
 	if e != nil {
 		f.t.Fatal(e)
 	}
-	gs := &agonesv1.GameServer{TypeMeta: metav1.TypeMeta{APIVersion: "agones.dev/v1", Kind: "GameServer"}, ObjectMeta: metav1.ObjectMeta{Namespace: "world-at-ruin", Name: name, UID: types.UID(uid), ResourceVersion: "42", Labels: map[string]string{agones.FleetLabel: "cave", agones.AdmissionReadyLabel: agones.AdmissionReadyValue(f.fingerprint)}, Annotations: map[string]string{agones.AdmissionKeyAnnotation: f.fingerprint, agones.AdmissionEnvelopeAnnotation: "v1." + base64.RawURLEncoding.EncodeToString(ciphertext)}}, Status: agonesv1.GameServerStatus{State: agonesv1.GameServerStateAllocated, NodeName: "node-a", Ports: []agonesv1.GameServerStatusPort{{Name: "tls", Port: 8443}}}}
+	gs := &agonesv1.GameServer{TypeMeta: metav1.TypeMeta{APIVersion: "agones.dev/v1", Kind: "GameServer"}, ObjectMeta: metav1.ObjectMeta{Namespace: "world-at-ruin", Name: name, UID: types.UID(uid), ResourceVersion: "42", Labels: map[string]string{agones.FleetLabel: "cave", agones.AdmissionReadyLabel: agones.AdmissionReadyValue(f.fingerprint)}, Annotations: map[string]string{agones.AdmissionKeyAnnotation: f.fingerprint, agones.AdmissionEnvelopeAnnotation: "v1." + base64.RawURLEncoding.EncodeToString(ciphertext)}}, Status: agonesv1.GameServerStatus{State: agonesv1.GameServerStateAllocated, NodeName: "node-" + name, Ports: []agonesv1.GameServerStatusPort{{Name: "tls", Port: 8443}}}}
 	if attempt != "" {
 		digest, e := agones.CorrelationLabel(attempt)
 		if e != nil {
@@ -545,7 +568,7 @@ func (f *fixture) Allocate(ctx context.Context, request *allocationpb.Allocation
 	if ambiguous {
 		return nil, status.Error(codes.Unavailable, "provider-private-details")
 	}
-	return &allocationpb.AllocationResponse{GameServerName: name, NodeName: "node-a", Ports: []*allocationpb.AllocationResponse_GameServerStatusPort{{Name: "tls", Port: 8443}}, Metadata: &allocationpb.AllocationResponse_GameServerMetadata{Labels: maps.Clone(gs.Labels), Annotations: maps.Clone(gs.Annotations)}}, nil
+	return &allocationpb.AllocationResponse{GameServerName: name, NodeName: gs.Status.NodeName, Ports: []*allocationpb.AllocationResponse_GameServerStatusPort{{Name: "tls", Port: 8443}}, Metadata: &allocationpb.AllocationResponse_GameServerMetadata{Labels: maps.Clone(gs.Labels), Annotations: maps.Clone(gs.Annotations)}}, nil
 }
 
 // serveAPI checks generated-client scope and exact conditional deletion.

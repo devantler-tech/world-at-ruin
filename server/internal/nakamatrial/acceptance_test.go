@@ -137,7 +137,7 @@ func TestEnabledNativeStartupRefusesInvalidDependencies(t *testing.T) {
 func TestNativeSessionAuthenticatesHandoff(t *testing.T) {
 	f := newFixture(t)
 	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
-	token, _ := f.account("authenticated-fixture-a")
+	token, uid := f.account("authenticated-fixture-a")
 	for _, request := range []struct{ token, path, payload string }{
 		{"", "/v2/rpc/war_handoff?unwrap", "{}"},
 		{"", "/v2/rpc/war_handoff?unwrap&http_key=native-fixture-http-key", "{}"},
@@ -153,12 +153,18 @@ func TestNativeSessionAuthenticatesHandoff(t *testing.T) {
 		t.Fatal("refused native request allocated capacity")
 	}
 	first := f.handoff(token)
+	f.verifyHandoff("zone-1", first)
+	before, version, _, _ := f.row(leaseKey(uid))
 	secondToken, _ := f.account("authenticated-fixture-b")
 	second := f.handoff(secondToken)
+	f.verifyHandoff("zone-2", second)
 	if first.ServerName == second.ServerName || first.Token == second.Token {
 		t.Fatal("separate native accounts shared a reservation")
 	}
-	if again := f.handoff(token); again.ServerName != first.ServerName || again.Token != first.Token {
+	again := f.handoff(token)
+	f.verifyHandoff("zone-1", again)
+	after, afterVersion, _, _ := f.row(leaseKey(uid))
+	if again.ServerName != first.ServerName || again.Port != first.Port || before != after || version != afterVersion {
 		t.Fatal("another account replaced first reservation")
 	}
 }
@@ -208,10 +214,21 @@ func TestNativePrivateStorageAndCAS(t *testing.T) {
 func TestNativeRestartRetainsReplayAndAmbiguity(t *testing.T) {
 	f := newFixture(t)
 	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
-	token, _ := f.account("restart-native-fixture")
+	token, replayUID := f.account("restart-native-fixture")
 	first := f.handoff(token)
+	f.verifyHandoff("zone-1", first)
+	replayBefore, replayVersion, _, _ := f.row(leaseKey(replayUID))
+	var lease struct {
+		Expires int64 `json:"expires_at_nanos"`
+	}
+	if json.Unmarshal([]byte(replayBefore), &lease) != nil || lease.Expires == 0 {
+		t.Fatal("native replay has no durable expiry")
+	}
 	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
-	if again := f.handoff(token); again.ServerName != first.ServerName || again.Token != first.Token {
+	again := f.handoff(token)
+	f.verifyHandoff("zone-1", again)
+	replayAfter, replayAfterVersion, _, _ := f.row(leaseKey(replayUID))
+	if again.ServerName != first.ServerName || again.Port != first.Port || again.ExpiresAt.After(time.Unix(0, lease.Expires)) || replayBefore != replayAfter || replayVersion != replayAfterVersion {
 		t.Fatal("native restart lost acknowledged handoff")
 	}
 	if allocated, _ := f.counts(); allocated != 1 {
