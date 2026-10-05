@@ -37,8 +37,10 @@ claim even after metadata restoration; a fresh valid observation can admit an
 idempotent claim without changing its generation. Shutdown joins sockets and
 admission before SDK Shutdown, without releasing durable claimed ownership.
 
-The launcher requires all twenty-one named scenarios on both native Linux
+The launcher requires all twenty-two named scenarios on both native Linux
 architectures. It refuses an incomplete run, missing inputs or absent opt-in.
+The movement scenario in ADR 0024 adds default-off negotiation, owner-applied
+input and completed-tick acknowledgements without changing retained replication.
 The image is unpublished and its network, database, credentials and process
 fixtures are disposable. Fixture service-account access cannot certify production
 workload credential isolation, RBAC, NetworkPolicy or certificate issuance.

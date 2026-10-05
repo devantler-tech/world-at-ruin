@@ -634,6 +634,11 @@ everything shipped afterwards is held to.
   default; terminal hub shutdown cancels admission, drains upgraded sockets and clears observer
   interest on the simulation owner before lifecycle shutdown, with bounded waits and visible
   errors; no durable lease release or process-death proof, per ADR 0007),
+  its **default-off authoritative movement** (`zone -movement-intents` plus explicit
+  wire-v3 negotiation; retained v1/v2 replication unchanged; bounded newest-input
+  mailbox applied only before the simulation step, server-owned ground speed,
+  silence expiry and a separate coalesced own-position/applied-sequence acknowledgement;
+  no Godot prediction or production activation, per ADR 0024),
   the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
@@ -839,12 +844,13 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.1
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-one
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-two
   named scenarios against fresh disposable PostgreSQL databases, including the built
-  sealed zone, native private claims and actual TLS WebSocket replication. Both native Linux
+  sealed zone, native private claims, actual TLS WebSocket replication and opt-in
+  authoritative movement. Both native Linux
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
-  and ADRs 0022–0023; production activation and build-flag retirement remain #1177/#1192.
+  and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).

@@ -73,12 +73,18 @@ func main() {
 	healthInterval := flag.Duration("agones-health-interval", agones.DefaultHealthInterval, "heartbeat cadence for -agones; keep it under half the fleet's health periodSeconds")
 	admissionPublicKey := flag.String("agones-admission-public-key", "", "PEM RSA public-key file for sealed per-GameServer admission; requires -agones (empty keeps the local environment-secret path)")
 	var claims claimOptions
+	var movement movementOptions
+	flag.BoolVar(&movement.enabled, "movement-intents", false, "accept authenticated v3 movement intents (experimental; default off)")
+	flag.Uint64Var(&movement.holdTicks, "movement-hold-ticks", 3, "maximum fixed ticks to hold movement input (1..300; experimental)")
 	flag.BoolVar(&claims.enabled, "private-claims", false, "require a private durable claim before socket admission (experimental; default off)")
 	flag.StringVar(&claims.endpoint, "claim-url", "", "private HTTPS claim endpoint ending in /v1/claim")
 	flag.StringVar(&claims.caFile, "claim-ca", "", "PEM trust roots for the private claim service")
 	flag.StringVar(&claims.certFile, "claim-cert", "", "PEM workload client certificate")
 	flag.StringVar(&claims.keyFile, "claim-key", "", "PEM workload client private key")
 	flag.Parse()
+	if err := movement.validate(*listen != "", *mintObserver != 0); err != nil {
+		fatalf("%v", err)
+	}
 	if err := claims.validate(*listen != "", *withAgones, *admissionPublicKey != "", *insecurePlaintext, *mintObserver != 0); err != nil {
 		fatalf("%v", err)
 	}
@@ -111,7 +117,7 @@ func main() {
 		if durationSet {
 			d = *duration
 		}
-		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *allocation, *insecurePlaintext, *interest, d, *withAgones, *healthInterval, *admissionPublicKey, claims); err != nil {
+		if err := runListen(w, *listen, *tlsCert, *tlsKey, *secretEnv, *allocation, *insecurePlaintext, *interest, d, *withAgones, *healthInterval, *admissionPublicKey, claims, movement); err != nil {
 			fatalf("%v", err)
 		}
 	case *realtime:
@@ -161,7 +167,14 @@ func runMint(secretEnv, allocation string, observer sim.EntityID, ttl time.Durat
 // is signalled. It returns errors instead of exiting so every exit path runs
 // the deferred cleanup — with -agones that includes telling the sidecar to
 // recycle the GameServer, which os.Exit would silently skip.
-func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration, admissionPublicKeyFile string, claims claimOptions) (result error) {
+func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation string, insecurePlaintext bool, interestMM int64, d time.Duration, withAgones bool, healthInterval time.Duration, admissionPublicKeyFile string, claims claimOptions, movementConfig ...movementOptions) (result error) {
+	var movement movementOptions
+	if len(movementConfig) > 0 {
+		movement = movementConfig[0]
+	}
+	if err := movement.validate(true, false); err != nil {
+		return err
+	}
 	if err := claims.validate(true, withAgones, admissionPublicKeyFile != "", insecurePlaintext, false); err != nil {
 		return err
 	}
@@ -193,7 +206,7 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		if err != nil {
 			return err
 		}
-		hub, err = zonesock.NewHub(zonesock.Config{Verifier: verifier, InterestMM: interestMM})
+		hub, err = zonesock.NewHub(zonesock.Config{Verifier: verifier, InterestMM: interestMM, MovementEnabled: movement.enabled, MovementHoldTicks: movement.holdTicks})
 		if err != nil {
 			return err
 		}
@@ -255,7 +268,7 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 		if err != nil {
 			return err
 		}
-		cfg := zonesock.Config{Verifier: verifier, InterestMM: interestMM}
+		cfg := zonesock.Config{Verifier: verifier, InterestMM: interestMM, MovementEnabled: movement.enabled, MovementHoldTicks: movement.holdTicks}
 		if privateClient != nil {
 			gate, gateErr := zoneclaim.New(prepared, privateClient)
 			if gateErr != nil {
@@ -333,6 +346,7 @@ func runListen(w *sim.World, addr, certFile, keyFile, secretEnv, allocation stri
 
 	runLoop(serveCtx, d, func() {
 		sim.DriveDemoTick(w)
+		hub.BeforeStep(w)
 		w.Step()
 		hub.Tick(w)
 	})
