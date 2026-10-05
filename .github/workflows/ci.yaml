@@ -1270,7 +1270,7 @@ jobs:
         run: bash tools/smoke-zone-container.sh world-at-ruin-zone:ci
 
   nakama-native:
-    uses: ./.github/workflows/nakama-native.yaml
+    uses: $/.github/workflows/nakama-native.yaml
 
   server-ci:
     name: Server CI (Go)
