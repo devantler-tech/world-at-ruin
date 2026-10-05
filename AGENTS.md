@@ -1082,6 +1082,13 @@ everything shipped afterwards is held to.
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
+  - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active
+    `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
+    scan, and proves seeded retired links and missing configuration fail. Its main path runs
+    only this read-only guard. Run `bash tools/retired-repo-links-workflow.test.sh` locally
+    with `yq` and `jq` to check routing, credentials and required-check wiring, including
+    rejection controls; use ShellCheck on that script and actionlint on both workflow files.
+    Hosted runs provide the actual PR and post-merge main execution proof.
   - `devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml`
     (`pull_request` + `merge_group`, invoked by the organization ruleset) runs trusted client
     regressions against the candidate product tree. Its workflow/controller selection comes from the
