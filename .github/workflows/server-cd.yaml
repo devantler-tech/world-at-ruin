@@ -62,7 +62,7 @@ jobs:
           bash tools/smoke-zone-container.sh "${IMAGE}@${DIGEST}"
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: fluxcd/flux2/action@dd233c4fadef306a62b7893204f8e3817fecc2b2 # v2.9.5
-      - name: Pin the trial image and publish its manifests
+      - name: Pin the trial image and stage its manifests
         id: manifests
         env:
           IMAGE: ghcr.io/${{ github.repository }}/zone
@@ -74,11 +74,12 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || exit 1
           [[ "$(grep -c '^          image: ghcr.io/devantler-tech/world-at-ruin/zone:unpublished$' deploy/deployment.yaml)" == 1 ]] || exit 1
           sed "s|ghcr.io/devantler-tech/world-at-ruin/zone:unpublished|${IMAGE}@${DIGEST}|" \
             deploy/deployment.yaml > deploy/deployment.yaml.tmp
           mv deploy/deployment.yaml.tmp deploy/deployment.yaml
-          flux push artifact "oci://${ARTIFACT}:${RELEASE_TAG#v}" --path ./deploy \
+          flux push artifact "oci://${ARTIFACT}:staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --path ./deploy \
             --source "$SOURCE" --revision "${RELEASE_TAG}@sha1:${SOURCE_SHA}" \
             --reproducible --output json > manifests.json
           manifest_digest="$(jq -er '.digest' manifests.json)"
@@ -103,3 +104,13 @@ jobs:
             --certificate-identity "$SIGNER" "${ARTIFACT}@${MANIFEST_DIGEST}" > /dev/null
           printf '### Signed zone image\n\n%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
           printf '\n### Signed trial manifests\n\n%s@%s\n' "$ARTIFACT" "$MANIFEST_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - name: Promote verified trial manifests
+        env:
+          ARTIFACT: ghcr.io/${{ github.repository }}/zone-manifests
+          MANIFEST_DIGEST: ${{ steps.manifests.outputs.digest }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          flux tag artifact "oci://${ARTIFACT}@${MANIFEST_DIGEST}" --tag "${RELEASE_TAG#v}"
