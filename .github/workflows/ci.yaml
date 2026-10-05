@@ -934,6 +934,8 @@ jobs:
         run: bash tools/test-updatepublisher.sh
       - name: Experimental update checks authenticate native HTTPS evidence
         run: WAR_UPDATE_CHECK_PROOF=1 go -C server test -count=1 -timeout 90s ./internal/updatepublisher -run '^TestNativeUpdateCheck$'
+      - name: Native Godot movement interoperates with the built TLS zone
+        run: WAR_GODOT_ZONE_PROOF=1 go -C server test -count=1 -timeout 90s -v ./cmd/zone -run '^TestNativeGodotMovement$'
       - name: Experimental native cumulative content packs
         run: |
           bash tools/test-contentpack.sh

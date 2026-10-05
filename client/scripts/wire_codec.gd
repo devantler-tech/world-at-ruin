@@ -49,6 +49,14 @@ extends RefCounted
 ## requests VERSION; LEGACY_VERSION remains readable during expansion.
 const LEGACY_VERSION := 1
 const VERSION := 2
+## Explicit movement capability; ordinary decode/negotiation remains v1/v2.
+const MOVEMENT_VERSION := 3
+const KIND_MOVEMENT_INTENT := 3
+const KIND_MOVEMENT_ACK := 4
+const INTENT_FRAME_SIZE := 17
+const ACK_FRAME_SIZE := 43
+const ERR_INTENT := "intent"
+const ERR_MOVEMENT_ACK := "movement_ack"
 
 ## Message kinds. Values are wire contract (mirror `wire.KindSnapshot` /
 ## `wire.KindSnapshotDelta`) — never renumber one.
@@ -119,6 +127,62 @@ static func decode(bytes: PackedByteArray) -> Dictionary:
 		return _complete_message(r, delta, version, KIND_SNAPSHOT_DELTA)
 
 	return {"ok": false, "error": ERR_KIND, "detail": "unknown message kind %d" % kind}
+
+
+## Only the explicitly negotiated movement link calls this entrypoint. V3
+## replication retains the v2 payload layout; own ACKs are a separate stream.
+static func decode_movement_frame(bytes: PackedByteArray) -> Dictionary:
+	var r := _Reader.new(bytes)
+	var version := r.u16()
+	if not r.error.is_empty():
+		return _reader_fail(r)
+	if version != MOVEMENT_VERSION:
+		return {"ok": false, "error": ERR_VERSION, "detail": "movement requires wire v3"}
+	var kind := r.u8()
+	if not r.error.is_empty():
+		return _reader_fail(r)
+	if kind == KIND_SNAPSHOT or kind == KIND_SNAPSHOT_DELTA:
+		var payload := r.read_snapshot(version) if kind == KIND_SNAPSHOT else r.read_delta(version)
+		return _complete_message(r, payload, version, kind)
+	if kind != KIND_MOVEMENT_ACK:
+		return {"ok": false, "error": ERR_KIND, "detail": "unexpected movement server message"}
+	return _read_movement_ack(r)
+
+
+static func _read_movement_ack(r: _Reader) -> Dictionary:
+	var sequence := r.u64()
+	var tick := r.u64()
+	var x := r.s64()
+	var y := r.s64()
+	var z := r.s64()
+	if not r.error.is_empty():
+		return _reader_fail(r)
+	for coordinate: int in [x, y, z]:
+		if coordinate < -MAX_WORLD_EXTENT_MM or coordinate > MAX_WORLD_EXTENT_MM:
+			return {"ok": false, "error": ERR_MOVEMENT_ACK, "detail": "own position exceeds world bounds"}
+	var trailing := _check_no_trailing(r)
+	if not trailing.is_empty():
+		return trailing
+	return {"ok": true, "version": MOVEMENT_VERSION, "kind": KIND_MOVEMENT_ACK,
+		"ack": {"applied_sequence": sequence, "tick": tick, "x": x, "y": y, "z": z}}
+
+
+## Ground direction in integer thousandths. The server owns speed and position.
+static func encode_intent(sequence: int, x: int, z: int, sprint: bool, mode: int = 0) -> Dictionary:
+	if sequence <= 0 or mode != 0 or x < -1000 or x > 1000 or z < -1000 or z > 1000:
+		return {"ok": false, "error": ERR_INTENT, "detail": "invalid ground intent"}
+	if x * x + z * z > 1000000:
+		return {"ok": false, "error": ERR_INTENT, "detail": "direction exceeds unit circle"}
+	var bytes := PackedByteArray()
+	bytes.resize(INTENT_FRAME_SIZE)
+	bytes.encode_u16(0, MOVEMENT_VERSION)
+	bytes[2] = KIND_MOVEMENT_INTENT
+	bytes.encode_u64(3, sequence)
+	bytes.encode_s16(11, x)
+	bytes.encode_s16(13, z)
+	bytes[15] = 1 if sprint else 0
+	bytes[16] = mode
+	return {"ok": true, "bytes": bytes}
 
 
 ## Read errors precede payload validation, which precedes trailing bytes.
