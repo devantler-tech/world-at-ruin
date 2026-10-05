@@ -835,6 +835,15 @@ everything shipped afterwards is held to.
   GDScript lint uses `gdtoolkit==4.5.0` with the repository's explicit `.gdlintrc`; after installing
   that pinned tool, run `./tools/gdscript-lint.test.sh` to prove the policy rejects a real invalid
   fixture and `./tools/gdscript-lint.sh client` to lint the product tree. Both are blocking in CI.
+- **Native Nakama acceptance:** the separate generated `server/nakama-runtime.mod`/`.sum`
+  graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.1
+  and native CGO. Keep the ordinary server graph intact. The explicitly experimental
+  `server/Dockerfile.nakama-native` image is unpublished;
+  `tools/smoke-nakama-native.sh <local-image> --experimental` runs eleven mandatory
+  scenarios against fresh disposable PostgreSQL databases. Both native Linux
+  architectures feed the required CI aggregate. The tagged process suite fails
+  on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
+  and ADR 0022; production activation and build-flag retirement remain #1177/#1192.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).

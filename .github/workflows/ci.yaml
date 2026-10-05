@@ -1269,6 +1269,9 @@ jobs:
       - name: Exercise packaged defaults and real TLS admission
         run: bash tools/smoke-zone-container.sh world-at-ruin-zone:ci
 
+  nakama-native:
+    uses: ./.github/workflows/nakama-native.yaml
+
   server-ci:
     name: Server CI (Go)
     runs-on: ubuntu-latest
@@ -1306,7 +1309,7 @@ jobs:
       - name: Format check (gofmt)
         working-directory: server
         run: |
-          unformatted="$(gofmt -l . ../tools/deploy-manifests)"
+          unformatted="$(gofmt -l . ../tools/deploy-manifests ../tools/nakama-runtime-build)"
           if [ -n "${unformatted}" ]; then
             echo "::error::gofmt found unformatted files:"; echo "${unformatted}"; exit 1
           fi
@@ -1315,9 +1318,13 @@ jobs:
         run: |
           go vet ./...
           go vet ../tools/deploy-manifests/*.go
+          go vet ../tools/nakama-runtime-build/*.go
       - name: Rendered trial manifests respect host-owned network isolation
         working-directory: server
         run: go test -race -count=1 -timeout=2m ../tools/deploy-manifests/*.go
+      - name: Native bundle requires explicit opt-in and preserves existing output
+        working-directory: server
+        run: go test -race -count=1 -timeout=2m ../tools/nakama-runtime-build/*.go
       - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
@@ -3071,6 +3078,7 @@ jobs:
         go-vulnerability-scan,
         server-ci,
         zone-container,
+        nakama-native,
         detect-visual-changes,
         frame-capture,
         frame-capture-exported,
@@ -3096,6 +3104,7 @@ jobs:
             ${{ needs.go-vulnerability-scan.result }}
             ${{ needs.server-ci.result }}
             ${{ needs.zone-container.result }}
+            ${{ needs.nakama-native.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
             ${{ needs.frame-capture-exported.result }}

@@ -1,0 +1,28 @@
+# Explicit disposable acceptance image; this is not a production deployment target.
+FROM golang:1.27.1@sha256:e0174e51e81218523251d85d248a90d24c3d5e81543b4f07a5d66229397db190 AS trial
+ARG EXPERIMENTAL=false
+RUN test "$EXPERIMENTAL" = true
+WORKDIR /source/server
+COPY server/go.mod server/go.sum server/nakama-runtime.mod server/nakama-runtime.sum ./
+RUN sha256sum nakama-runtime.mod nakama-runtime.sum > /tmp/locked-graph.sha256 \
+    && go mod download -modfile=nakama-runtime.mod \
+    && sha256sum -c /tmp/locked-graph.sha256
+COPY server/ ./
+COPY tools/nakama-runtime-build/ /source/tools/nakama-runtime-build/
+RUN GOBIN=/out go install golang.org/x/vuln/cmd/govulncheck@v1.7.0 \
+    && GOFLAGS='-mod=readonly -modfile=nakama-runtime.mod' /out/govulncheck \
+      github.com/heroiclabs/nakama/v3 ./cmd/nakama
+RUN go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
+      -experimental -source . -output /out/bundle \
+    && go test -mod=readonly -modfile=nakama-runtime.mod -tags=war_native_trial \
+      -c -o /out/native-trial.test ./internal/nakamatrial \
+    && mkdir /out/bundle/mismatched-modules \
+    && go build -mod=readonly -modfile=nakama-runtime.mod -trimpath -buildvcs=false \
+      -race -buildmode=plugin -o /out/bundle/mismatched-modules/world_at_ruin.so ./cmd/nakama
+RUN mkdir -p /var/run/secrets/kubernetes.io/serviceaccount \
+    && chown 10001:10001 /var/run/secrets/kubernetes.io/serviceaccount \
+    && chown -R 10001:10001 /out/bundle
+USER 10001:10001
+ENTRYPOINT ["/out/native-trial.test"]
+# Default invocation refuses the trial rather than opening a server or database.
+CMD ["-war-bundle=/out/bundle"]
