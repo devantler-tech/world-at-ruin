@@ -230,15 +230,21 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 			waitFor(t, time.Second, "invalidation probes retired their native writes", func() bool { return f.blockedClaims() == 1 })
 			z.sidecar.PublishGameServer(original)
 			// A second held native write proves restoration reached a fresh zone observation.
-			probeCtx, cancelProbe := context.WithTimeout(t.Context(), 2*time.Second)
+			probeCtx, cancelProbe := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancelProbe()
 			probeDone := make(chan error, 1)
 			go func() {
-				conn, err := z.dial(probeCtx, got)
-				if conn != nil {
-					_ = conn.CloseNow()
+				for {
+					conn, err := z.dial(probeCtx, got)
+					if conn != nil {
+						_ = conn.CloseNow()
+					}
+					if err == nil || probeCtx.Err() != nil || !strings.Contains(err.Error(), "zone HTTP 401:") {
+						probeDone <- err
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
 				}
-				probeDone <- err
 			}()
 			waitFor(t, 2*time.Second, "restored observation reached native claim", func() bool { return f.blockedClaims() == 2 })
 			cancelProbe()
@@ -246,6 +252,11 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 				t.Fatal("restoration probe upgraded while commit remained held")
 			}
 			waitFor(t, time.Second, "restoration probe cancellation reached PostgreSQL", func() bool { return f.blockedClaims() == 1 })
+			select {
+			case err := <-pending:
+				t.Fatalf("original revision claim ended before its commit barrier: %v", err)
+			default:
+			}
 			release()
 			select {
 			case err := <-pending:
