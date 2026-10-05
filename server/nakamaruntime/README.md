@@ -243,8 +243,8 @@ retire dependencies early.
 
 ## Experimental native Nakama acceptance
 
-The native bundle uses the separate generated locks `server/nakama-runtime.mod`
-and `server/nakama-runtime.sum`, aligned with Nakama 3.40's runtime API 1.47.
+The native bundle uses the separate generated locks `server/nakama-runtime/go.mod`
+and `server/nakama-runtime/go.sum`, aligned with Nakama 3.40's runtime API 1.47.
 It leaves the ordinary server dependency graph intact. From `server/`:
 
 ```sh
@@ -276,7 +276,7 @@ suite separately from ordinary unit tests.
 
 Lock maintenance is deliberate: use Go's alternate-module commands to resolve
 both `github.com/heroiclabs/nakama/v3` and `./cmd/nakama`, plus the tagged native
-trial package, and run `go mod download -modfile=nakama-runtime.mod` to retain
+trial package, and run `go mod download -modfile=nakama-runtime/go.mod` to retain
 checksums for every selected platform dependency. Never edit generated sums or
 substitute the ordinary graph for the full runtime graph. The container build
 checks that dependency download leaves both lock files byte-identical and scans

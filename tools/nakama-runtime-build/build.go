@@ -41,7 +41,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 		return err
 	}
 	graph := map[string][]byte{}
-	for _, name := range []string{"nakama-runtime.mod", "nakama-runtime.sum"} {
+	for _, name := range []string{"nakama-runtime/go.mod", "nakama-runtime/go.sum"} {
 		graph[name], err = os.ReadFile(filepath.Join(source, name))
 		if err != nil {
 			return errors.New("native Nakama build locked graph unavailable")
@@ -71,7 +71,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 		{"github.com/heroiclabs/nakama/v3", "v3.40.0"},
 		{"github.com/heroiclabs/nakama-common", "v1.47.0"},
 	} {
-		selected, e := run("list", "-mod=readonly", "-modfile=nakama-runtime.mod", "-m", "-json", dependency.path)
+		selected, e := run("list", "-mod=readonly", "-modfile=nakama-runtime/go.mod", "-m", "-json", dependency.path)
 		if e != nil {
 			return e
 		}
@@ -95,7 +95,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 	if err := os.Mkdir(filepath.Join(output, "modules"), 0750); err != nil {
 		return err
 	}
-	common := []string{"build", "-mod=readonly", "-modfile=nakama-runtime.mod", "-trimpath", "-buildvcs=false"}
+	common := []string{"build", "-mod=readonly", "-modfile=nakama-runtime/go.mod", "-trimpath", "-buildvcs=false"}
 	binary := append(append([]string{}, common...), "-ldflags=-X main.version=3.40.0 -X main.commitID=war-native-trial", "-o", filepath.Join(output, "nakama"), "github.com/heroiclabs/nakama/v3")
 	if _, err := run(binary...); err != nil {
 		return err

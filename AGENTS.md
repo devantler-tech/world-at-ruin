@@ -835,7 +835,7 @@ everything shipped afterwards is held to.
   GDScript lint uses `gdtoolkit==4.5.0` with the repository's explicit `.gdlintrc`; after installing
   that pinned tool, run `./tools/gdscript-lint.test.sh` to prove the policy rejects a real invalid
   fixture and `./tools/gdscript-lint.sh client` to lint the product tree. Both are blocking in CI.
-- **Native Nakama acceptance:** the separate generated `server/nakama-runtime.mod`/`.sum`
+- **Native Nakama acceptance:** the separate generated `server/nakama-runtime/go.mod`/`go.sum`
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.1
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;

@@ -30,7 +30,7 @@ func execute(ctx context.Context, args []string, out io.Writer) error {
 	if _, err := os.Lstat(*output); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("native Nakama build output must be absent")
 	}
-	for _, name := range []string{"nakama-runtime.mod", "nakama-runtime.sum"} {
+	for _, name := range []string{"nakama-runtime/go.mod", "nakama-runtime/go.sum"} {
 		if info, err := os.Stat(filepath.Join(*source, name)); err != nil || !info.Mode().IsRegular() {
 			return errors.New("native Nakama build locked graph unavailable")
 		}
