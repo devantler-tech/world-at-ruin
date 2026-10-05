@@ -145,6 +145,17 @@ zone/dungeon server:
   tracker/encoder and Godot decoder/store/connection agree on exact frames.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
+- **Authoritative movement trial** — `zone -listen … -movement-intents` enables
+  explicit wire-v3 negotiation without changing retained v1/v2 peers. A fixed
+  intent carries only increasing sequence, ground direction and sprint; the
+  simulation owner applies server-owned speed before its normal deterministic
+  step. `-movement-hold-ticks` bounds silence handling to 1–300 ticks (default
+  three). Replays, malformed input and the per-tick frame budget cannot prolong
+  movement. Own-position acknowledgements report a completed tick and applied
+  sequence through a separate coalesced slot, surviving replication resync.
+  Disconnect clears control and reconnect starts with fresh sequence state.
+  The flag is off by default, swimming is reserved but refused, and the Godot
+  client continues to request v2. See [ADR 0024](../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md).
 - **Zone shutdown** — after the simulation loop stops, the command closes HTTP
   ingress, calls `Hub.Shutdown` with a five-second budget, then notifies Agones.
   The hub permanently refuses admission, cancels pending claims, closes upgraded

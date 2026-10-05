@@ -271,9 +271,9 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-one named mandatory scenarios use
+The image refuses a default invocation. Twenty-two named mandatory scenarios use
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
-Ten scenarios run the built sealed zone command through generated SDK sidecars,
+Eleven scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.
 The command uses its own random admission secret; fixture-side minting is absent
 from this closed-loop path. Normal TLS chain and hostname verification remain
@@ -287,6 +287,13 @@ network. Linux amd64 and arm64 CI both execute the packaged runtime. Missing
 trial inputs fail; the `war_native_trial` build tag selects this explicit process
 suite separately from ordinary unit tests.
 
+The movement scenario additionally proves default-off v3 refusal, explicit
+negotiation, increasing applied-sequence acknowledgements, server-bounded ground
+movement, expiry, malformed-input refusal and reconnect without inherited input.
+It reads back the same durable claim before and after movement and keeps normal
+TLS verification. The shipping Godot client remains on v2; this is a server
+capability trial, not player input/prediction delivery or production activation.
+
 Lock maintenance is deliberate: use Go's alternate-module commands to resolve
 both `github.com/heroiclabs/nakama/v3` and `./cmd/nakama`, plus the tagged native
 trial package, and run `go mod download -modfile=nakama-runtime/go.mod` to retain
@@ -299,4 +306,5 @@ These disposable checks establish source behavior. Production serving artifacts,
 rollout, attested credentials and the existing authority/fencing gates remain
 under #569 and #1177. Experimental build retirement is tracked by #1192. See
 [ADR 0022](../../docs/adr/0022-prove-the-native-nakama-runtime-with-disposable-storage.md) and
-[ADR 0023](../../docs/adr/0023-exercise-native-handoffs-through-built-sealed-zones.md).
+[ADR 0023](../../docs/adr/0023-exercise-native-handoffs-through-built-sealed-zones.md) and
+[ADR 0024](../../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md).

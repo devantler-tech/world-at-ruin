@@ -162,7 +162,7 @@ func TestDecodeTruncationNeverPanics(t *testing.T) {
 }
 
 func TestDecodeVersionCeiling(t *testing.T) {
-	for _, version := range []uint16{0, Version + 1, ^uint16(0)} {
+	for _, version := range []uint16{0, MovementVersion + 1, ^uint16(0)} {
 		b := mustDecodeHex(t, goldenSnapshotHex)
 		binary.LittleEndian.PutUint16(b, version)
 		if _, err := Decode(b); !errors.Is(err, ErrVersion) {

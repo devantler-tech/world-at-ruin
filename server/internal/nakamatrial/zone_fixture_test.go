@@ -77,7 +77,7 @@ func (f *fixture) zoneFile(name string, data []byte) string {
 }
 
 // startZone runs the exact built command against a generated SDK service.
-func (f *fixture) startZone(name string, wrapping *rsa.PrivateKey, peer string, held bool) *trialZone {
+func (f *fixture) startZone(name string, wrapping *rsa.PrivateKey, peer string, held bool, options ...string) *trialZone {
 	f.t.Helper()
 	if *zoneArtifact == "" {
 		f.t.Fatal("closed-loop trial requires a packaged zone artifact")
@@ -133,6 +133,7 @@ func (f *fixture) startZone(name string, wrapping *rsa.PrivateKey, peer string, 
 	// Cover the 40m demo square's diagonal so moving neighbours remain visible
 	// through multi-restart scenarios; admission tests require populated frames.
 	args := []string{"-listen", "127.0.0.1:" + strconv.Itoa(port), "-interest", "60000", "-tls-cert", certPath, "-tls-key", keyPath, "-agones", "-agones-health-interval", "50ms", "-agones-admission-public-key", f.zoneFile(name+"-wrap.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: public})), "-private-claims", "-claim-url", "https://localhost:" + claimAddress + "/v1/claim", "-claim-ca", f.env["WAR_HANDOFF_CLAIMS_CA_FILE"], "-claim-cert", f.zoneFile(name+"-peer.pem", peerCert), "-claim-key", f.zoneFile(name+"-peer-key.pem", peerPrivate)}
+	args = append(args, options...)
 	p := &nativeProcess{cmd: exec.Command(*zoneArtifact, args...), done: make(chan struct{}), log: &lockedLog{}}
 	p.cmd.Env = append(os.Environ(), "AGONES_SDK_GRPC_HOST=127.0.0.1", "AGONES_SDK_GRPC_PORT="+sdk.PortString(), "WAR_ZONE_ADMISSION_SECRET=")
 	p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
@@ -296,7 +297,7 @@ func (f *fixture) allocateZone(ctx context.Context, request *allocationpb.Alloca
 }
 
 // dial uses the returned hostname for URL and TLS verification; only DNS routing is local.
-func (z *trialZone) dial(ctx context.Context, got handoff.Handoff) (*websocket.Conn, error) {
+func (z *trialZone) dial(ctx context.Context, got handoff.Handoff, versions ...uint16) (*websocket.Conn, error) {
 	if got.ServerName != "node-"+z.name+".zones.example" || int(got.Port) != z.port {
 		return nil, fmt.Errorf("handoff endpoint disagrees with allocated zone")
 	}
@@ -307,7 +308,11 @@ func (z *trialZone) dial(ctx context.Context, got handoff.Handoff) (*websocket.C
 		return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+strconv.Itoa(z.port))
 	}}
 	defer transport.CloseIdleConnections()
-	conn, response, err := websocket.Dial(ctx, "wss://"+net.JoinHostPort(got.ServerName, strconv.Itoa(int(got.Port)))+"/zone", &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport}, HTTPHeader: http.Header{"Authorization": {"Bearer " + got.Token}}})
+	headers := http.Header{"Authorization": {"Bearer " + got.Token}}
+	if len(versions) > 0 {
+		headers.Set("X-WAR-Wire-Version", strconv.FormatUint(uint64(versions[0]), 10))
+	}
+	conn, response, err := websocket.Dial(ctx, "wss://"+net.JoinHostPort(got.ServerName, strconv.Itoa(int(got.Port)))+"/zone", &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport}, HTTPHeader: headers})
 	if response != nil && response.Body != nil {
 		_ = response.Body.Close()
 	}

@@ -13,14 +13,14 @@
 //     path — so a slow client costs bounded memory, never an unbounded buffer.
 //   - Sockets carry write and idle deadlines. A peer that does not drain writes
 //     or answer pings in time is disconnected and its observer state released.
-//   - Inbound reads carry a hard size limit far below the codec's
-//     server-to-client ceiling, and wire v1 defines no client-to-server kinds,
-//     so any inbound data message is a protocol violation.
+//   - Inbound reads carry a hard size limit far below the codec's outbound
+//     ceiling. Retained peers remain replication-only; explicitly enabled v3
+//     peers have a bounded movement mailbox and frame budget.
 //
 // Concurrency contract: all sim.World access stays on the caller's simulation
-// goroutine. Connection goroutines only touch their own queue and socket;
+// goroutine. Connection goroutines only touch their own queues, mailbox and socket;
 // attach/detach requests are marshalled onto the sim goroutine, which runs
-// them inside Hub.Tick.
+// them inside Hub.BeforeStep or Hub.Tick.
 package zonesock
 
 import (
@@ -66,6 +66,10 @@ type Config struct {
 	// IdleTimeout/2 and each ping must be answered within IdleTimeout/2, so
 	// an unresponsive peer is disconnected within roughly IdleTimeout.
 	IdleTimeout time.Duration
+	// MovementEnabled requires explicit v3 negotiation; retained peers remain
+	// replication-only. MovementHoldTicks is a bounded experimental coast.
+	MovementEnabled   bool
+	MovementHoldTicks uint64
 }
 
 // Defaults for every optional Config field.
@@ -119,7 +123,8 @@ type Hub struct {
 	workers  sync.WaitGroup
 	sockets  map[*conn]struct{} // includes upgraded sockets not attached yet
 
-	conns map[sim.EntityID]*conn // sim-goroutine-owned
+	conns      map[sim.EntityID]*conn    // sim-goroutine-owned
+	controlled map[sim.EntityID]struct{} // controlled actors never resume demo scripting
 
 	connected atomic.Int64
 }
@@ -130,9 +135,15 @@ func NewHub(cfg Config) (*Hub, error) {
 	if cfg.Verifier == nil {
 		return nil, errors.New("zonesock: Config.Verifier is required")
 	}
+	if cfg.MovementEnabled && cfg.MovementHoldTicks > 300 {
+		return nil, errors.New("zonesock: movement hold exceeds 300 ticks")
+	}
+	if cfg.MovementHoldTicks == 0 {
+		cfg.MovementHoldTicks = 3
+	}
 	lifetime, stop := context.WithCancel(context.Background())
 	return &Hub{cfg: cfg.withDefaults(), conns: make(map[sim.EntityID]*conn),
-		lifetime: lifetime, stop: stop, drained: make(chan struct{}), sockets: make(map[*conn]struct{})}, nil
+		lifetime: lifetime, stop: stop, drained: make(chan struct{}), sockets: make(map[*conn]struct{}), controlled: make(map[sim.EntityID]struct{})}, nil
 }
 
 // Connected reports how many observers are currently attached. It is safe from
@@ -155,15 +166,20 @@ func (h *Hub) enqueue(f func(w *sim.World)) {
 // tick. It never blocks on a peer — a full queue takes the drop-and-resync
 // path in send.
 func (h *Hub) Tick(w *sim.World) {
+	h.runPending(w)
+	for _, c := range h.conns {
+		h.pump(w, c)
+		h.ackMovement(w, c)
+	}
+}
+
+func (h *Hub) runPending(w *sim.World) {
 	h.mu.Lock()
 	pending := h.pending
 	h.pending = nil
 	h.mu.Unlock()
 	for _, f := range pending {
 		f(w)
-	}
-	for _, c := range h.conns {
-		h.pump(w, c)
 	}
 }
 
@@ -194,6 +210,11 @@ func (h *Hub) attach(w *sim.World, c *conn) {
 		return
 	}
 	h.conns[c.observer] = c
+	if c.wireVersion() == wire.MovementVersion {
+		h.controlled[c.observer] = struct{}{}
+		w.SetIntent(c.observer, sim.Vec3{})
+		c.inputActive.Store(true)
+	}
 	h.connected.Add(1)
 	h.send(w, c, b)
 }
@@ -203,6 +224,10 @@ func (h *Hub) attach(w *sim.World, c *conn) {
 // state.
 func (h *Hub) detach(w *sim.World, c *conn) {
 	if cur, ok := h.conns[c.observer]; ok && cur == c {
+		if c.wireVersion() == wire.MovementVersion {
+			c.inputActive.Store(false)
+			w.SetIntent(c.observer, sim.Vec3{})
+		}
 		delete(h.conns, c.observer)
 		h.connected.Add(-1)
 		w.SetInterestRadius(c.observer, 0)
@@ -299,7 +324,7 @@ func (h *Hub) Handler() http.Handler {
 			http.Error(rw, "admission refused", http.StatusUnauthorized)
 			return
 		}
-		version, status, err := requestedWireVersion(r)
+		version, status, err := requestedWireVersion(r, h.cfg.MovementEnabled)
 		if err != nil {
 			http.Error(rw, "wire version refused", status)
 			return
@@ -333,6 +358,7 @@ func (h *Hub) Handler() http.Handler {
 			version:  version,
 			out:      make(chan []byte, h.cfg.SendQueue),
 			cancel:   cancel,
+			ackReady: make(chan struct{}, 1),
 		}
 		if !h.registerSocket(c) {
 			cancel()
@@ -344,7 +370,7 @@ func (h *Hub) Handler() http.Handler {
 	})
 }
 
-func requestedWireVersion(r *http.Request) (uint16, int, error) {
+func requestedWireVersion(r *http.Request, movement bool) (uint16, int, error) {
 	raw := r.Header.Get(WireVersionHeader)
 	if raw == "" {
 		return wire.LegacyVersion, 0, nil
@@ -354,7 +380,11 @@ func requestedWireVersion(r *http.Request) (uint16, int, error) {
 		return 0, http.StatusBadRequest, errors.New("malformed wire version")
 	}
 	version := uint16(parsed)
-	if version < wire.LegacyVersion || version > wire.Version {
+	ceiling := wire.Version
+	if movement {
+		ceiling = wire.MovementVersion
+	}
+	if version < wire.LegacyVersion || version > ceiling {
 		return 0, http.StatusUpgradeRequired, errors.New("unsupported wire version")
 	}
 	return version, 0, nil
@@ -373,15 +403,26 @@ func bearerToken(header string) (string, bool) {
 // snapshot tracker the sim goroutine drives for it. The tracker is
 // sim-goroutine-owned; the queue is the only cross-goroutine surface.
 type conn struct {
-	hub      *Hub
-	ws       *websocket.Conn
-	observer sim.EntityID
-	version  uint16
-	out      chan []byte
-	cancel   context.CancelFunc
-	once     sync.Once
-	workers  atomic.Int32
-	tracker  *sim.SnapshotTracker // sim-goroutine-owned
+	hub                                      *Hub
+	ws                                       *websocket.Conn
+	observer                                 sim.EntityID
+	version                                  uint16
+	out                                      chan []byte
+	cancel                                   context.CancelFunc
+	once                                     sync.Once
+	workers                                  atomic.Int32
+	tracker                                  *sim.SnapshotTracker // sim-goroutine-owned
+	inputActive                              atomic.Bool
+	inputMu                                  sync.Mutex
+	received                                 uint64
+	inputFrames                              uint64
+	latest                                   wire.MovementIntent
+	held                                     sim.Vec3 // simulation owner only
+	remaining                                uint64
+	nextSequence, applyTick, appliedSequence uint64
+	ackMu                                    sync.Mutex
+	ack                                      []byte
+	ackReady                                 chan struct{}
 }
 
 func (c *conn) wireVersion() uint16 {
@@ -395,6 +436,7 @@ func (c *conn) wireVersion() uint16 {
 // schedules the observer's release. Used when the peer is already gone or
 // unresponsive.
 func (c *conn) teardown() {
+	c.inputActive.Store(false)
 	c.once.Do(func() {
 		c.cancel()
 		c.hub.enqueue(func(w *sim.World) { c.hub.detach(w, c) })
@@ -408,6 +450,7 @@ func (c *conn) teardown() {
 // connection mid-handshake, and the peer would see a dead socket instead of
 // the code and reason.
 func (c *conn) close(code websocket.StatusCode, reason string) {
+	c.inputActive.Store(false)
 	c.once.Do(func() {
 		c.hub.enqueue(func(w *sim.World) { c.hub.detach(w, c) })
 		_ = c.ws.Close(code, reason)
@@ -423,11 +466,28 @@ func (c *conn) writeLoop(parent context.Context, cfg Config) {
 	defer c.teardown()
 	ping := time.NewTicker(cfg.IdleTimeout / 2)
 	defer ping.Stop()
+	joined := false
 	for {
+		var ackReady <-chan struct{}
+		if joined {
+			ackReady = c.ackReady
+		}
 		select {
 		case <-parent.Done():
 			return
 		case b := <-c.out:
+			ctx, cancel := context.WithTimeout(parent, cfg.WriteTimeout)
+			err := c.ws.Write(ctx, websocket.MessageBinary, b)
+			cancel()
+			if err != nil {
+				return
+			}
+			joined = true
+		case <-ackReady:
+			b := c.takeAck()
+			if len(b) == 0 {
+				continue
+			}
 			ctx, cancel := context.WithTimeout(parent, cfg.WriteTimeout)
 			err := c.ws.Write(ctx, websocket.MessageBinary, b)
 			cancel()
@@ -447,13 +507,36 @@ func (c *conn) writeLoop(parent context.Context, cfg Config) {
 
 // readLoop services the socket's inbound side. Reading is what processes the
 // peer's control frames (pong, close); the read limit set at accept time
-// bounds how much a hostile peer can make the server assemble. Wire v1
-// defines no client→server kinds, so any inbound data message is a protocol
-// violation.
+// bounds assembled bytes. Only an explicitly enabled v3 peer can send intents;
+// server-only kinds and text remain protocol violations even over budget.
 func (c *conn) readLoop(ctx context.Context) {
-	if _, _, err := c.ws.Read(ctx); err != nil {
-		c.teardown()
-		return
+	defer c.teardown()
+	for {
+		typ, b, err := c.ws.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ != websocket.MessageBinary || !c.hub.cfg.MovementEnabled || c.wireVersion() != wire.MovementVersion {
+			c.close(websocket.StatusPolicyViolation, "client message refused")
+			return
+		}
+		if len(b) < 3 {
+			_ = c.inputBudget()
+			continue
+		}
+		if b[2] != wire.KindIntent {
+			c.close(websocket.StatusPolicyViolation, "client message refused")
+			return
+		}
+		if !c.inputBudget() {
+			continue
+		}
+		if len(b) != wire.IntentFrameSize {
+			continue
+		}
+		m, err := wire.Decode(b)
+		if err == nil && m.Version == wire.MovementVersion {
+			c.offerIntent(m.Intent)
+		}
 	}
-	c.close(websocket.StatusPolicyViolation, "wire v1 defines no client messages")
 }
