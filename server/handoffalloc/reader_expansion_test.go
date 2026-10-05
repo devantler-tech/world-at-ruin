@@ -15,9 +15,8 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 )
 
-// Restart and retry must preserve the durable quarantine before any external
-// resource method runs, for every expanded lifecycle including empty bindings.
-func TestExpandedLeaseRestartHoldsAllResourceOperations(t *testing.T) {
+func expandedLeaseShapes(t *testing.T) []json.RawMessage {
+	t.Helper()
 	data, err := os.ReadFile("../nakamalease/testdata/golden_lease_v4.json")
 	if err != nil {
 		t.Fatal(err)
@@ -29,6 +28,13 @@ func TestExpandedLeaseRestartHoldsAllResourceOperations(t *testing.T) {
 	if len(shapes) != 7 {
 		t.Fatalf("expanded lifecycle shapes = %d, want 7", len(shapes))
 	}
+	return shapes
+}
+
+// Restart and retry must preserve the durable quarantine before any external
+// resource method runs, for every expanded lifecycle including empty bindings.
+func TestExpandedLeaseRestartHoldsAllResourceOperations(t *testing.T) {
+	shapes := expandedLeaseShapes(t)
 	for index, raw := range shapes {
 		for _, operation := range []string{"same-attempt", "new-attempt", "release", "expiry", "progressed", "resolve", "resource-cleanup", "canceled", "deadline"} {
 			t.Run(operation+"/shape-"+strconv.Itoa(index+1), func(t *testing.T) {
@@ -92,17 +98,7 @@ func TestExpandedLeaseRestartHoldsAllResourceOperations(t *testing.T) {
 // Observation outcomes cannot unlock a bound durable dispatch. A legacy control
 // proves the resource seam is reachable rather than accidentally unconfigured.
 func TestExpandedDispatchRestartIgnoresAllocatorObservationOutcomes(t *testing.T) {
-	data, err := os.ReadFile("../nakamalease/testdata/golden_lease_v4.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var shapes []json.RawMessage
-	if err := json.Unmarshal(data, &shapes); err != nil {
-		t.Fatal(err)
-	}
-	if len(shapes) != 7 {
-		t.Fatalf("lifecycle fixtures = %d, want 7", len(shapes))
-	}
+	shapes := expandedLeaseShapes(t)
 	for _, observation := range []string{"missing allocator", "replaced allocator", "draining generation"} {
 		t.Run(observation, func(t *testing.T) {
 			key := nakamalease.ReservationKey(testUserID, testReservationID)

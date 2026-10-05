@@ -212,6 +212,17 @@ func ledgerBytes(t *testing.T, r *Reference) []byte {
 	return encoded
 }
 
+func launchHeldAllocation(t *testing.T, f rpcFixture, ctx context.Context) <-chan error {
+	t.Helper()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := f.client.Allocate(ctx, &allocationpb.AllocationRequest{Namespace: "reference-fixture"})
+		finished <- err
+	}()
+	awaitEntered(t, f.server)
+	return finished
+}
+
 func TestAuthenticatedRPCOutstandingAcrossFenceCannotCommit(t *testing.T) {
 	t.Parallel()
 	for _, closed := range []bool{false, true} {
@@ -220,12 +231,7 @@ func TestAuthenticatedRPCOutstandingAcrossFenceCannotCommit(t *testing.T) {
 			f := startRPC(t, nil, false)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			finished := make(chan error, 1)
-			go func() {
-				_, err := f.client.Allocate(ctx, &allocationpb.AllocationRequest{Namespace: "reference-fixture"})
-				finished <- err
-			}()
-			awaitEntered(t, f.server)
+			finished := launchHeldAllocation(t, f, ctx)
 			before := ledgerBytes(t, f.reference)
 			var receipt Receipt
 			if closed {
@@ -279,12 +285,7 @@ func testInterruptedRPC(t *testing.T, deadline bool) {
 				wantCode = codes.DeadlineExceeded
 			}
 			defer cancel()
-			finished := make(chan error, 1)
-			go func() {
-				_, err := f.client.Allocate(ctx, &allocationpb.AllocationRequest{Namespace: "reference-fixture"})
-				finished <- err
-			}()
-			awaitEntered(t, f.server)
+			finished := launchHeldAllocation(t, f, ctx)
 			if !deadline {
 				cancel()
 			}
@@ -323,12 +324,7 @@ func TestLostRPCResponseRetainsTheCommittedAllocation(t *testing.T) {
 	f := startRPC(t, nil, true)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	finished := make(chan error, 1)
-	go func() {
-		_, err := f.client.Allocate(ctx, &allocationpb.AllocationRequest{Namespace: "reference-fixture"})
-		finished <- err
-	}()
-	awaitEntered(t, f.server)
+	finished := launchHeldAllocation(t, f, ctx)
 	f.release()
 	if err := awaitCommit(t, f.server); err != nil {
 		t.Fatal(err)

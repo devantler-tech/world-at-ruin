@@ -66,6 +66,26 @@ func (f *fakeStorage) StorageWrite(ctx context.Context, writes []*runtime.Storag
 	return f.Fake.StorageWrite(ctx, writes)
 }
 
+func atomicWriteBatch(t *testing.T, storage *fakeStorage) (*runtime.StorageWrite, *runtime.StorageWrite) {
+	t.Helper()
+	if len(storage.WriteCalls) != 1 || len(storage.WriteCalls[0]) != 2 {
+		t.Fatalf("atomic StorageWrite() batches = %#v, want one two-write batch", storage.WriteCalls)
+	}
+	var recordWrite, auditWrite *runtime.StorageWrite
+	for _, write := range storage.WriteCalls[0] {
+		switch write.Collection {
+		case "world_at_ruin_inventory":
+			recordWrite = write
+		case AuditCollection:
+			auditWrite = write
+		}
+	}
+	if recordWrite == nil || auditWrite == nil {
+		t.Fatalf("atomic StorageWrite() batch = %#v, want record and audit", storage.WriteCalls[0])
+	}
+	return recordWrite, auditWrite
+}
+
 func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	t.Parallel()
 
@@ -86,30 +106,7 @@ func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("Apply() outcome = %s", result.Outcome)
 	}
-	if len(storage.WriteCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
-	}
-	writes := storage.WriteCalls[0]
-	if len(writes) != 2 {
-		t.Fatalf("atomic StorageWrite() batch size = %d, want 2", len(writes))
-	}
-
-	var recordWrite, auditWrite *runtime.StorageWrite
-	for _, write := range writes {
-		switch write.Collection {
-		case "world_at_ruin_inventory":
-			recordWrite = write
-		case AuditCollection:
-			auditWrite = write
-		}
-	}
-	if recordWrite == nil || auditWrite == nil {
-		t.Fatalf(
-			"StorageWrite() collections = %q, %q",
-			writes[0].Collection,
-			writes[1].Collection,
-		)
-	}
+	recordWrite, auditWrite := atomicWriteBatch(t, storage)
 	if recordWrite.UserID != testSubjectID ||
 		recordWrite.Version != "observed" ||
 		recordWrite.PermissionRead != 0 ||
@@ -172,13 +169,9 @@ func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
 	if string(result.Outcome) != `{"item_count":1}` {
 		t.Fatalf("Apply() outcome = %s", result.Outcome)
 	}
-	if len(storage.WriteCalls) != 1 {
-		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
-	}
-	writes := storage.WriteCalls[0]
-	if len(writes) != 2 || writes[1].Collection != AuditCollection ||
-		writes[1].UserID != "" {
-		t.Fatalf("system mutation writes = %#v", writes)
+	_, auditWrite := atomicWriteBatch(t, storage)
+	if auditWrite.UserID != "" {
+		t.Fatalf("system mutation audit write = %#v", auditWrite)
 	}
 }
 
