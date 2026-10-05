@@ -80,6 +80,8 @@ jobs:
           bash tools/fetch-trusted-regression-data.test.sh
           bash tools/verify-trusted-regression-checkouts.test.sh
           bash tools/trusted-regression-workflow-guard.test.sh
+          bash tools/repository-trusted-gate-workflow-guard.test.sh
+          bash tools/repository-trusted-gate-admission.test.sh
           bash tools/sandbox-godot.test.sh
           GOTOOLCHAIN=local GOWORK=off go test tools/trusted-regression-cache.go tools/trusted-regression-cache_test.go
       - name: A new dev-log entry carries "next" rather than a predicted release
@@ -1167,7 +1169,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/actions/.github/workflows/lint.yaml@1d726483facb9340655489913f609082677be8f5 # v13.10.6
+    uses: devantler-tech/.github/.github/workflows/lint.yaml@d20784dd9135c336d1d39337f98ce03aca5e9304 # v7.1.0
     permissions:
       contents: read
     with:
@@ -1335,7 +1337,7 @@ jobs:
       - name: Format check (gofmt)
         working-directory: server
         run: |
-          unformatted="$(gofmt -l . ../tools/deploy-manifests ../tools/nakama-runtime-build)"
+          unformatted="$(gofmt -l . ../tools/deploy-manifests ../tools/nakama-runtime-build ../tools/trusted-gate)"
           if [ -n "${unformatted}" ]; then
             echo "::error::gofmt found unformatted files:"; echo "${unformatted}"; exit 1
           fi
@@ -1345,12 +1347,15 @@ jobs:
           go vet ./...
           go vet ../tools/deploy-manifests/*.go
           go vet ../tools/nakama-runtime-build/*.go
+          go -C ../tools/trusted-gate vet ./...
       - name: Rendered trial manifests respect host-owned network isolation
         working-directory: server
         run: go test -race -count=1 -timeout=2m ../tools/deploy-manifests/*.go
       - name: Native bundle requires explicit opt-in and preserves existing output
         working-directory: server
         run: go test -race -count=1 -timeout=2m ../tools/nakama-runtime-build/*.go
+      - name: Repository trusted identity and App verdicts fail closed
+        run: go -C tools/trusted-gate test -race -count=1 -timeout=2m ./...
       - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
@@ -3118,7 +3123,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@1d726483facb9340655489913f609082677be8f5 # v13.10.6
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@d20784dd9135c336d1d39337f98ce03aca5e9304 # v7.1.0
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible

@@ -1,0 +1,163 @@
+name: Repository trusted regressions
+
+# Additive, default-off preparation. The existing organization-required workflow
+# remains enforced until a dedicated publisher identity and repository rule are
+# deployed and positive, negative and current-head controls are observed.
+on:
+  # Candidate data runs only in containment; the writer checks out reviewed main
+  # and consumes resolver identity rather than candidate workflow artifacts.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: repository-trusted-regressions-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Evaluate repository trusted regressions
+    if: >-
+      vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED == 'true' &&
+      github.event.action == 'completed' &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'devantler-tech/world-at-ruin/.github/workflows/repository-trusted-regressions.yaml@refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      trusted-sha: ${{ steps.resolve.outputs.trusted-sha }}
+      candidate-sha: ${{ steps.resolve.outputs.candidate-sha }}
+      head-sha: ${{ steps.resolve.outputs.head-sha }}
+      run-id: ${{ steps.resolve.outputs.run-id }}
+      identity-json: ${{ steps.resolve.outputs.identity-json }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Check out reviewed workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: devantler-tech/world-at-ruin
+          ref: ${{ github.workflow_sha }}
+          path: workflow-source
+          persist-credentials: false
+      - name: Admit enabled reviewed-main invocation
+        env:
+          WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
+          WAR_TRUSTED_GATE_APP_ID: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          WAR_TRUSTED_GATE_PUBLISHER_ENVIRONMENT: world-trusted-gate-publisher
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: bash workflow-source/tools/repository-trusted-gate-admission.sh
+      - name: Install exact reviewed Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+          cache: false
+      - name: Resolve upstream identity from GitHub
+        id: resolve
+        working-directory: workflow-source/tools/trusted-gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+          GOTOOLCHAIN: local
+          GOWORK: "off"
+          GOFLAGS: ""
+        run: go run . resolve --run-id "$UPSTREAM_RUN_ID" --output "$GITHUB_OUTPUT"
+      - name: Fetch trusted base anonymously
+        env:
+          DATA_SHA: ${{ steps.resolve.outputs.trusted-sha }}
+        run: bash workflow-source/tools/fetch-trusted-regression-data.sh trusted "$DATA_SHA"
+      - name: Fetch candidate anonymously
+        env:
+          DATA_SHA: ${{ steps.resolve.outputs.candidate-sha }}
+        run: bash workflow-source/tools/fetch-trusted-regression-data.sh candidate "$DATA_SHA"
+      - name: Verify independent checkout identities
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_SHA: ${{ steps.resolve.outputs.trusted-sha }}
+          CANDIDATE_SHA: ${{ steps.resolve.outputs.candidate-sha }}
+        run: bash workflow-source/tools/verify-trusted-regression-checkouts.sh workflow-source trusted candidate
+      - name: Install checksum-verified Godot
+        env:
+          GODOT_VERSION: 4.7.1
+          GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+        run: |
+          curl --retry 4 --retry-delay 2 --retry-all-errors -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
+          unzip -q godot.zip
+          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+      - name: Run contained candidate with reviewed harness
+        run: bash workflow-source/tools/run-sandboxed-trusted-regressions.sh trusted candidate
+
+  publish:
+    name: Publish repository trusted verdict
+    needs: evaluate
+    if: >-
+      always() && vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED == 'true' &&
+      github.event.action == 'completed' &&
+      github.ref == 'refs/heads/main' &&
+      github.workflow_ref == 'devantler-tech/world-at-ruin/.github/workflows/repository-trusted-regressions.yaml@refs/heads/main' &&
+      needs.evaluate.outputs.identity-json != ''
+    environment: world-trusted-gate-publisher
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Check out reviewed publisher source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: devantler-tech/world-at-ruin
+          ref: ${{ github.workflow_sha }}
+          path: workflow-source
+          persist-credentials: false
+      - name: Admit enabled publisher configuration
+        env:
+          WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
+          WAR_TRUSTED_GATE_APP_ID: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          WAR_TRUSTED_GATE_PUBLISHER_ENVIRONMENT: world-trusted-gate-publisher
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: bash workflow-source/tools/repository-trusted-gate-admission.sh
+      - name: Install exact reviewed Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.1
+          cache: false
+      - name: Mint repository-scoped publisher token
+        id: publisher-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          private-key: ${{ secrets.WAR_TRUSTED_GATE_PRIVATE_KEY }}
+          owner: devantler-tech
+          repositories: world-at-ruin
+          permission-actions: read
+          permission-checks: write
+          permission-contents: read
+          permission-pull-requests: read
+      - name: Publish current-head verdict through dedicated App
+        working-directory: workflow-source/tools/trusted-gate
+        env:
+          GITHUB_TOKEN: ${{ steps.publisher-token.outputs.token }}
+          WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          TRUSTED_GATE_APP_ID: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          IDENTITY_JSON: ${{ needs.evaluate.outputs.identity-json }}
+          VERDICT: ${{ needs.evaluate.result == 'success' && 'success' || 'failure' }}
+          GOTOOLCHAIN: local
+          GOWORK: "off"
+          GOFLAGS: ""
+        run: go run . publish --identity "$IDENTITY_JSON" --verdict "$VERDICT"

@@ -32,7 +32,7 @@ admit() {
       and .if == "${{ always() }}"
       and (.steps | length) == 1
       and (.steps[0] | keys == ["uses","with"]
-        and .uses == "devantler-tech/actions/aggregate-job-checks@1d726483facb9340655489913f609082677be8f5"
+        and .uses == "devantler-tech/.github/actions/aggregate-job-checks@d20784dd9135c336d1d39337f98ce03aca5e9304"
         and (.with | keys) == ["job-results"]
         and (.with["job-results"] | contains("${{ needs.retired-repo-links.result }}"))))
     and (.guard | keys == ["jobs","name","on","permissions"]
