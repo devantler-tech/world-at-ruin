@@ -33,7 +33,7 @@ export WAR_NATIVE_DB_PASSWORD=native-trial-disposable-password
 postgres_id=$(docker run -d --network "$network" --network-alias postgres \
   --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 1g --cpus 2 \
   ghcr.io/cloudnative-pg/postgresql@sha256:78c4fdf165e8ffb1b5b7a7fc6b22b3cf37890a338b4c1c8c4d913896129a86da \
-  bash -ec 'printf "%s" native-trial-disposable-password > /tmp/pw; initdb -D /tmp/war-native-pg -U war_native_trial --encoding=UTF8 --pwfile=/tmp/pw --auth-host=scram-sha-256 >/dev/null; exec postgres -D /tmp/war-native-pg -c listen_addresses=*')
+  bash -ec 'printf "%s" native-trial-disposable-password > /tmp/pw; initdb -D /tmp/war-native-pg -U war_native_trial --encoding=UTF8 --pwfile=/tmp/pw --auth-host=scram-sha-256 >/dev/null; printf "host all all all scram-sha-256\n" >> /tmp/war-native-pg/pg_hba.conf; exec postgres -D /tmp/war-native-pg -c listen_addresses=*')
 ready=false
 for ((attempt=1;attempt<=30;attempt++)); do
   if docker exec "$postgres_id" pg_isready -U war_native_trial >/dev/null 2>&1; then ready=true; break; fi
