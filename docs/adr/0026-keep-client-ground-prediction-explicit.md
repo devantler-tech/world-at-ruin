@@ -69,4 +69,3 @@ anchors, exercises speculative movement, reconciliation, silence and reconnect,
 and retains the ordinary v2, server-off, wrong-identity and wrong-trust controls.
 Missing prerequisites fail the explicitly enabled proof. This disposable
 acceptance does not authorize production activation under #569.
-

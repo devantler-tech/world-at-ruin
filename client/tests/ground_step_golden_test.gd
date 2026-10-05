@@ -43,4 +43,3 @@ func _check(condition: bool, detail: String) -> bool:
 		_failed = true
 		print("TEST FAIL: " + detail)
 	return condition
-

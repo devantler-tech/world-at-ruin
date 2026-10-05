@@ -4,4 +4,3 @@
 
 [node name="GroundStepTest" type="Node"]
 script = ExtResource("1")
-
