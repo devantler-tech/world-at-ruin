@@ -83,7 +83,25 @@ func TestClosedLoopAuthoritativeMovement(t *testing.T) {
 			if err := c.Write(ctx, websocket.MessageBinary, b); err != nil {
 				t.Fatal(err)
 			}
-			for ack.Tick < stopped.Tick+7 {
+			// A pong fences the server reader past the malformed frame. Read
+			// concurrently so the client can actually consume that control frame;
+			// coalesced ACKs may already have advanced beyond an earlier tick.
+			pingDone := make(chan error, 1)
+			go func() { pingDone <- c.Ping(ctx) }()
+		fenced:
+			for {
+				ack = nativeMovementAck(t, ctx, c)
+				select {
+				case err := <-pingDone:
+					if err != nil {
+						t.Fatal(err)
+					}
+					break fenced
+				default:
+				}
+			}
+			fenceTick := ack.Tick
+			for ack.Tick < fenceTick+4 {
 				ack = nativeMovementAck(t, ctx, c)
 			}
 			if ack.AppliedSequence != 7 || ack.Pos != stopped.Pos {
