@@ -155,7 +155,10 @@ func TestNativeSessionAuthenticatesHandoff(t *testing.T) {
 	first := f.handoff(token)
 	f.verifyHandoff("zone-1", first)
 	before, version, _, _ := f.row(leaseKey(uid))
-	secondToken, _ := f.account("authenticated-fixture-b")
+	secondToken, secondUID := f.account("authenticated-fixture-b")
+	if uid == secondUID {
+		t.Fatal("separate fixture accounts authenticated as the same player")
+	}
 	second := f.handoff(secondToken)
 	f.verifyHandoff("zone-2", second)
 	if first.ServerName == second.ServerName || first.Token == second.Token {
@@ -166,6 +169,9 @@ func TestNativeSessionAuthenticatesHandoff(t *testing.T) {
 	after, afterVersion, _, _ := f.row(leaseKey(uid))
 	if again.ServerName != first.ServerName || again.Port != first.Port || before != after || version != afterVersion {
 		t.Fatal("another account replaced first reservation")
+	}
+	if allocated, _ := f.counts(); allocated != 2 {
+		t.Fatal("native same-process replay redispatched allocation")
 	}
 }
 

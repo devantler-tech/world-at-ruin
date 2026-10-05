@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -455,6 +456,11 @@ func (f *fixture) verifyHandoff(name string, got handoff.Handoff) {
 	}
 	if observer, e := verifier.Verify(got.Token); e != nil || observer != 1 {
 		f.t.Fatal("native handoff cannot admit its authoritative zone observer")
+	}
+	parts := strings.Split(got.Token, ".")
+	expires, e := strconv.ParseInt(parts[len(parts)-2], 10, 64)
+	if e != nil || !got.ExpiresAt.Equal(time.Unix(0, expires)) {
+		f.t.Fatal("native handoff expiry disagrees with authenticated admission")
 	}
 	gs := f.resource(name)
 	if gs == nil || got.ServerName != gs.Status.NodeName+".zones.example" || got.Port != uint16(gs.Status.Ports[0].Port) {
