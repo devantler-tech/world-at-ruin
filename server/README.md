@@ -154,8 +154,17 @@ zone/dungeon server:
   movement. Own-position acknowledgements report a completed tick and applied
   sequence through a separate coalesced slot, surviving replication resync.
   Disconnect clears control and reconnect starts with fresh sequence state.
-  The flag is off by default, swimming is reserved but refused, and the Godot
-  client continues to request v2. See [ADR 0024](../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md).
+  The flag is off by default and swimming is reserved but refused. The Godot
+  client requests v2 ordinarily; explicit `WAR_ZONE_MOVEMENT=1` selects the
+  bounded v3 producer. See [ADR 0024](../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md)
+  and [ADR 0025](../docs/adr/0025-bound-opt-in-client-movement-networking.md).
+- **Isolated client prediction reference** — latent integer libraries match
+  the actual one-actor server step and return corrections from bounded tick
+  replay. Explicit speed, bounds and hold settings are required; v3 does not
+  distribute them or attest when a sample reached its mailbox. Shared Go/Godot
+  position vectors and the required native TLS prediction scenario exercise
+  this boundary. Player controls, collision prediction, rendering and live
+  configuration remain separate work. See [ADR 0026](../docs/adr/0026-keep-client-ground-prediction-explicit.md).
 - **Zone shutdown** — after the simulation loop stops, the command closes HTTP
   ingress, calls `Hub.Shutdown` with a five-second budget, then notifies Agones.
   The hub permanently refuses admission, cancels pending claims, closes upgraded
@@ -561,7 +570,7 @@ the allocator-generation fence supervisor of
 production composition of the private zone claim endpoint and fenced session-end recovery,
 the client entry point that enables Google account
 provisioning, the party and chat half of the Nakama social surface, client
-prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
+prediction and reconciliation in the player controller, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope, and the concrete resource adapter validates, unwraps and recovers it;
 the fence, private claim listener composition and platform deployment of the
