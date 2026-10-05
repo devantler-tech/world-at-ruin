@@ -45,21 +45,25 @@ func TestPersistentRateLimitStillFails(t *testing.T) {
 // Temporary server errors must use the retry budget rather than fail after one request.
 func TestLinksRecoverAfterServerError(t *testing.T) {
 	t.Parallel()
-	for _, status := range []int{503, 504} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			t.Parallel()
-			checkLink(t, fmt.Sprintf("temporary-%d.html", status), status, 2, http.StatusOK, []int{status, status, 200}, true)
-		})
-	}
+	forEachServerError(t, func(t *testing.T, status int) {
+		checkLink(t, fmt.Sprintf("temporary-%d.html", status), status, 2, http.StatusOK, []int{status, status, 200}, true)
+	})
 }
 
 // Retrying must never turn a permanent server error into a successful link.
 func TestPersistentServerErrorStillFails(t *testing.T) {
 	t.Parallel()
+	forEachServerError(t, func(t *testing.T, status int) {
+		checkLink(t, fmt.Sprintf("persistent-%d.html", status), status, 0, status, []int{status, status, status, status, status, status}, false)
+	})
+}
+
+func forEachServerError(t *testing.T, test func(*testing.T, int)) {
+	t.Helper()
 	for _, status := range []int{503, 504} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			t.Parallel()
-			checkLink(t, fmt.Sprintf("persistent-%d.html", status), status, 0, status, []int{status, status, status, status, status, status}, false)
+			test(t, status)
 		})
 	}
 }

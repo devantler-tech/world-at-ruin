@@ -11,6 +11,19 @@ import (
 
 const cleanDocument = `{"schema":1,"weapons":{"axe":{"banked":200,"unbanked":75},"future:weapon":{"banked":100,"unbanked":49}},"stain":{"id":"death-original","points":{"axe":7,"future:weapon":3}}}`
 
+func retainedShapes(t *testing.T, family string, want int) (int, []json.RawMessage) {
+	t.Helper()
+	fixtures := savefixturetest.Read(t, family)
+	if len(fixtures) != 1 {
+		t.Fatal("unexpected schema count")
+	}
+	var shapes []json.RawMessage
+	if json.Unmarshal(fixtures[0].Bytes, &shapes) != nil || len(shapes) != want {
+		t.Fatal("missing retained shapes")
+	}
+	return fixtures[0].Version, shapes
+}
+
 func TestStrictMasteryGrammar(t *testing.T) {
 	expected := State{Schema: 1, Weapons: map[string]Track{"axe": {200, 75}, "future:weapon": {100, 49}}, Stain: Stain{ID: "death-original", Points: map[string]int64{"axe": 7, "future:weapon": 3}}}
 	got, err := decodeMasteryDocument(cleanDocument)
@@ -44,20 +57,11 @@ func TestRetainedMasteryReader(t *testing.T) {
 		{Schema: 1, Weapons: map[string]Track{"axe": {300, 3}, "future:weapon": {100, 49}}, Stain: Stain{Points: map[string]int64{}}},
 		{Schema: 1, Weapons: map[string]Track{"axe": {200, 75}, "future:weapon": {100, 49}}, Stain: Stain{ID: "death-original", Points: map[string]int64{"axe": 7, "future:weapon": 3}}},
 	}
-	fixtures := savefixturetest.Read(t, "mastery")
-	if len(fixtures) != 1 {
-		t.Fatal("unexpected schema count")
-	}
-	for _, fixture := range fixtures {
-		var shapes []json.RawMessage
-		if json.Unmarshal(fixture.Bytes, &shapes) != nil || len(shapes) != len(expected) {
-			t.Fatal("missing retained shapes")
-		}
-		for i, raw := range shapes {
-			got, err := decodeMasteryDocument(string(raw))
-			if err != nil || !reflect.DeepEqual(got, expected[i]) {
-				t.Fatalf("v%d shape %d = %#v %v", fixture.Version, i, got, err)
-			}
+	version, shapes := retainedShapes(t, "mastery", len(expected))
+	for i, raw := range shapes {
+		got, err := decodeMasteryDocument(string(raw))
+		if err != nil || !reflect.DeepEqual(got, expected[i]) {
+			t.Fatalf("v%d shape %d = %#v %v", version, i, got, err)
 		}
 	}
 }
@@ -69,20 +73,11 @@ func TestRetainedMasteryOutcomeReader(t *testing.T) {
 		{Schema: 1, Kind: "death", Credited: 0, Dropped: map[string]int64{}, Destroyed: map[string]int64{}, State: State{Schema: 1, Weapons: map[string]Track{"axe": {200, 75}, "future:weapon": {100, 49}}, Stain: Stain{ID: "death-original", Points: map[string]int64{"axe": 7, "future:weapon": 3}}}},
 		{Schema: 1, Kind: "reclaim", Credited: 10, Dropped: map[string]int64{}, Destroyed: map[string]int64{}, State: State{Schema: 1, Weapons: map[string]Track{"axe": {200, 82}, "future:weapon": {100, 52}}, Stain: Stain{Points: map[string]int64{}}}},
 	}
-	fixtures := savefixturetest.Read(t, "mastery_outcome")
-	if len(fixtures) != 1 {
-		t.Fatal("unexpected schema count")
-	}
-	for _, fixture := range fixtures {
-		var shapes []json.RawMessage
-		if json.Unmarshal(fixture.Bytes, &shapes) != nil || len(shapes) != len(expected) {
-			t.Fatal("missing retained shapes")
-		}
-		for i, raw := range shapes {
-			got, err := decodeOutcome(string(raw))
-			if err != nil || !reflect.DeepEqual(got, expected[i]) {
-				t.Fatalf("v%d shape %d = %#v %v", fixture.Version, i, got, err)
-			}
+	version, shapes := retainedShapes(t, "mastery_outcome", len(expected))
+	for i, raw := range shapes {
+		got, err := decodeOutcome(string(raw))
+		if err != nil || !reflect.DeepEqual(got, expected[i]) {
+			t.Fatalf("v%d shape %d = %#v %v", version, i, got, err)
 		}
 	}
 }

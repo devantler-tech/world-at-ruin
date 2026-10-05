@@ -276,6 +276,14 @@ func allocationRequest() agonesalloc.Request {
 	return agonesalloc.Request{ReservationID: "reservation-1", AttemptID: "attempt-1", LeaseObjectID: strings.Repeat("0", 64)}
 }
 
+func nativePositiveControl(t *testing.T) {
+	t.Helper()
+	f := fixture(t, "")
+	if _, err := f.newClient(t).Reserve(t.Context(), allocationRequest()); err != nil || f.allocator.calls.Load() != 1 {
+		t.Fatalf("native positive control failed: %v", err)
+	}
+}
+
 // TestNativeCompositionAndOwnedInputs observes allocation after mutating caller-owned inputs.
 func TestNativeCompositionAndOwnedInputs(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
@@ -305,10 +313,7 @@ func TestNativeCompositionAndOwnedInputs(t *testing.T) {
 
 // TestNativeCertificateRefusals requires native TLS verdicts beside a successful control.
 func TestNativeCertificateRefusals(t *testing.T) {
-	control := fixture(t, "")
-	if _, err := control.newClient(t).Reserve(t.Context(), allocationRequest()); err != nil || control.allocator.calls.Load() != 1 {
-		t.Fatalf("native positive control failed: %v", err)
-	}
+	nativePositiveControl(t)
 	for _, scenario := range []string{"expired", "wrong hostname", "untrusted issuer", "sibling key", "wrong client", "TLS 1.2"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := fixture(t, scenario)
@@ -335,10 +340,7 @@ func TestNativeCertificateRefusals(t *testing.T) {
 
 // TestNativeConnectionLossAfterEffectDoesNotReplay drops TCP while the allocator remains available.
 func TestNativeConnectionLossAfterEffectDoesNotReplay(t *testing.T) {
-	control := fixture(t, "")
-	if _, err := control.newClient(t).Reserve(t.Context(), allocationRequest()); err != nil || control.allocator.calls.Load() != 1 {
-		t.Fatalf("native positive control failed: %v", err)
-	}
+	nativePositiveControl(t)
 	f := fixture(t, "")
 	effects := atomic.Int32{}
 	closed := make(chan error, 16)

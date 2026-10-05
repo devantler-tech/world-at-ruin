@@ -9,6 +9,19 @@ import (
 	"testing"
 )
 
+func sourceFixture(t *testing.T, name string) (string, string) {
+	t.Helper()
+	parent := t.TempDir()
+	source := filepath.Join(parent, name)
+	if err := os.MkdirAll(filepath.Join(source, "assets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "assets", "a.txt"), []byte("a"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return parent, source
+}
+
 // TestPartitionIsCompleteOrderedAndKeepsRecoveryOutsideThePack covers selection and link refusal.
 func TestPartitionIsCompleteOrderedAndKeepsRecoveryOutsideThePack(t *testing.T) {
 	dir := t.TempDir()
@@ -60,14 +73,7 @@ func TestReceiptRejectsChangedPackAndChangedResourceInventory(t *testing.T) {
 
 // TestStageRefusesPhysicalSourceAliasesBeforeCreatingAnything covers links and native case aliases.
 func TestStageRefusesPhysicalSourceAliasesBeforeCreatingAnything(t *testing.T) {
-	parent := t.TempDir()
-	source := filepath.Join(parent, "project")
-	if err := os.MkdirAll(filepath.Join(source, "assets"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, "assets", "a.txt"), []byte("a"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	parent, source := sourceFixture(t, "project")
 	alias := filepath.Join(parent, "alias")
 	if err := os.Symlink(source, alias); err != nil {
 		t.Fatal(err)
@@ -114,14 +120,7 @@ func TestFreshScriptRemainsInTheCumulativeSelection(t *testing.T) {
 
 // TestFinalizeRefusesOutputInsidePhysicalSource prevents publication from changing caller sources.
 func TestFinalizeRefusesOutputInsidePhysicalSource(t *testing.T) {
-	parent := t.TempDir()
-	source := filepath.Join(parent, "source")
-	if err := os.MkdirAll(filepath.Join(source, "assets"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(source, "assets", "a.txt"), []byte("a"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	parent, source := sourceFixture(t, "source")
 	work := filepath.Join(parent, "work")
 	if err := Stage(source, work); err != nil {
 		t.Fatal(err)

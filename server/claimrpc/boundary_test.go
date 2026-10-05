@@ -20,6 +20,25 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/zoneclaim"
 )
 
+func postJSON(t *testing.T, client *http.Client, ctx context.Context, endpoint, body string) (int, http.Header, []byte) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.StatusCode, response.Header, data
+}
+
 func TestCompletionMalformedDescriptorsNeverReachAuthority(t *testing.T) {
 	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
 	r := f.admittedReceipt(t)
@@ -45,33 +64,14 @@ func TestCompletionMalformedDescriptorsNeverReachAuthority(t *testing.T) {
 		"negative generation": strings.Replace(valid, strconv.FormatInt(r.Fence.Generation.UnixNano(), 10), "-1", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/v1/session/end", strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			request.Header.Set("Content-Type", "application/json")
-			response, err := client.Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			data, err := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if err != nil || response.StatusCode != http.StatusForbidden || string(data) != "zone claim refused\n" || proofCalls != 0 || cleanupCalls != 0 {
+			statusCode, _, data := postJSON(t, client, t.Context(), server.URL+"/v1/session/end", body)
+			if statusCode != http.StatusForbidden || string(data) != "zone claim refused\n" || proofCalls != 0 || cleanupCalls != 0 {
 				t.Fatal("malformed completion reached authority or exposed details")
 			}
 		})
 	}
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/v1/session/end", strings.NewReader(valid))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusNoContent || proofCalls != 1 || cleanupCalls != 1 {
+	statusCode, _, _ := postJSON(t, client, t.Context(), server.URL+"/v1/session/end", valid)
+	if statusCode != http.StatusNoContent || proofCalls != 1 || cleanupCalls != 1 {
 		t.Fatal("valid completion control failed")
 	}
 }
@@ -248,19 +248,9 @@ func TestV2ClaimReturnsOriginalDurableReceipt(t *testing.T) {
 	client := &http.Client{Transport: transport, Timeout: time.Second}
 	var original string
 	for range 2 {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/v2/claim", strings.NewReader(requestBody(t, f)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Header.Set("Content-Type", "application/json")
-		response, err := client.Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := io.ReadAll(response.Body)
-		_ = response.Body.Close()
-		if err != nil || response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" || response.Header.Get("Content-Type") != "application/json" {
-			t.Fatalf("claim receipt missing: status=%d err=%v", response.StatusCode, err)
+		statusCode, header, data := postJSON(t, client, t.Context(), server.URL+"/v2/claim", requestBody(t, f))
+		if statusCode != http.StatusOK || header.Get("Cache-Control") != "no-store" || header.Get("Content-Type") != "application/json" {
+			t.Fatalf("claim receipt missing: status=%d", statusCode)
 		}
 		var receipt map[string]any
 		if err := json.Unmarshal(data, &receipt); err != nil {
@@ -321,19 +311,9 @@ func TestHandlerRefusesMalformedBodiesBeforeResolving(t *testing.T) {
 		"object":    `[]`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/claim", strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			request.Header.Set("Content-Type", "application/json")
-			response, err := client.Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			content, err := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if err != nil || response.StatusCode != http.StatusForbidden || string(content) != "zone claim refused\n" {
-				t.Fatalf("unsafe refusal: status=%d error=%v body=%q", response.StatusCode, err, content)
+			statusCode, _, content := postJSON(t, client, context.Background(), server.URL+"/v1/claim", body)
+			if statusCode != http.StatusForbidden || string(content) != "zone claim refused\n" {
+				t.Fatalf("unsafe refusal: status=%d body=%q", statusCode, content)
 			}
 		})
 	}

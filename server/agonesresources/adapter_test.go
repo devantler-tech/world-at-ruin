@@ -165,6 +165,23 @@ type fixture struct {
 	fingerprint string
 }
 
+func (f *fixture) mutateStored(mutate func(*agonesv1.GameServer)) {
+	f.t.Helper()
+	gameServer := f.stored("zone-1").DeepCopy()
+	mutate(gameServer)
+	f.replace(gameServer)
+}
+
+func releasePinned(t *testing.T, mutate func(*fixture, *nakamalease.Lease)) (*fixture, nakamalease.Lease, error) {
+	t.Helper()
+	f := newFixture(t, nil)
+	lease := f.pinnedGameServer()
+	if mutate != nil {
+		mutate(f, &lease)
+	}
+	return f, lease, f.adapter.Release(context.Background(), lease)
+}
+
 // newFixture composes the real allocation gRPC client, fake GameServer API and
 // keyring, with optional adapter configuration changes and test-owned cleanup.
 func newFixture(t *testing.T, mutate func(*Config)) *fixture {
@@ -1046,10 +1063,8 @@ func TestResolveRefusesAnyChangedComponent(t *testing.T) {
 // while retaining retryable API failures.
 func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 	t.Run("pinned lease deletes with its UID precondition", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, lease, err := releasePinned(t, nil)
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if uids := f.deletedUIDs(); len(uids) != 1 || uids[0] != "uid-1" {
@@ -1063,13 +1078,12 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 		}
 	})
 	t.Run("any state is releasable", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		gs := f.stored("zone-1").DeepCopy()
-		gs.Status.State = agonesv1.GameServerStateShutdown
-		f.replace(gs)
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
+				gameServer.Status.State = agonesv1.GameServerStateShutdown
+			})
+		})
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if f.exists("zone-1") {
@@ -1077,11 +1091,10 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 		}
 	})
 	t.Run("a newer incarnation under the same name is untouched", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		f.replace(f.allocatedGameServer("zone-1", "uid-recreated", testAttemptID))
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
+			f.replace(f.allocatedGameServer("zone-1", "uid-recreated", testAttemptID))
+		})
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if f.actions("delete") != 0 || !f.exists("zone-1") {
@@ -1089,13 +1102,12 @@ func TestReleaseDeletesOnlyTheExactPinnedObject(t *testing.T) {
 		}
 	})
 	t.Run("another attempt's object is untouched", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		gs := f.stored("zone-1").DeepCopy()
-		gs.Labels[agones.AttemptLabel] = attemptDigest(f.t, "attempt-8")
-		f.replace(gs)
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
+				gameServer.Labels[agones.AttemptLabel] = attemptDigest(f.t, "attempt-8")
+			})
+		})
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if f.actions("delete") != 0 || !f.exists("zone-1") {
@@ -1436,15 +1448,14 @@ func TestAKeyTheKeyringNoLongerHoldsIsRefusedButStillReleasable(t *testing.T) {
 // still deleted; while a re-sealed object under the same UID is left alone.
 func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 	t.Run("port-less object is still deleted", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		gs := f.stored("zone-1").DeepCopy()
-		gs.Status.State = agonesv1.GameServerStateShutdown
-		gs.Status.Ports = nil
-		gs.Status.NodeName = ""
-		f.replace(gs)
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
+				gameServer.Status.State = agonesv1.GameServerStateShutdown
+				gameServer.Status.Ports = nil
+				gameServer.Status.NodeName = ""
+			})
+		})
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if uids := f.deletedUIDs(); len(uids) != 1 || uids[0] != "uid-1" {
@@ -1484,15 +1495,14 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 		}
 	})
 	t.Run("re-sealed object under the same UID is still deleted", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		gs := f.stored("zone-1").DeepCopy()
-		gs.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
-			f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("re-sealed"),
-		)
-		f.replace(gs)
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
+				gameServer.Annotations[agones.AdmissionEnvelopeAnnotation] = sealedEnvelope(
+					f.t, f.key, "zone-1", "uid-1", f.fingerprint, secretFor("re-sealed"),
+				)
+			})
+		})
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if uids := f.deletedUIDs(); len(uids) != 1 || uids[0] != "uid-1" {
@@ -1503,13 +1513,12 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 		}
 	})
 	t.Run("object with no envelope at all is still deleted", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		gs := f.stored("zone-1").DeepCopy()
-		delete(gs.Annotations, agones.AdmissionEnvelopeAnnotation)
-		f.replace(gs)
-
-		if err := f.adapter.Release(context.Background(), lease); err != nil {
+		f, _, err := releasePinned(t, func(f *fixture, _ *nakamalease.Lease) {
+			f.mutateStored(func(gameServer *agonesv1.GameServer) {
+				delete(gameServer.Annotations, agones.AdmissionEnvelopeAnnotation)
+			})
+		})
+		if err != nil {
 			t.Fatalf("Release returned an error: %v", err)
 		}
 		if f.exists("zone-1") {
@@ -1517,11 +1526,10 @@ func TestReleaseProvesOwnershipByUIDAlone(t *testing.T) {
 		}
 	})
 	t.Run("a lease naming an allocation with no reference fails closed", func(t *testing.T) {
-		f := newFixture(t, nil)
-		lease := f.pinnedGameServer()
-		lease.SecretRef = ""
-
-		if err := f.adapter.Release(context.Background(), lease); !errors.Is(err, ErrInvalidResource) {
+		f, _, err := releasePinned(t, func(_ *fixture, lease *nakamalease.Lease) {
+			lease.SecretRef = ""
+		})
+		if !errors.Is(err, ErrInvalidResource) {
 			t.Fatalf("Release error = %v, want ErrInvalidResource", err)
 		}
 		if f.actions("delete") != 0 || !f.exists("zone-1") {
