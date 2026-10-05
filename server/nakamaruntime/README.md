@@ -240,3 +240,49 @@ exercise elapsed grace, restart and failed-observation history, retained lease
 fixtures, scoped lists, UID/resource-version deletes, resource replacement and
 lost delete acknowledgements. Held-worker tests prove a shutdown deadline cannot
 retire dependencies early.
+
+## Experimental native Nakama acceptance
+
+The native bundle uses the separate generated locks `server/nakama-runtime/go.mod`
+and `server/nakama-runtime/go.sum`, aligned with Nakama 3.40's runtime API 1.47.
+It leaves the ordinary server dependency graph intact. From `server/`:
+
+```sh
+go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
+  -experimental -source . -output /tmp/new-war-native-bundle
+```
+
+The output must be absent. The builder selects the exact Go 1.27.1 toolchain,
+native CGO and compatible flags for both the Nakama binary and WAR plugin; its
+`bundle.json` records actual graph and artifact hashes. This command builds a
+trial artifact and does not publish or deploy it.
+
+The separate acceptance image is built from the repository root and never
+published by CI:
+
+```sh
+docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
+  -t world-at-ruin-nakama-native:trial .
+bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
+```
+
+The image refuses a default invocation. Eleven mandatory scenarios cover ten
+runtime acceptance concerns, using the real loaded plugin, authentication and
+PostgreSQL-backed private storage. The image supplies only disposable fixture
+credentials; the script publishes no ports and removes its own containers and
+network. Linux amd64 and arm64 CI both execute the packaged runtime. Missing
+trial inputs fail; the `war_native_trial` build tag selects this explicit process
+suite separately from ordinary unit tests.
+
+Lock maintenance is deliberate: use Go's alternate-module commands to resolve
+both `github.com/heroiclabs/nakama/v3` and `./cmd/nakama`, plus the tagged native
+trial package, and run `go mod download -modfile=nakama-runtime/go.mod` to retain
+checksums for every selected platform dependency. Never edit generated sums or
+substitute the ordinary graph for the full runtime graph. The container build
+checks that dependency download leaves both lock files byte-identical and scans
+the full native server/plugin for reachable vulnerabilities.
+
+These disposable checks establish source behavior. Production serving artifacts,
+rollout, attested credentials and the existing authority/fencing gates remain
+under #569 and #1177. Experimental build retirement is tracked by #1192. See
+[ADR 0022](../../docs/adr/0022-prove-the-native-nakama-runtime-with-disposable-storage.md).

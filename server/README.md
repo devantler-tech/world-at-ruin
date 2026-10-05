@@ -616,3 +616,8 @@ CI runs exactly this in the `Server CI (Go)` job, aggregated into the
 - **Forward-only by construction.** Simulation units are integers and the tick
   rate is a constant; there is no wall-clock or unseeded randomness in the
   authoritative path, so a build's behaviour is fully attributable to its code.
+
+The explicitly experimental [native Nakama acceptance bundle](nakamaruntime/README.md#experimental-native-nakama-acceptance)
+builds and loads the actual plugin against disposable PostgreSQL. Its separate
+locked graph and native amd64/arm64 CI establish source behavior; production
+activation remains separately gated.
