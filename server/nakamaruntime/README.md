@@ -42,6 +42,7 @@ projection; private key bytes belong in mounted files.
 | `WAR_HANDOFF_TLS_PORT_NAME` | The Fleet's player-facing TLS port name. |
 | `WAR_HANDOFF_ZONE_DOMAIN` | Managed DNS suffix, e.g. `zones.example`. |
 | `WAR_HANDOFF_LEASE_TTL` | Go duration from `2s` to `10m`; typically `1m`. A handoff needs at least one second remaining after allocation. |
+| `WAR_HANDOFF_TOKEN_TTL` | Optional signed handoff lifetime from `1s` to `5m`, default `30s`. It cannot extend the durable lease. |
 | `WAR_HANDOFF_RPC_TIMEOUT` | Optional deadline, `1s` to `1m`, default `30s`. A shorter caller deadline or session expiry wins. |
 
 Enabled initialization rejects missing/malformed settings before connection or

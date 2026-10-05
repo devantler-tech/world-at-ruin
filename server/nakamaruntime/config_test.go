@@ -33,8 +33,14 @@ func TestConfigurationIsOptInAndComplete(t *testing.T) {
 		t.Fatal("disabled module inspected deployment configuration")
 	}
 	cfg, err = readConfig(validEnvironment())
-	if err != nil || !cfg.enabled || cfg.leaseTTL != time.Minute || cfg.rpcTimeout != 30*time.Second || len(cfg.unwrapKeys) != 2 {
+	if err != nil || !cfg.enabled || cfg.leaseTTL != time.Minute || cfg.tokenTTL != 30*time.Second || cfg.rpcTimeout != 30*time.Second || len(cfg.unwrapKeys) != 2 {
 		t.Fatalf("valid configuration did not preserve explicit pool and key settings: %v", err)
+	}
+	env := validEnvironment()
+	env["WAR_HANDOFF_TOKEN_TTL"] = "45s"
+	cfg, err = readConfig(env)
+	if err != nil || cfg.tokenTTL != 45*time.Second {
+		t.Fatalf("valid token lifetime was not preserved: %v", err)
 	}
 	for key := range validEnvironment() {
 		if key == "WAR_HANDOFF_ENABLED" {
@@ -61,6 +67,7 @@ func TestConfigurationRejectsMalformedValuesWithoutEchoingThem(t *testing.T) {
 		"WAR_HANDOFF_TLS_PORT_NAME":     {"bad/name", "Upper"},
 		"WAR_HANDOFF_ZONE_DOMAIN":       {"https://zones.example", "bad/domain", "localhost", "127.0.0.1", "Upper.example"},
 		"WAR_HANDOFF_LEASE_TTL":         {"0", "-1s", "999ms", "1s", "11m", "private-value"},
+		"WAR_HANDOFF_TOKEN_TTL":         {"0", "-1s", "999ms", "6m", "private-value"},
 		"WAR_HANDOFF_RPC_TIMEOUT":       {"0s", "-1s", "61s", "private-value"},
 	} {
 		for _, value := range values {

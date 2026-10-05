@@ -286,7 +286,8 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 // TestClosedLoopRestartProtection catches claim loss across real Nakama restart and cleanup.
 func TestClosedLoopRestartProtection(t *testing.T) {
 	f := closedFixture(t)
-	f.env["WAR_HANDOFF_LEASE_TTL"] = "8s"
+	f.env["WAR_HANDOFF_LEASE_TTL"] = "45s"
+	f.env["WAR_HANDOFF_TOKEN_TTL"] = "45s"
 	z := f.startZone("zone-a", f.key, "", false)
 	f.startZone("zone-b", f.key, "", false)
 	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
@@ -307,7 +308,7 @@ func TestClosedLoopRestartProtection(t *testing.T) {
 	if again != claimed || againVersion != version {
 		t.Fatal("idempotent admission replaced claim generation")
 	}
-	waitFor(t, 20*time.Second, "real cleanup reclaimed unclaimed canary", func() bool { return f.resource("zone-b") == nil })
+	waitFor(t, 50*time.Second, "real cleanup reclaimed unclaimed canary", func() bool { return f.resource("zone-b") == nil })
 	after, afterVersion := f.claimed(leaseKey(uid))
 	if after != claimed || afterVersion != version || f.resource("zone-a") == nil {
 		t.Fatal("native restart cleanup stole active ownership")

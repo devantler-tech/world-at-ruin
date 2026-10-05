@@ -195,7 +195,7 @@ func compose(cfg config, nk runtime.NakamaModule, deps dependencies) (*handoff.S
 			return nil, nil, nil, nil, err
 		}
 	}
-	service, err := handoff.NewService(nakamaauth.NewRuntimeVerifier(nk), coordinator, handoff.Config{ZoneDomain: cfg.zoneDomain})
+	service, err := handoff.NewService(nakamaauth.NewRuntimeVerifier(nk), coordinator, handoff.Config{ZoneDomain: cfg.zoneDomain, TokenTTL: cfg.tokenTTL})
 	return service, coordinator, claim, orphans, err
 }
 
