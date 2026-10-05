@@ -19,8 +19,11 @@ type config struct {
 	namespace, fleet, tlsPort, zoneDomain                      string
 	leaseTTL, rpcTimeout                                       time.Duration
 	claims                                                     privateConfig
+	orphans                                                    orphanConfig
 }
 
+// readConfig validates enabled runtime settings before any dependency is acquired.
+// A disabled module ignores the settings for its optional workers and listener.
 func readConfig(env map[string]string) (config, error) {
 	var cfg config
 	switch env["WAR_HANDOFF_ENABLED"] {
@@ -83,6 +86,9 @@ func readConfig(env map[string]string) (config, error) {
 	}
 	cfg.claims, err = readPrivateConfig(env)
 	cfg.claims.allocatorCA, cfg.claims.allocatorCert = cfg.allocatorCA, cfg.allocatorCert
+	if err == nil {
+		cfg.orphans, err = readOrphanConfig(env)
+	}
 	return cfg, err
 }
 
