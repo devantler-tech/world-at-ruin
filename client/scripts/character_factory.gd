@@ -442,7 +442,8 @@ static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_
 	piece_mesh.name = EQUIP_PREFIX + piece_name
 	if piece_name == "loincloth_ragged" and RaggedDrape.enabled():
 		piece_mesh.set_meta(RaggedDrape.SOURCE_META, piece_mesh.mesh)
-		piece_mesh.mesh = RaggedDrape.mesh(piece_mesh.mesh as ArrayMesh)
+		body_mesh.set_meta(RaggedDrape.SKIN_SOURCE_META, body_mesh.mesh)
+		body_mesh.mesh = RaggedDrape.waist_skin(body_mesh.mesh as ArrayMesh)
 	if piece_name == "loincloth_ragged" and RaggedCloth.enabled():
 		var source := piece_mesh.get_active_material(0) as StandardMaterial3D
 		if source != null:
@@ -453,6 +454,8 @@ static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_
 		var idx := piece_mesh.find_blend_shape_by_name(shape_name)
 		if idx >= 0:
 			piece_mesh.set_blend_shape_value(idx, shapes[shape_name])
+	if piece_mesh.has_meta(RaggedDrape.SOURCE_META):
+		RaggedDrape.sync_shape(piece_mesh)
 	if piece.has("hide_shape"):
 		var hide_idx := body_mesh.find_blend_shape_by_name(String(piece["hide_shape"]))
 		if hide_idx >= 0:
@@ -489,6 +492,8 @@ static func set_shape_weight(instance: Node3D, shape_name: String, value: float)
 		var idx := (child as MeshInstance3D).find_blend_shape_by_name(shape_name)
 		if idx >= 0:
 			(child as MeshInstance3D).set_blend_shape_value(idx, value)
+			if child.has_meta(RaggedDrape.SOURCE_META):
+				RaggedDrape.sync_shape(child as MeshInstance3D)
 
 
 ## The weapon socket on a hand bone ("hand_l"/"hand_r"): a BoneAttachment3D
