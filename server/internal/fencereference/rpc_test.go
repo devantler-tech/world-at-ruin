@@ -477,7 +477,8 @@ func rejectReferenceImport(path string, text any) error {
 		if err != nil {
 			return err
 		}
-		if decoded == "github.com/devantler-tech/world-at-ruin/server/internal/fencereference" {
+		if decoded == "github.com/devantler-tech/world-at-ruin/server/internal/fencereference" ||
+			decoded == "github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit" {
 			return errors.New("reference commit authority imported into production")
 		}
 	}
@@ -486,11 +487,15 @@ func rejectReferenceImport(path string, text any) error {
 
 func TestCompositionGuardRecognizesEveryImportSpelling(t *testing.T) {
 	t.Parallel()
-	path := "github.com/devantler-tech/world-at-ruin/server/internal/fencereference"
-	for _, literal := range []string{strconv.Quote(path), "`" + path + "`", "\"\\x67" + path[1:] + "\""} {
-		for _, alias := range []string{"", "renamed ", ". ", "_ "} {
-			if err := rejectReferenceImport("fixture.go", "package fixture\nimport "+alias+literal); err == nil {
-				t.Fatalf("composition guard accepted %s%s", alias, literal)
+	for _, path := range []string{
+		"github.com/devantler-tech/world-at-ruin/server/internal/fencereference",
+		"github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit",
+	} {
+		for _, literal := range []string{strconv.Quote(path), "`" + path + "`", "\"\\x67" + path[1:] + "\""} {
+			for _, alias := range []string{"", "renamed ", ". ", "_ "} {
+				if err := rejectReferenceImport("fixture.go", "package fixture\nimport "+alias+literal); err == nil {
+					t.Fatalf("composition guard accepted %s%s", alias, literal)
+				}
 			}
 		}
 	}
