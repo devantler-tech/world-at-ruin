@@ -370,19 +370,44 @@ func TestNativePeriodicExpiryRetriesExactCleanup(t *testing.T) {
 	f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
 	token, uid := f.account("expiry-native-fixture")
 	f.handoff(token)
+	deleteResponse := make(chan struct{})
+	resumeDelete := sync.OnceFunc(func() { close(deleteResponse) })
+	t.Cleanup(resumeDelete)
 	f.mu.Lock()
 	f.retryDelete = true
+	f.deleteResponse = deleteResponse
 	f.mu.Unlock()
 	waitFor(t, 15*time.Second, "native failed cleanup", func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.deleted) > 0 })
 	releasing, _, _, _ := f.row(leaseKey(uid))
 	if !strings.Contains(releasing, `"releasing": true`) {
 		t.Fatal("native failed cleanup lost its durable releasing transition")
 	}
-	waitFor(t, 10*time.Second, "native expiry retry", func() bool { return f.resource("zone-1") == nil })
-	var count int
-	if e := f.db.QueryRow("SELECT count(*) FROM storage WHERE collection=$1 AND key=$2 AND user_id=$3::uuid", collection, leaseKey(uid), zeroOwner).Scan(&count); e != nil || count != 0 {
-		t.Fatal("native expiry did not retire exact lease")
+	leaseCount := func() (int, error) {
+		var count int
+		err := f.db.QueryRow("SELECT count(*) FROM storage WHERE collection=$1 AND key=$2 AND user_id=$3::uuid", collection, leaseKey(uid), zeroOwner).Scan(&count)
+		return count, err
 	}
+	waitFor(t, 10*time.Second, "native expiry resource deletion", func() bool { return f.resource("zone-1") == nil })
+	if count, err := leaseCount(); err != nil {
+		t.Fatal("native lease retirement observation failed")
+	} else if count != 1 {
+		t.Fatal("native lease retired before deletion acknowledgement")
+	}
+	complete, err := nativeRetirementComplete(true, leaseCount)
+	if err != nil {
+		t.Fatal("native lease retirement observation failed")
+	}
+	if complete {
+		t.Fatal("native cleanup completed with durable ownership still present")
+	}
+	resumeDelete()
+	waitFor(t, 10*time.Second, "native expiry retry and exact lease retirement", func() bool {
+		complete, err := nativeRetirementComplete(f.resource("zone-1") == nil, leaseCount)
+		if err != nil {
+			t.Fatal("native lease retirement observation failed")
+		}
+		return complete
+	})
 	f.mu.Lock()
 	attempts := len(f.deleted)
 	f.mu.Unlock()
