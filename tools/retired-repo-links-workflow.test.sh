@@ -19,8 +19,8 @@ jq -s '{ci:.[0],guard:.[1]}' "$scratch/ci.json" "$scratch/guard.json" >"$scratch
 # conditions, inherited secrets and success-on-error settings from hiding work.
 admit() {
   jq -e --arg checkout 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' \
-    --arg validator 'devantler-tech/.github/actions/validate-retired-repo-links@bd0035dd8f41fcf1459b878882b8897443f8dc59' \
-    --arg source 'bd0035dd8f41fcf1459b878882b8897443f8dc59' '
+    --arg validator 'devantler-tech/.github/actions/validate-retired-repo-links@8c0214ff944f615c35b122c4c8776151dfb561ce' \
+    --arg source '8c0214ff944f615c35b122c4c8776151dfb561ce' '
     .ci.on == {pull_request:null,merge_group:null}
     and .ci.permissions == {contents:"read"}
     and (.ci.jobs["retired-repo-links"] |
@@ -99,6 +99,8 @@ for mutation in \
   '.guard.jobs["retired-repo-links"].if="false"' \
   '.guard.jobs["retired-repo-links"].steps[0].with["persist-credentials"]=true' \
   '.guard.jobs["retired-repo-links"].steps[1].with.enabled="false"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@bd0035dd8f41fcf1459b878882b8897443f8dc59"' \
+  '.guard.jobs["retired-repo-links"].steps[3].with.ref="bd0035dd8f41fcf1459b878882b8897443f8dc59"' \
   '.guard.jobs["retired-repo-links"].steps[2].run="true"' \
   '.guard.jobs["retired-repo-links"].steps[4]["continue-on-error"]=true' \
   '.guard.jobs["retired-repo-links"].steps[5].run="true"' \
@@ -113,4 +115,4 @@ for mutation in \
     exit 1
   fi
 done
-echo 'TEST PASS -- main-only shared guard, read-only credentials and 23 rejected wiring mutations'
+echo 'TEST PASS -- main-only shared guard, read-only credentials and 25 rejected wiring mutations'
