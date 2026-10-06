@@ -42,8 +42,12 @@ edges still have exactly two incident faces, and a deliberately missing-face
 control fails that closed-surface criterion.
 
 Thinning adapts to the complete selected morph field. Negative saved belly
-shapes, combined negative belly/buttocks shapes and live creator edits retain
-approximately **1 mm** positively ordered shell separation. Larger accepted
+shapes, combined negative belly/buttocks shapes, negative hip shapes and live
+creator edits retain approximately **1 mm** positively ordered shell separation.
+Independent CPU-skinned measurements cover 70 panel pairs and 40 radial band
+pairs per recipe. The accepted historical `hips_wide=-2` control crossed band
+faces by **0.731 mm** before the band-edge guard; both saved and live versions
+now retain **1.000 mm** positive separation. Larger accepted
 shapes can retain a thicker shell; the 3 mm acceptance bound belongs to the
 first-run Wanderer, not every historical morph. No accepted value is clamped,
 rejected or rewritten. Recomposition starts from the immutable imported mesh
@@ -72,8 +76,8 @@ in every independent material/geometry flag state.
 
 These are observations of this run, not an art score or a cross-machine target.
 An advisory native headless benchmark of character construction plus one
-negative-belly live edit measured a 108.9 ms median over ten warmed samples
-with the geometry preview, versus 17.2 ms with it off. This does not measure
+negative-belly live edit measured a 103.0 ms median over ten warmed samples
+with the refinement preview, versus 15.2 ms with it off. This does not measure
 steady-state frame rate; the derived mesh is static between creator edits.
 
 ## Reference and remaining gap

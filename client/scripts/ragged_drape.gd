@@ -84,12 +84,37 @@ static func _shell_scale(source: ArrayMesh, surface: int, shapes: Dictionary) ->
 		if point.z > base[pair.y].z:
 			pair.y = i
 		pairs[key] = pair
-	var scale := 0.28
+	var scale := _band_scale(base, selected, source.surface_get_arrays(surface)[Mesh.ARRAY_INDEX])
 	for pair: Vector2i in pairs.values():
 		var original := base[pair.y].z - base[pair.x].z
 		if original > 0.00001:
 			var gap := selected[pair.y].z - selected[pair.x].z
 			scale = maxf(scale, 1.0 + (0.001 - gap) / original)
+	return scale
+
+
+## Short source-topology edges join the radial inner and outer band faces.
+## Protect their actual selected gap too, independently of panel correspondence.
+static func _band_scale(base: PackedVector3Array, selected: PackedVector3Array,
+		indices: PackedInt32Array) -> float:
+	var scale := 0.28
+	for triangle in range(0, indices.size(), 3):
+		for edge in 3:
+			var a := indices[triangle + edge]
+			var b := indices[triangle + (edge + 1) % 3]
+			if absf(base[a].y - WAIST_ATTACHMENT) > 0.000001 and absf(base[a].y - 0.940) > 0.000001:
+				continue
+			if absf(base[a].y - base[b].y) > 0.000001:
+				continue
+			var original := base[b] - base[a]
+			if original.length() < 0.00001 or original.length() > 0.012:
+				continue
+			var direction := original.normalized()
+			var collapsed := _refine(base[b], 0.0) - _refine(base[a], 0.0)
+			var removed := (original - collapsed).dot(direction)
+			if removed > 0.00001:
+				var gap := (selected[b] - selected[a]).dot(direction)
+				scale = maxf(scale, 1.0 + (0.001 - gap) / removed)
 	return scale
 
 
