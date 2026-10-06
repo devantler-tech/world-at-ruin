@@ -22,7 +22,7 @@ func _ready() -> void:
 	print("WRAP SHAPE — band_mm=%.6f panel_mm=%.6f old_band_mm=%.6f old_panel_mm=%.6f" % [
 		dimensions[0] * 1000.0, dimensions[1] * 1000.0, control[0] * 1000.0, control[1] * 1000.0])
 	_check(dimensions[0] <= 0.026, "opt-in waist band is at most 26 mm high, rather than the original 52 mm board")
-	_check(dimensions[1] <= 0.0031, "closed hanging panel shell is at most 3 mm thick")
+	_check(dimensions[1] <= 0.003, "closed hanging panel shell is at most 3 mm thick")
 	_check(control[0] > 0.05 and control[1] > 0.007, "unchanged imported geometry fails both shape criteria")
 	_check(_closed(garment.mesh as ArrayMesh), "refinement retains a closed opaque manifold at every seam")
 	_check(_closed(source), "the manifold oracle also recognizes the imported closed shell")

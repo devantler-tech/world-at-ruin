@@ -32,6 +32,11 @@ func _ready() -> void:
 		_check((changed > 0) == (value == "1"), "only exact refinement opt-in changes the previously pinned waist: " + value)
 		var body := CharacterFactory.find_skinned_mesh(CharacterFactory.find_skeleton(character))
 		_check(body.has_meta(RaggedDrape.SKIN_SOURCE_META) == (value == "1"), "only exact refinement opt-in restores exposed skin")
+		var previous_mesh := _piece(character).mesh
+		CharacterFactory.set_shape_weight(character, "hips_wide", -0.25)
+		_check((_piece(character).mesh != previous_mesh) == (value == "1"), "creator edits retain the old drape mesh unless refinement needs new shell separation: " + value)
+		var hip_index := _piece(character).find_blend_shape_by_name("hips_wide")
+		_check(hip_index >= 0 and is_equal_approx(_piece(character).get_blend_shape_value(hip_index), -0.25), "creator edits still drive the garment's existing morph weights")
 		character.free()
 	_check(recipe == CharacterFactory.load_recipe("res://recipes/wanderer.json"), "preview selection never rewrites the recipe")
 	alone.free()

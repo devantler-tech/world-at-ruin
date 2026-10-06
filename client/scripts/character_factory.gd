@@ -493,7 +493,7 @@ static func set_shape_weight(instance: Node3D, shape_name: String, value: float)
 		var idx := (child as MeshInstance3D).find_blend_shape_by_name(shape_name)
 		if idx >= 0:
 			(child as MeshInstance3D).set_blend_shape_value(idx, value)
-			if child.has_meta(RaggedDrape.SOURCE_META):
+			if child.has_meta(RaggedDrape.SOURCE_META) and RaggedDrape.refinement_enabled():
 				RaggedDrape.sync_shape(child as MeshInstance3D)
 
 
