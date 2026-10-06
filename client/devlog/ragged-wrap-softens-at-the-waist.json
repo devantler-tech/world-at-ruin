@@ -3,7 +3,7 @@
   "date": "2026-10-06",
   "title": "A lighter ragged wrap silhouette",
   "notes": [
-    "The optional ragged-cloth drape now has a narrower folded waist and thinner closed panel edges. Enable WAR_RAGGED_CLOTH_DRAPE=1 to inspect it; the woven material remains an independent preview.",
+    "A separate optional ragged-wrap refinement gives the cloth a narrower folded waist and thinner closed panel edges. Enable WAR_RAGGED_WRAP_REFINEMENT=1 together with WAR_RAGGED_CLOTH_DRAPE=1 to inspect it; the woven material remains an independent preview.",
     "Newly exposed waist skin keeps its original body shape. Historical characters, the permanent opaque wrap and ordinary launches remain intact.",
     "Front, rear and profile comparisons isolate this shape change from the earlier gathers while retaining the same light, pose and gameplay camera.",
     "The angular cut, abrupt reinforcement ends, fraying and cloth motion still need work. This static opt-in improvement does not clear the clothing or Phase 0 art gate."

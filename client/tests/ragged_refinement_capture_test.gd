@@ -9,8 +9,9 @@ func _ready() -> void:
 	if not capture.has_method("ragged_unrefined_mesh"):
 		_check(false, "actual frame capture needs an independent waist/shell-only control")
 	else:
-		var state := TestEnvironment.snapshot([RaggedDrape.FLAG_ENV])
+		var state := TestEnvironment.snapshot([RaggedDrape.FLAG_ENV, RaggedDrape.REFINEMENT_FLAG_ENV])
 		OS.set_environment(RaggedDrape.FLAG_ENV, "1")
+		OS.set_environment(RaggedDrape.REFINEMENT_FLAG_ENV, "1")
 		var recipe: Dictionary = CharacterFactory.load_recipe("res://recipes/wanderer.json")
 		var character := CharacterFactory.build(recipe)
 		var garment := CharacterFactory.find_skeleton(character).get_node("Equip_loincloth_ragged") as MeshInstance3D

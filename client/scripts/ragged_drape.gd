@@ -6,6 +6,7 @@ extends RefCounted
 ## the same base-space offset is added to every absolute morph target.
 
 const FLAG_ENV := "WAR_RAGGED_CLOTH_DRAPE"
+const REFINEMENT_FLAG_ENV := "WAR_RAGGED_WRAP_REFINEMENT"
 const SOURCE_META := "ragged_drape_source"
 const SKIN_SOURCE_META := "ragged_waist_skin_source"
 const DERIVATIVE_STEP := 0.0002
@@ -18,16 +19,20 @@ static func enabled() -> bool:
 	return OS.get_environment(FLAG_ENV) == "1"
 
 
+static func refinement_enabled() -> bool:
+	return enabled() and OS.get_environment(REFINEMENT_FLAG_ENV) == "1"
+
+
 ## Each composed character owns its mesh. Imported resources, material and
 ## skin stay shared and untouched; no derived cache can leak a later edit.
-static func mesh(source: ArrayMesh, refine: bool = true, shapes: Dictionary = {}) -> ArrayMesh:
+static func mesh(source: ArrayMesh, refine: bool = false, shapes: Dictionary = {}) -> ArrayMesh:
 	var result := ArrayMesh.new()
 	result.blend_shape_mode = source.blend_shape_mode
 	for shape in source.get_blend_shape_count():
 		result.add_blend_shape(source.get_blend_shape_name(shape))
 	for surface in source.get_surface_count():
 		var arrays := source.surface_get_arrays(surface)
-		var scale := _shell_scale(source, surface, shapes)
+		var scale := _shell_scale(source, surface, shapes) if refine else 1.0
 		var base: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		var offsets := PackedVector3Array()
 		var frames: Array[Basis] = []
@@ -51,7 +56,7 @@ static func sync_shape(garment: MeshInstance3D) -> void:
 	var values := {}
 	for shape in garment.mesh.get_blend_shape_count():
 		values[garment.mesh.get_blend_shape_name(shape)] = garment.get_blend_shape_value(shape)
-	garment.mesh = mesh(garment.get_meta(SOURCE_META) as ArrayMesh, true, values)
+	garment.mesh = mesh(garment.get_meta(SOURCE_META) as ArrayMesh, refinement_enabled(), values)
 	for shape in garment.mesh.get_blend_shape_count():
 		garment.set_blend_shape_value(shape, values[garment.mesh.get_blend_shape_name(shape)])
 

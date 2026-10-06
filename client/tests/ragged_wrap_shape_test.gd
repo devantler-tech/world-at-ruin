@@ -7,8 +7,9 @@ var _failed := false
 
 
 func _ready() -> void:
-	var state := TestEnvironment.snapshot([FLAG])
+	var state := TestEnvironment.snapshot([FLAG, RaggedDrape.REFINEMENT_FLAG_ENV])
 	OS.unset_environment(FLAG)
+	OS.set_environment(RaggedDrape.REFINEMENT_FLAG_ENV, "1")
 	var recipe: Dictionary = CharacterFactory.load_recipe("res://recipes/wanderer.json")
 	var original: Dictionary = recipe.duplicate(true)
 	var off := CharacterFactory.build(recipe)

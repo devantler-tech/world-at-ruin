@@ -442,8 +442,9 @@ static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_
 	piece_mesh.name = EQUIP_PREFIX + piece_name
 	if piece_name == "loincloth_ragged" and RaggedDrape.enabled():
 		piece_mesh.set_meta(RaggedDrape.SOURCE_META, piece_mesh.mesh)
-		body_mesh.set_meta(RaggedDrape.SKIN_SOURCE_META, body_mesh.mesh)
-		body_mesh.mesh = RaggedDrape.waist_skin(body_mesh.mesh as ArrayMesh)
+		if RaggedDrape.refinement_enabled():
+			body_mesh.set_meta(RaggedDrape.SKIN_SOURCE_META, body_mesh.mesh)
+			body_mesh.mesh = RaggedDrape.waist_skin(body_mesh.mesh as ArrayMesh)
 	if piece_name == "loincloth_ragged" and RaggedCloth.enabled():
 		var source := piece_mesh.get_active_material(0) as StandardMaterial3D
 		if source != null:

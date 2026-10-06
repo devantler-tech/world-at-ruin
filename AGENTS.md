@@ -1041,15 +1041,17 @@ everything shipped afterwards is held to.
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
-- **Ragged wrap geometry preview:** `WAR_RAGGED_CLOTH_DRAPE=1` retains the closed
-  wrap and prior outward gathers while narrowing its waist band and thinning its shell.
+- **Ragged wrap geometry previews:** `WAR_RAGGED_CLOTH_DRAPE=1` retains the closed
+  wrap, its fully pinned waist and prior outward gathers. The independent default-off
+  `WAR_RAGGED_WRAP_REFINEMENT=1` additionally narrows the waist band and thins the shell;
+  it is inert without the drape prerequisite. Its accept-or-retire task is #1275, due 2026-11-01.
   `RaggedDrape` also owns a private body mesh that restores only the newly exposed
   equipment-inset skin; player morphs, imported resources and saved recipes stay intact.
   The `ragged_cloth` capture includes `_unrefined` and `_unrefined_mask` arms that
   remove this refinement alone, including its skin restoration, while retaining earlier
   drape. The existing `_geometry_flat` arm removes all drape and cannot evidence
   this refinement by itself. Both geometry and material previews remain independent
-  and default-off; #950's 2026-11-01 decision never activates them.
+  and default-off; the 2026-11-01 decisions never activate them.
 - **Player-visible work is judged on the frame, not the suite:** before calling a player-visible
   change ready, render or play it, look at it, and judge it against the
   **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance). The PR must

@@ -6,7 +6,8 @@ var _failed := false
 
 
 func _ready() -> void:
-	var state := TestEnvironment.snapshot([RaggedDrape.FLAG_ENV])
+	var state := TestEnvironment.snapshot([RaggedDrape.FLAG_ENV, RaggedDrape.REFINEMENT_FLAG_ENV])
+	OS.set_environment(RaggedDrape.REFINEMENT_FLAG_ENV, "1")
 	var oracle := load("res://tests/equipment_visibility_test.gd").new() as Node
 	var recipes := [
 		CharacterFactory.load_recipe("res://recipes/wanderer.json"),

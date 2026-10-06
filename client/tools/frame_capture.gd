@@ -1869,7 +1869,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		var refinement_points := ragged_cloth_union_pixels(mask, unrefined_mask, 1 if name == "cloth_gameplay" else 2)
 		var refinement_noise := ragged_cloth_difference(drawn, repeated, refinement_points)
 		var refinement_signal := ragged_cloth_difference(drawn, unrefined, refinement_points)
-		if RaggedDrape.enabled() and name != "cloth_gameplay" and refinement_signal <= refinement_noise * 3.0 + 0.004:
+		if RaggedDrape.refinement_enabled() and name != "cloth_gameplay" and refinement_signal <= refinement_noise * 3.0 + 0.004:
 			_fail("%s: waist/shell-only signal %.5f does not separate from repeat noise %.5f" % [name, refinement_signal, refinement_noise])
 			return
 		if RaggedDrape.enabled() and name != "cloth_gameplay" and geometry_signal <= geometry_noise * 3.0 + 0.004:
@@ -1899,6 +1899,7 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		print("TAILORING READ %s — visible %d px, upper-decile sewing signal %.5f, repeat noise %.5f" % [name, points.size(), tailoring_signal, tailoring_noise])
 		print("FOLD READ %s — visible %d px, fold-only signal %.5f, repeat noise %.5f" % [name, points.size(), fold_signal, noise])
 		print("WRAP READ %s — union %d px, waist/shell-only signal %.5f, repeat noise %.5f" % [name, refinement_points.size(), refinement_signal, refinement_noise])
+	print("WRAP REFINEMENT — enabled=%s" % RaggedDrape.refinement_enabled())
 	print("CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s" % [RaggedCloth.enabled(), RaggedDrape.enabled()])
 	get_tree().quit(0)
 

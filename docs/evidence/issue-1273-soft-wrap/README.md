@@ -1,16 +1,17 @@
 # A softer waist and closed panel edge (#1273)
 
-`WAR_RAGGED_CLOTH_DRAPE=1` narrows the original wrap's waist and thins its
+`WAR_RAGGED_WRAP_REFINEMENT=1`, together with `WAR_RAGGED_CLOTH_DRAPE=1`,
+narrows the original wrap's waist and thins its
 closed shell while retaining the prior outward gathers. It also restores the
 upper strip of skin that the original equipment inset tucked under the wider
-band. The material preview remains independent. Both previews stay default-off;
+band. The material preview remains independent. All previews stay default-off;
 saved characters and imported assets are unchanged.
 
 ## Whole actual game frames
 
 Godot 4.7.1, Metal Forward+, Apple M2 Pro, 1600×900, 2026-10-06. These whole,
 unretouched first-party frames use the actual first-run Wanderer, an empty
-wardrobe, absent temporary saves, both previews enabled, and fixed pose,
+wardrobe, absent temporary saves, all three previews enabled, and fixed pose,
 lighting and cameras. The development HUD is not a release receipt. Exact
 image bytes are recorded in `docs/first-party-captures.sha256`.
 
@@ -89,7 +90,9 @@ abrupt reinforcement ends, loose fraying, cloth motion, body shading and cave
 composition still need work. This slice judges static shape, not animation or
 Phase 0 acceptance. #222 and #1 remain open. The separate #947 and #950
 2026-11-01 accept-or-retire decisions remain open; their dates never activate a
-preview.
+preview. #1275 tracks the refinement's own decision on the same date. With the
+new refinement unset, the existing drape retains its fully pinned waist and
+passes the unchanged frozen-base regression.
 
 ## Originality
 
@@ -111,12 +114,14 @@ preview.
 ## Reproduce
 
 Use a fresh directory with absent save files. Repeat with independent flag
-values `0/0`, `0/1`, `1/0` and `1/1`. Each run captures front, rear, profile and
-gameplay with all ten actual/control arms.
+material/drape values `0/0`, `0/1`, `1/0` and `1/1`, enabling the refinement
+only with its drape prerequisite. The unrefined arms exercise the refinement-off
+fallback without changing either older preview. Each run captures front, rear,
+profile and gameplay with all ten actual/control arms.
 
 ```sh
 rtk mkdir -p /tmp/war-soft-wrap
-rtk proxy env WAR_RAGGED_CLOTH_DETAIL=1 WAR_RAGGED_CLOTH_DRAPE=1 \
+rtk proxy env WAR_RAGGED_CLOTH_DETAIL=1 WAR_RAGGED_CLOTH_DRAPE=1 WAR_RAGGED_WRAP_REFINEMENT=1 \
 WAR_SCENARIO=ragged_cloth WAR_SHOT_DIR=/tmp/war-soft-wrap \
 WAR_SAVE_PATH=/tmp/war-soft-wrap/character.json \
 WAR_VAULT_PATH=/tmp/war-soft-wrap/vault.json \
