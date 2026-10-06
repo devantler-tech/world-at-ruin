@@ -879,7 +879,7 @@ everything shipped afterwards is held to.
   **That candidate-owned discovery loop is not the product-law boundary.** The organization ruleset
   `Require workflow - World at Ruin trusted regressions`, managed declaratively by
   `devantler-tech/.github`, separately requires
-  `devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml` at
+  `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml` at
   `refs/heads/main`. The external workflow checks out the proposed product bytes as the candidate and
   the GitHub-supplied pull-request or merge-group base SHA as trusted World at Ruin bytes. It copies
   only the candidate's product tree into a throwaway evaluation root, replaces `client/tests/` with
@@ -888,7 +888,7 @@ everything shipped afterwards is held to.
   trusted `*_test.tscn`. A pull request can add, edit, delete or skip a checkout-local scene without
   changing which trusted scenes execute or how their verdict is judged; the external workflow is the
   aggregate required gate for both `pull_request` and `merge_group`.
-  provider-upjet-github v0.19.1 cannot express GitHub's immutable required-workflow SHA selector, so
+  provider-upjet-github v0.20.0 cannot express GitHub's immutable required-workflow SHA selector, so
   the live rule binds the reviewed Actions `main` branch. Change the external workflow only through
   an exact-head-reviewed Actions PR; preserve compatibility with the World base controller and
   harness, pass `tools/required-regression-control.test.sh`, and run live positive and missing-input
@@ -912,11 +912,26 @@ everything shipped afterwards is held to.
   Only disposable import state is writable during the editor scan.
   Host import and scene logs are captured in a fresh controller-owned directory outside the
   candidate tree, so candidate log symlinks cannot redirect host writes.
-  The real-container refusal test pins that execution boundary. Activation requires an additive
-  organization ruleset binding to this reviewed main source, live readback, actual nonzero trusted
-  scene execution and tamper canaries. A skipped ordinary job is preparation, never enforcement proof.
-  The external Actions required workflow remains active throughout activation; no ruleset cutover
+  The real-container refusal test pins that execution boundary. Its ordinary skipped job is
+  preparation, never enforcement proof. Game-specific enforcement belongs at repository scope;
+  do not add another World-only organization rule to select this latent source.
+  The external catalogue required workflow remains active throughout activation; no ruleset cutover
   is implied by these source bytes.
+- **Repository-owned trusted verdicts are default-off:**
+  `.github/workflows/repository-trusted-regressions.yaml` treats completed `CI` runs only as
+  notifications. Reviewed main code independently resolves current PR/integration or queue
+  identities, executes the frozen suite in the existing sandbox, and publishes through a separate
+  dedicated App job. Its key belongs only to the main-only `world-trusted-gate-publisher`
+  environment. Never reuse an inherited automation key or bind this context to the Actions App.
+  `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` is unset/off until explicit activation with the dedicated
+  `WAR_TRUSTED_GATE_APP_ID` and environment secret `WAR_TRUSTED_GATE_PRIVATE_KEY`.
+  Run `go -C tools/trusted-gate test -race ./...` plus the admission and workflow mutation tests
+  when changing it. ADR 0027 defines exact-head publication, readback, scope, overlap and recovery.
+  The operator's read-only `inspect` command proves rule shape only; live protected-key confinement,
+  nonzero scenes and tamper canaries remain separate gates before old-rule retirement.
+- **Shared workflow ownership:** lint, release creation and result aggregation use the canonical
+  `devantler-tech/.github` catalogue at one reviewed release. Their independent consumers justify
+  reuse. World-specific tests, policy, selectors and controller behavior remain in this repository.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
@@ -1095,10 +1110,10 @@ everything shipped afterwards is held to.
     with `yq` and `jq` to check routing, credentials and required-check wiring, including
     rejection controls; use ShellCheck on that script and actionlint on both workflow files.
     Hosted runs provide the actual PR and post-merge main execution proof.
-  - `devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml`
+  - `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml`
     (`pull_request` + `merge_group`, invoked by the organization ruleset) runs trusted client
     regressions against the candidate product tree. Its workflow/controller selection comes from the
-    reviewed Actions source and its scenes, harness and runner come from the GitHub-supplied World at
+    reviewed catalogue source and its scenes, harness and runner come from the GitHub-supplied World at
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
     aggregate, an empty trusted suite fails closed, and only the structurally pinned base-controlled local workflow may invoke the controller.

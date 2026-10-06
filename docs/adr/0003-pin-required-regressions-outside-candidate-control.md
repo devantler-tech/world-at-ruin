@@ -23,9 +23,9 @@ pull-request and merge-group events.
 The organization ruleset `Require workflow - World at Ruin trusted regressions`
 is managed declaratively in `devantler-tech/.github`. It targets only World at
 Ruin's default branch, declares no bypass actors, and requires
-`devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml`
-at `refs/heads/main`. The World repository does not carry a second copy of that
-workflow.
+`devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml`
+at `refs/heads/main`. This active protection remains independent of the
+repository's default-off replacement controller.
 
 The workflow checks out two trees:
 
@@ -35,7 +35,7 @@ The workflow checks out two trees:
    `tools/required-regression-control.sh`, and `tools/run-client-test.sh`.
 
 The ruleset workflow and its trusted-base resolver come from the reviewed
-Actions source. `github.workflow_sha` identifies the exact Actions revision
+catalogue source. `github.workflow_sha` identifies the exact catalogue revision
 executing one run; it is not candidate-controlled.
 
 `tools/required-regression-control.sh` copies the candidate into a throwaway
@@ -71,11 +71,11 @@ Additional cases reject changed or missing capability history, malformed and
 unsupported appends, rollback, symlink substitutions and candidate attempts to
 overwrite the controller's validated declaration.
 
-provider-upjet-github v0.19.1 exposes the required workflow's repository, path
+provider-upjet-github v0.20.0 exposes the required workflow's repository, path
 and branch/tag `ref`, but not GitHub's immutable workflow SHA selector. The
 strongest declarative binding available to this deployment is therefore the
-reviewed Actions `main` branch. Changes to the external workflow require an
-exact-head-reviewed Actions PR, compatibility with the World base controller
+reviewed catalogue `main` branch. Changes to the external workflow require an
+exact-head-reviewed catalogue PR, compatibility with the World base controller
 and harness, the local contract proof, and live positive and negative controls.
 Changes to the rule require a reviewed `.github` PR, a released signed manifest
 bundle, successful reconciliation, and a live ruleset readback.
