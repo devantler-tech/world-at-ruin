@@ -1701,6 +1701,14 @@ static func ragged_unfolded_material(garment: MeshInstance3D) -> StandardMateria
 	return _ragged_ablation_material(garment, true, false)
 
 
+## Preserve the preceding gathered drape while removing this shape refinement.
+## Disabled geometry has no source metadata and stays identical in both arms.
+static func ragged_unrefined_mesh(garment: MeshInstance3D) -> ArrayMesh:
+	if not garment.has_meta(RaggedDrape.SOURCE_META):
+		return garment.mesh as ArrayMesh
+	return RaggedDrape.mesh(garment.get_meta(RaggedDrape.SOURCE_META) as ArrayMesh, false)
+
+
 ## Only the selected ablation switches differ; the active material and source
 ## palette remain identical, and disabled detail never consults source metadata.
 static func _ragged_ablation_material(
@@ -1791,6 +1799,10 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 	var material := garment.get_active_material(0) as StandardMaterial3D
 	var original_override := garment.get_surface_override_material(0)
 	var original_mesh := garment.mesh
+	var unrefined_mesh := ragged_unrefined_mesh(garment)
+	var skin := CharacterFactory.find_skinned_mesh(skeleton)
+	var original_skin := skin.mesh
+	var unrefined_skin := skin.get_meta(RaggedDrape.SKIN_SOURCE_META, original_skin) as Mesh
 	var seam_off := ragged_tailoring_material(garment)
 	var fold_off := ragged_unfolded_material(garment)
 	var flat_mesh := garment.get_meta(RaggedDrape.SOURCE_META, original_mesh) as Mesh
@@ -1834,6 +1846,14 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		var geometry_mask := await _settled_cloth_frame()
 		ragged_cloth_swap_mesh(garment, original_mesh)
 		garment.set_surface_override_material(0, original_override)
+		ragged_cloth_swap_mesh(garment, unrefined_mesh)
+		ragged_cloth_swap_mesh(skin, unrefined_skin)
+		var unrefined := await _settled_cloth_frame()
+		garment.set_surface_override_material(0, mask_material)
+		var unrefined_mask := await _settled_cloth_frame()
+		ragged_cloth_swap_mesh(garment, original_mesh)
+		ragged_cloth_swap_mesh(skin, original_skin)
+		garment.set_surface_override_material(0, original_override)
 		var points := ragged_cloth_pixels(mask, 1 if name == "cloth_gameplay" else 2)
 		if points.size() < 200:
 			_fail("%s: only %d garment pixels are visible — cannot evidence the cloth" % [name, points.size()])
@@ -1846,6 +1866,12 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 		var geometry_points := ragged_cloth_union_pixels(mask, geometry_mask, 1 if name == "cloth_gameplay" else 2)
 		var geometry_noise := ragged_cloth_difference(drawn, repeated, geometry_points)
 		var geometry_signal := ragged_cloth_difference(drawn, geometry_flat, geometry_points)
+		var refinement_points := ragged_cloth_union_pixels(mask, unrefined_mask, 1 if name == "cloth_gameplay" else 2)
+		var refinement_noise := ragged_cloth_difference(drawn, repeated, refinement_points)
+		var refinement_signal := ragged_cloth_difference(drawn, unrefined, refinement_points)
+		if RaggedDrape.refinement_enabled() and name != "cloth_gameplay" and refinement_signal <= refinement_noise * 3.0 + 0.004:
+			_fail("%s: waist/shell-only signal %.5f does not separate from repeat noise %.5f" % [name, refinement_signal, refinement_noise])
+			return
 		if RaggedDrape.enabled() and name != "cloth_gameplay" and geometry_signal <= geometry_noise * 3.0 + 0.004:
 			_fail("%s: geometric signal %.5f does not separate from repeat noise %.5f" % [name, geometry_signal, geometry_noise])
 			return
@@ -1864,13 +1890,16 @@ func _capture_ragged_cloth(dir: String, main: Node) -> void:
 				[name + "_fold_off", unfolded],
 				[name + "_seam_off", unsewn],
 				[name + "_flat", flattened], [name + "_mask", mask],
-				[name + "_geometry_flat", geometry_flat], [name + "_geometry_mask", geometry_mask]]:
+				[name + "_geometry_flat", geometry_flat], [name + "_geometry_mask", geometry_mask],
+				[name + "_unrefined", unrefined], [name + "_unrefined_mask", unrefined_mask]]:
 			if not _write_frame(dir, arm[0], arm[1]):
 				return
 		print("CLOTH READ %s — visible %d px, flat signal %.5f, repeat noise %.5f" % [name, points.size(), contribution, noise])
 		print("DRAPE READ %s — union %d px, geometry signal %.5f, repeat noise %.5f" % [name, geometry_points.size(), geometry_signal, geometry_noise])
 		print("TAILORING READ %s — visible %d px, upper-decile sewing signal %.5f, repeat noise %.5f" % [name, points.size(), tailoring_signal, tailoring_noise])
 		print("FOLD READ %s — visible %d px, fold-only signal %.5f, repeat noise %.5f" % [name, points.size(), fold_signal, noise])
+		print("WRAP READ %s — union %d px, waist/shell-only signal %.5f, repeat noise %.5f" % [name, refinement_points.size(), refinement_signal, refinement_noise])
+	print("WRAP REFINEMENT — enabled=%s" % RaggedDrape.refinement_enabled())
 	print("CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s" % [RaggedCloth.enabled(), RaggedDrape.enabled()])
 	get_tree().quit(0)
 
