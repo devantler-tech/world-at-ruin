@@ -12,9 +12,8 @@ extends Node
 ## strips split exactly where the ground creases. The INTEGRATION half builds
 ## the real world once with `WAR_GROUND_PLATES` off and twice with it on: the
 ## overlay is one surface on one node, identical across the two fresh builds,
-## absent when off, and the base terrain mesh, collision and heights are
-## byte-identical in all three. Cover retained in ash stays at its original
-## placement; the opted-in slabs exclude the cover tested separately in #895.
+## absent when off, and the base terrain mesh, collision, heights and foliage
+## are byte-identical in all three.
 ##
 ## No cross-platform golden is pinned for the overlay's vertex bytes: the field's
 ## exposure decision runs through `sin`-based hashes whose last bit can differ
@@ -271,8 +270,6 @@ func _test_world() -> void:
 	var expected_names := off_names.duplicate()
 	expected_names.append(WorldGen.GROUND_PLATES_NODE)
 	expected_names.append(WorldGen.GROUND_PLATES_BODY)
-	on_names.sort()
-	expected_names.sort()
 	if on_names != expected_names:
 		_fail("the on-state tree is %s, expected the off-state tree plus one %s and its %s"
 			% [on_names, WorldGen.GROUND_PLATES_NODE, WorldGen.GROUND_PLATES_BODY])
@@ -280,9 +277,8 @@ func _test_world() -> void:
 		_fail("the base terrain mesh changed with the flag on")
 	if _collision_hash(a) != off_collision:
 		_fail("the terrain collision changed with the flag on")
-	for placement in a.foliage_placements():
-		if not off_foliage.has(placement):
-			_fail("ash cover moved or changed stored traits with the flag on")
+	if a.foliage_placements() != off_foliage:
+		_fail("foliage placement changed with the flag on")
 	for probe: Vector2 in [Vector2(3.0, 4.0), Vector2(-40.5, 61.25), Vector2(77.0, -33.0)]:
 		if a.surface_height_at(probe.x, probe.y) != off.surface_height_at(probe.x, probe.y):
 			_fail("surface_height_at%s differs between the flag states" % [probe])

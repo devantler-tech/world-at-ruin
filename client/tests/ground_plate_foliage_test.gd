@@ -10,13 +10,23 @@ func _ready() -> void:
 	if original.is_empty():
 		_fail("the baseline world must contain cover")
 		return
+	var batches: Array[Node] = []
+	for kind in FoliageGen.KIND_COUNT:
+		batches.append(world.get_node("Foliage_%d" % kind))
 	world.set_ground_plates_enabled(true)
 	var tops := world.ground_plate_tops()
 	var overlaps := _overlaps(original, tops)
 	if overlaps < 1:
 		_fail("the shipped seed must exercise cover on a built slab")
 		return
-	var exposed := world.foliage_placements()
+	var exposed := world.visible_foliage_placements
+	if world.foliage_placements() != original:
+		_fail("the preview changed the baseline scatter")
+		return
+	for placement in exposed:
+		if not original.has(placement):
+			_fail("visible ash cover changed its original lifted pose or traits")
+			return
 	if _overlaps(exposed, tops) != 0:
 		_fail("foliage grows through raised exposed stone (%d overlaps among %d props)" % [_overlaps(exposed, tops), exposed.size()])
 		return
@@ -24,15 +34,34 @@ func _ready() -> void:
 		_fail("the visible batches do not match the remaining ash cover")
 		return
 	world.set_ground_plates_enabled(false)
-	if world.foliage_placements() != original or not _render_count_matches(world, original.size()):
+	if world.visible_foliage_placements != original or not _render_count_matches(world, original.size()):
 		_fail("turning slabs off did not restore the exact original scatter")
 		return
 	OS.set_environment("WAR_GROUND_PLATES", "1")
 	var fresh := WorldGen.new()
 	add_child(fresh)
 	OS.unset_environment("WAR_GROUND_PLATES")
-	if fresh.foliage_placements() != exposed or not _render_count_matches(fresh, exposed.size()):
+	if fresh.visible_foliage_placements != exposed or fresh.foliage_placements() != original \
+			or not _render_count_matches(fresh, exposed.size()):
 		_fail("a fresh opted-in boot differs from the live preview")
+		return
+	for _toggle in 3:
+		world.set_ground_plates_enabled(true)
+		if world.visible_foliage_placements != exposed:
+			_fail("repeated preview accumulated a pose offset")
+			return
+		world.set_ground_plates_enabled(false)
+		if world.visible_foliage_placements != original:
+			_fail("repeated opt-out changed the baseline poses")
+			return
+	for kind in FoliageGen.KIND_COUNT:
+		if world.get_node("Foliage_%d" % kind) != batches[kind]:
+			_fail("the preview replaced a baseline foliage node")
+			return
+	var copy := fresh.visible_foliage_placements
+	copy[0]["pos"] = Vector3.INF
+	if fresh.visible_foliage_placements != exposed:
+		_fail("a caller changed the world's visible cover through its copy")
 		return
 	print("TEST PASS: %d slab overlaps removed; %d ash props retained; opt-out restores all %d placements and visible instances" % [overlaps, exposed.size(), original.size()])
 	get_tree().quit(0)

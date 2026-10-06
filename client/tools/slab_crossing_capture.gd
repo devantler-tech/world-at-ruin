@@ -112,7 +112,7 @@ func run(capture: Node, dir: String, main: Node) -> void:
 		capture._fail("could not write the photographed controller trace")
 		return
 	file.store_string("\n".join(trace) + "\n")
-	print("SLAB CAPTURE: shrub=%s cover=%d crossed=%s final=%s floor=%s" % [shrub, world.foliage_placements().size(), crossed, player.global_position, player.is_on_floor()])
+	print("SLAB CAPTURE: shrub=%s cover=%d crossed=%s final=%s floor=%s" % [shrub, world.visible_foliage_placements.size(), crossed, player.global_position, player.is_on_floor()])
 	print("CAPTURE PASS: close foliage frame and 24 actual-controller frames written to ", dir)
 	capture.get_tree().quit(0)
 

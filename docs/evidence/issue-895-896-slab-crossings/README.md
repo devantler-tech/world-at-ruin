@@ -17,8 +17,11 @@ the solid top is bare and cover remains in the surrounding ash.
 The independent polygon test finds **254 overlaps among 2,400 original placements**.
 All 254 are excluded; the remaining 2,146 keep their stored transforms and traits.
 Turning the preview off restores all 2,400 exact placement records and visible
-instances. Fresh opted-in boots agree with live toggles. Compacting instance IDs
-can change the preview's shader tint and gust phase; those are not stable-placement
+instances. Fresh opted-in boots agree with live toggles.
+The generated-placement inventory and existing foliage nodes remain stable across
+the preview; a separate visible-placement copy reports the submitted subset.
+Repeated toggles reuse the original lifted transforms without adding height.
+Compacting instance IDs can change the preview's shader tint and gust phase; those are not stable-placement
 claims. The base terrain, collision, slab geometry and opt-out scatter goldens remain
 unchanged. Compare the earlier [raised-top frame](../issue-547-ground-plate-geometry/close-on.png).
 
@@ -104,8 +107,8 @@ SHA-256 of the captured sources:
 | Source | SHA-256 |
 |---|---|
 | Player | `862bf03d56fbcc1a1517990a7c37c467587aff0a947f6c73177e2262f25cb1e7` |
-| World generation | `06cc5bc531c56f1384b9cdf0d52657c118c29362bbb1ef8446fdc0dd05c239ab` |
-| Capture instrument | `808edc93b3a4531fcaa143918c6db7ce52489ecb7a7800c79ed4cfd63f7ec147` |
+| World generation | `1d4a6d214f96131254f10d87c59137e443bba946ec24877490af31778d64667e` |
+| Capture instrument | `8fb605286e336af0f4d4ad022123506e95c012c8440130f37c7b21b1fc691889` |
 | Unchanged crossing census | `126fde7a1e40425679445cb53529c1ed24a9a5ae4e2aecb24fc83f1994fcf84b` |
 
 ```sh
