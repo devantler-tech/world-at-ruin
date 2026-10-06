@@ -1300,6 +1300,36 @@ jobs:
       - name: Exercise the actual packaged runtime against disposable PostgreSQL
         run: bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:ci --experimental
 
+  gameserver-commit-trial:
+    name: GameServer commit (real storage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            tools/gameserver-commit-trial/go.sum
+      - name: Download the declared Agones chart module
+        run: go -C server mod download agones.dev/agones
+      - name: Fence a held mutation against kube-apiserver and etcd
+        run: bash tools/test-gameserver-commit.sh
+      - name: A test timeout retires both owned processes and private state
+        shell: bash
+        run: |
+          set +e
+          bash tools/test-gameserver-commit.sh --cleanup-timeout-probe > "${RUNNER_TEMP}/commit-cleanup.log" 2>&1
+          probe_status=$?
+          set -e
+          test "${probe_status}" -eq 2
+          grep -q 'panic: test timed out' "${RUNNER_TEMP}/commit-cleanup.log"
+          test "$(grep -c 'Trial cleanup: retired an owned control-plane process' "${RUNNER_TEMP}/commit-cleanup.log")" -eq 2
+          grep -q 'Trial cleanup: verified retirement and removed private state' "${RUNNER_TEMP}/commit-cleanup.log"
+
   server-ci:
     name: Server CI (Go)
     runs-on: ubuntu-latest
@@ -3115,6 +3145,7 @@ jobs:
         gdscript-lint,
         go-vulnerability-scan,
         server-ci,
+        gameserver-commit-trial,
         zone-container,
         nakama-native,
         detect-visual-changes,
@@ -3142,6 +3173,7 @@ jobs:
             ${{ needs.gdscript-lint.result }}
             ${{ needs.go-vulnerability-scan.result }}
             ${{ needs.server-ci.result }}
+            ${{ needs.gameserver-commit-trial.result }}
             ${{ needs.zone-container.result }}
             ${{ needs.nakama-native.result }}
             ${{ needs.detect-visual-changes.result }}

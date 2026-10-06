@@ -967,6 +967,14 @@ everything shipped afterwards is held to.
   Follow [ADR 0012](docs/adr/0012-keep-allocator-fence-authority-at-the-commit-boundary.md):
   process-local receipts cannot authorize native Agones writes, durable recovery
   or production quarantine release. Production fencing remains #793 work.
+- **Exact GameServer commit experiment:** `server/internal/gameservercommit/`
+  remains explicitly enabled only by tests, outside production composition.
+  Run `tools/test-gameserver-commit.sh` for the required real kube-apiserver/etcd
+  proof with the pinned Agones CRD, plus `go -C server test -race -count=1
+  ./internal/gameservercommit ./internal/fencereference` for capability and import
+  guards. [ADR 0028](docs/adr/0028-fence-an-inactive-exact-version-gameserver-mutation.md)
+  binds receipts to one frozen UID/version mutation and its process incarnation.
+  Changed histories remain unknown; no receipt releases production quarantine.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
