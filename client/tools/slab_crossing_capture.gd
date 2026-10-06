@@ -103,7 +103,9 @@ func run(capture: Node, dir: String, main: Node) -> void:
 		if tick % 3 == 0 and not await _shot(capture, cam, "%s/crossing-%03d.png" % [dir, tick]):
 			Input.action_release("move_forward")
 			return
-		if Vector2(pos.x, pos.z).distance_to(path[1]) < 0.3 and world.ground_plate_at(pos.x, pos.z) >= 0:
+		if Vector2(pos.x, pos.z).distance_to(path[1]) < 0.3 \
+				and world.ground_plate_at(pos.x, pos.z) >= 0 and player.is_on_floor() \
+				and pos.y >= world.walkable_height_at(pos.x, pos.z) - 0.02:
 			crossed = true
 			Input.action_release("move_forward")
 	Input.action_release("move_forward")
@@ -113,6 +115,10 @@ func run(capture: Node, dir: String, main: Node) -> void:
 		return
 	file.store_string("\n".join(trace) + "\n")
 	print("SLAB CAPTURE: shrub=%s cover=%d crossed=%s final=%s floor=%s" % [shrub, world.visible_foliage_placements.size(), crossed, player.global_position, player.is_on_floor()])
+	if not crossed or not player.is_on_floor() \
+			or player.global_position.y < world.walkable_height_at(player.global_position.x, player.global_position.z) - 0.02:
+		capture._fail("the photographed controller did not cross and settle on the raised slab")
+		return
 	print("CAPTURE PASS: close foliage frame and 24 actual-controller frames written to ", dir)
 	capture.get_tree().quit(0)
 

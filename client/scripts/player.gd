@@ -319,15 +319,18 @@ func _physics_process(delta: float) -> void:
 	# with it would inch forward and never clear the edge.
 	var intended := wish * target_speed
 	var stepping := step_height > 0.0 and is_on_floor() and velocity.y <= 0.0
-	# This is an input history, not floor admission: projection against a lip
-	# must not erase it. The engine-floor check above still gates every step.
+	# Projection against a lip must not erase input history. True airborne
+	# intervals earn only air-control acceleration; rounded-lip support can
+	# retain ground acceleration even when the engine calls that contact a wall.
+	# The engine-floor check above still gates every step.
 	if step_height > 0.0 and not _jumped and wish.length() > 0.0001:
 		var direction := wish.normalized()
-		if direction.dot(_step_stride_direction) < 0.999:
-			_step_stride_speed = minf(maxf(stride_before_accel.dot(direction), 0.0), intended.length()) \
-				if _step_stride_direction == Vector3.ZERO else 0.0
+		var retained := stride_before_accel.dot(direction) if _step_stride_direction == Vector3.ZERO \
+			else _step_stride_speed * _step_stride_direction.dot(direction)
+		_step_stride_speed = minf(maxf(retained, 0.0), intended.length())
 		_step_stride_direction = direction
-		_step_stride_speed = move_toward(_step_stride_speed, intended.length(), ACCEL * delta)
+		var step_control := 1.0 if is_grounded() else AIR_CONTROL
+		_step_stride_speed = move_toward(_step_stride_speed, intended.length(), ACCEL * step_control * delta)
 	else:
 		_step_stride_speed = 0.0
 		_step_stride_direction = Vector3.ZERO
@@ -529,6 +532,8 @@ func _unstick_from_ground() -> void:
 func respawn() -> void:
 	global_position = spawn_point
 	velocity = Vector3.ZERO
+	_step_stride_speed = 0.0
+	_step_stride_direction = Vector3.ZERO
 	face_toward(Vector3.ZERO)
 	respawned.emit()
 

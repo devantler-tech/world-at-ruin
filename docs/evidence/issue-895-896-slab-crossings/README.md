@@ -76,7 +76,15 @@ heading's budget around a wall, climbing a one-metre wall, and stepping beneath
 insufficient headroom. Independent review found another case: a released-input
 interval followed by a perpendicular step used old forward momentum. Its actual
 controller regression was RED before projecting retained momentum onto the new
-heading and GREEN afterward. The opt-out controller remains unchanged.
+heading and GREEN afterward. Continuous four-degree heading corrections now retain
+projected stride rather than repeatedly restarting acceleration. A physical 0.4 m
+walk-off control turns only after both engine floor and step support are lost;
+five airborne ticks previously added 15.417 mm of unearned step travel. Applying
+air-control acceleration during unsupported intervals reduces that excess to zero.
+A respawn-with-held-input control also exposed retained pre-teleport stride after
+physical velocity was cleared; resetting both history fields removes that excess.
+All earlier wall, ceiling, release and from-rest controls still pass.
+The opt-out controller remains unchanged.
 
 The actual-controller `gait_drive` instrument also rendered 24 frames and measured
 170 controller steps with the slab flag off and on. Both traces have fingerprint
@@ -106,9 +114,9 @@ SHA-256 of the captured sources:
 
 | Source | SHA-256 |
 |---|---|
-| Player | `862bf03d56fbcc1a1517990a7c37c467587aff0a947f6c73177e2262f25cb1e7` |
+| Player | `ad6c34e04b21ed328019fcf74bc53a01ad48770f3b766be437f7e62de1de448a` |
 | World generation | `1d4a6d214f96131254f10d87c59137e443bba946ec24877490af31778d64667e` |
-| Capture instrument | `8fb605286e336af0f4d4ad022123506e95c012c8440130f37c7b21b1fc691889` |
+| Capture instrument | `4e3ec4eaf16f2141f7c27b2baaf33b5a1f43b450dc1a72f4e73936e46462e248` |
 | Unchanged crossing census | `126fde7a1e40425679445cb53529c1ed24a9a5ae4e2aecb24fc83f1994fcf84b` |
 
 ```sh
@@ -129,8 +137,13 @@ godot --path client --resolution 1280x720 res://tools/frame_capture.tscn
 The capture's existing save-isolation and windowed-render guards run before boot.
 Its 24 rendered frames and complete controller trace are produced through the
 ordinary frame-capture entrypoint; seven unmodified frames per state are retained
-here. `CAPTURE PASS` proves rendered output, while the crossing regressions and
-census separately prove traversal.
+here. `CAPTURE PASS` requires arrival above the walkable slab top with floor
+support, followed by a supported final pose. A no-motion negative control renders
+all frames but fails instead of accepting a trace that never reaches the slab.
+The same no-motion trace incorrectly reports success with the reviewed instrument.
+Disabling only slab collision also fails: XZ proximity over a polygon while walking
+on its lower base terrain cannot establish a supported raised-top arrival.
+The crossing regressions and census separately prove traversal.
 
 ## Reference, judgement and remaining gap
 
