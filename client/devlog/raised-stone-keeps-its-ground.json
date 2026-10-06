@@ -1,0 +1,10 @@
+{
+	"date": "2026-10-05",
+	"notes": [
+		"With WAR_GROUND_PLATES=1 set before launch, grass and shrubs now stay in the ash around raised stone instead of growing through its solid tops. Switching the preview off restores the original cover.",
+		"The wanderer can step onto the tested uphill slab lips from an angled approach at both walking and running speed. A step still needs solid ground, room overhead and an earned stride; it cannot climb a taller wall or turn a hillside into a stair.",
+		"This remains an opt-in preview. The lift is still abrupt, without a knee lift or weight shift, and the stone still needs weathered edges, debris and its art and performance gates. The ordinary game with the flag unset is unchanged."
+	],
+	"title": "Raised stone keeps its ground",
+	"version": "next"
+}

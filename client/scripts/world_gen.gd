@@ -119,13 +119,21 @@ var _cave_cover: Array = []
 ## pinned to walk-out grade.
 var _cave_apron: Array = []
 
-## Every cosmetic prop this world scattered, as [FoliageGen] produced them.
+## The baseline scatter, recorded in the original batch order and lifted pose.
 ## Retained because a MultiMesh's instance transforms live in the RenderingServer
 ## and are NOT readable under `--headless` (they read back as identity, and its
 ## `buffer` is empty), so this placement list is the only headless-verifiable
-## record of where scenery actually went — and it is the record that carries the
+## record of the generated scenery — and it is the record that carries the
 ## laws worth pinning (determinism, keep-outs, resting on the ground).
+## The current filtered draw list lives separately in _visible_foliage.
 var _foliage: Array[Dictionary] = []
+## Original rendered poses remain immutable while the slab preview filters draws.
+var _foliage_poses := {}
+var _visible_foliage: Array[Dictionary] = []
+## Copy of the current draw instances, in batch order, at their original lifted poses.
+var visible_foliage_placements: Array[Dictionary]:
+	get:
+		return _visible_foliage.duplicate(true)
 ## Representative, non-zero phase used by evidence captures. The ordinary game
 ## never calls the capture freeze and keeps its live wind, flame, and light.
 const CAPTURE_ANIMATION_TIME := 1.0
@@ -160,13 +168,11 @@ func _ready() -> void:
 	_build_starter_cave()
 	_scatter_ruins()
 	_build_shrine()
-	# LAST: foliage keeps out of every landmark, so it needs the ruin sites and
-	# the shrine to already exist in the tree.
 	_scatter_foliage()
-	# LAST of all, and only opted in: the raised slab overlay keeps out of the
-	# starter cave, so its hull padding has to be known (#547).
+	# Keep the baseline scene order and scatter; only the submitted cover changes.
 	if _ground_plates_enabled:
 		_build_ground_plates()
+		_refresh_foliage()
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -485,6 +491,7 @@ func set_ground_plates_enabled(on: bool) -> void:
 	if overlay == null:
 		if on:
 			_build_ground_plates()
+			_refresh_foliage()
 		return
 	overlay.visible = on
 	# The stone is solid only while it is drawn: a hidden top a body still
@@ -494,6 +501,7 @@ func set_ground_plates_enabled(on: bool) -> void:
 		for collider in body.get_children():
 			if collider is CollisionShape3D:
 				(collider as CollisionShape3D).set_deferred(&"disabled", not on)
+	_refresh_foliage()
 
 
 ## Height of the surface a body walks on at world (x, z): the top of a raised
@@ -1253,16 +1261,39 @@ func _scatter_foliage() -> void:
 	for kind in FoliageGen.KIND_COUNT:
 		var batch := by_kind[kind] as Array
 		_build_foliage_batch(kind, batch)
-		# Record what was actually rendered, in the same batch/instance order the
-		# MultiMeshes were filled, so the placement list mirrors the world.
 		for placement: Dictionary in batch:
 			_foliage.append(placement)
+	_visible_foliage = _foliage.duplicate(true)
 
 
-## Every cosmetic prop in this world, in render order — a copy, so a caller can
+## Filter the original scatter, never redraw it: remaining ash cover keeps
+## its stored position and traits, and opting out restores the exact baseline.
+## Compacted instance IDs can change shader tint/wind phase in the preview.
+func _refresh_foliage() -> void:
+	_visible_foliage.clear()
+	for kind in FoliageGen.KIND_COUNT:
+		var instance := get_node_or_null("Foliage_%d" % kind) as MultiMeshInstance3D
+		if instance == null:
+			continue
+		var poses: Array[Transform3D] = []
+		var original_index := 0
+		for placement: Dictionary in _foliage:
+			if int(placement["kind"]) != kind:
+				continue
+			var pose: Transform3D = _foliage_poses[kind][original_index]
+			original_index += 1
+			if ground_plate_at(pose.origin.x, pose.origin.z) >= 0:
+				continue
+			poses.append(pose)
+			_visible_foliage.append(placement.duplicate(true))
+		instance.multimesh = CosmeticInstances.batch(instance.multimesh.mesh, poses)
+
+
+## Every generated cosmetic prop, in baseline render order — a copy, so a caller can
 ## never disturb the generated world. Each entry is a [FoliageGen] placement
 ## (`kind`, `pos`, `yaw`, `scale`), with `pos.y` the height the prop was lifted
-## to so it rests on the surface.
+## to so it rests on the surface. Slab previews retain this deterministic scatter;
+## [member visible_foliage_placements] reports the subset currently drawn.
 func foliage_placements() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for placement: Dictionary in _foliage:
@@ -1358,6 +1389,7 @@ func _build_foliage_batch(kind: int, items: Array) -> void:
 		return
 	var mesh := _foliage_mesh(kind)
 	var poses := CosmeticInstances.transforms(mesh, items)
+	_foliage_poses[kind] = poses
 	var mm := CosmeticInstances.batch(mesh, poses)
 	for i in items.size():
 		# Keep the record in step with rendered placement; headless MultiMesh
