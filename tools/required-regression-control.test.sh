@@ -402,16 +402,18 @@ if ! find_local_controller_workflows "${workflow_fixture_dir}" |
 fi
 
 local_workflows="$(find_local_controller_workflows "${repo_root}/.github/workflows")"
-if [ "${local_workflows}" != trusted-regressions.yaml ]; then
+if [ "${local_workflows}" != $'repository-trusted-regressions.yaml\ntrusted-regressions.yaml' ]; then
 	fail "only the base-owned product workflow may invoke the controller: ${local_workflows}"
 elif ! bash "${repo_root}/tools/trusted-regression-workflow-guard.sh"; then
 	fail "the product workflow does not preserve the base-owned controller boundary"
+elif ! bash "${repo_root}/tools/repository-trusted-gate-workflow-guard.sh"; then
+	fail "the repository publisher workflow does not preserve the independent credential boundary"
 fi
 
 external_workflow='.github/workflows/world-at-ruin-required-regressions.yaml'
 for contract in "${repo_root}/AGENTS.md" \
 	"${repo_root}/docs/adr/0003-pin-required-regressions-outside-candidate-control.md"; do
-	if ! grep -Fq 'devantler-tech/actions' "${contract}" ||
+	if ! grep -Fq 'devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml' "${contract}" ||
 		! grep -Fq "${external_workflow}" "${contract}" ||
 		! grep -Fq 'refs/heads/main' "${contract}"; then
 		fail "$(basename "${contract}") does not name the live external workflow source contract"
