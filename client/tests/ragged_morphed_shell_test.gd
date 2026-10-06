@@ -12,7 +12,8 @@ func _ready() -> void:
 	for case: Array in [[{"belly": -1.0}, false], [{"belly": -1.0, "buttocks_full": -1.0}, false],
 			[{"belly": 2.0}, false], [{"hips_wide": 2.0}, false], [{"belly": -1.0}, true],
 			[{"hips_wide": -2.0}, false], [{"hips_wide": -2.0}, true],
-			[{"hips_wide": -1.0, "body_slim": 2.0, "waist_slim": 2.0}, false]]:
+			[{"hips_wide": -1.0, "body_slim": 2.0, "waist_slim": 2.0}, false],
+			[{"hips_wide": -1.0, "body_slim": 2.0, "waist_slim": 2.0}, true]]:
 		var shapes: Dictionary = case[0]
 		var recipe := {"version": 4, "shapes": shapes, "equipment": {}}
 		var saved := recipe.duplicate(true)
@@ -30,6 +31,10 @@ func _ready() -> void:
 				CharacterFactory.set_shape_weight(on, shape, float(shapes[shape]))
 		var skeleton := CharacterFactory.find_skeleton(on)
 		var garment := _piece(skeleton)
+		for shape: String in shapes:
+			var shape_index := garment.find_blend_shape_by_name(shape)
+			_check(shape_index >= 0 and is_equal_approx(garment.get_blend_shape_value(shape_index), float(shapes[shape])),
+				"measured garment carries every saved or live shape weight")
 		var actual: PackedVector3Array = oracle.call("drawn", skeleton, garment)[0]
 		var source: PackedVector3Array = off_piece.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
 		var pairs := {}
@@ -57,8 +62,8 @@ func _ready() -> void:
 			minimum = minf(minimum, gap)
 			old_minimum = minf(old_minimum, previous.length())
 			count += 1
-		print("MORPHED SHELL — shapes=%s pairs=%d signed_minimum_mm=%.6f source_minimum_mm=%.6f" % [
-			JSON.stringify(shapes), count, minimum * 1000.0, old_minimum * 1000.0])
+		print("MORPHED SHELL — live=%s shapes=%s pairs=%d signed_minimum_mm=%.6f source_minimum_mm=%.6f" % [
+			case[1], JSON.stringify(shapes), count, minimum * 1000.0, old_minimum * 1000.0])
 		_check(count == 70 and old_minimum > 0.003, "oracle exercises both original, correctly ordered closed panels")
 		_check(minimum > 0.0005, "valid saved body shapes must never cross the refined inner and outer cloth faces")
 		_check_band(source, reference, actual, shapes)
