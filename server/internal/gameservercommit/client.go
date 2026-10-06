@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
@@ -68,11 +69,44 @@ func New(cfg Config) (*Client, error) {
 	if copied.Timeout == 0 {
 		copied.Timeout = requestLimit
 	}
-	api, err := typed.NewForConfig(copied)
+	if copied.UserAgent == "" {
+		copied.UserAgent = rest.DefaultKubernetesUserAgent()
+	}
+	httpClient, err := rest.HTTPClientFor(copied)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	// MaxRetries(0) only disables client-go's retry loop. A 307/308 can
+	// otherwise resubmit the frozen PUT through net/http's redirect policy.
+	// Copy the client so the operator's transport and shared defaults stay intact.
+	singleRequest := *httpClient
+	singleRequest.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	transport := singleRequest.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	singleRequest.Transport = mutationTransport{base: transport}
+	api, err := typed.NewForConfigAndClient(copied, &singleRequest)
 	if err != nil {
 		return nil, ErrInvalid
 	}
 	return &Client{api: api.RESTClient(), namespace: cfg.Namespace, fleet: cfg.Fleet, admitted: make(map[string]bool)}, nil
+}
+
+// The standard HTTP transports may replay a buffered body after an unprocessed
+// HTTP/2 stream or a failed reused connection. Remove their replay capability
+// from a private request copy; never modify the operator's underlying transport.
+type mutationTransport struct{ base http.RoundTripper }
+
+func (t mutationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodPut {
+		single := req.Clone(req.Context())
+		single.GetBody = nil
+		return t.base.RoundTrip(single)
+	}
+	return t.base.RoundTrip(req)
 }
 
 // Grant is opaque. Copying it shares the same irreversible admission state.
@@ -124,7 +158,7 @@ func (c *Client) Prepare(ctx context.Context, name, attemptID string) (Grant, er
 }
 
 // Commit sends the frozen conditional mutation at most once. A lost reply
-// remains unknown; even a Retry-After response cannot cause another HTTP attempt.
+// remains unknown; neither Retry-After nor a redirect can resubmit the mutation.
 func (g Grant) Commit(ctx context.Context) error {
 	if g.state == nil {
 		return ErrInvalid

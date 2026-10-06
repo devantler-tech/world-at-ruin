@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -140,6 +141,66 @@ func TestNoRetryAfterAndNoSecondSubmission(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("hidden retry: %d", calls)
+	}
+}
+
+func TestRedirectCannotResubmitMutation(t *testing.T) {
+	for _, redirect := range []struct {
+		name string
+		code int
+	}{{"307", http.StatusTemporaryRedirect}, {"308", http.StatusPermanentRedirect}} {
+		for _, fence := range []bool{false, true} {
+			name := redirect.name + "/commit"
+			if fence {
+				name = redirect.name + "/fence"
+			}
+			t.Run(name, func(t *testing.T) {
+				var originalPuts, redirectedPuts atomic.Int32
+				target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPut {
+						redirectedPuts.Add(1)
+					}
+					var obj agonesv1.GameServer
+					if err := json.NewDecoder(r.Body).Decode(&obj); err != nil {
+						t.Error(err)
+					}
+					obj.ResourceVersion = "opaque-b"
+					reply(w, &obj)
+				}))
+				t.Cleanup(target.Close)
+				c := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodGet {
+						reply(w, ready())
+						return
+					}
+					originalPuts.Add(1)
+					w.Header().Set("Location", target.URL+r.URL.Path)
+					w.WriteHeader(redirect.code)
+				})
+				g, err := c.Prepare(context.Background(), "zone", "attempt-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fence {
+					var receipt Receipt
+					receipt, err = g.Fence(context.Background())
+					if _, acceptErr := g.Accept(receipt); acceptErr == nil {
+						t.Fatal("a redirect granted a barrier receipt")
+					}
+				} else {
+					err = g.Commit(context.Background())
+				}
+				if originalPuts.Load() != 1 || redirectedPuts.Load() != 0 {
+					t.Fatalf("mutation was redirected: original PUTs=%d redirected PUTs=%d", originalPuts.Load(), redirectedPuts.Load())
+				}
+				if !errors.Is(err, ErrUnknown) {
+					t.Fatalf("redirect did not retain uncertainty: %v", err)
+				}
+				if err = g.Commit(context.Background()); !errors.Is(err, ErrClosed) {
+					t.Fatalf("redirect reopened submission: %v", err)
+				}
+			})
+		}
 	}
 }
 

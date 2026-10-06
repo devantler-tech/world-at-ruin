@@ -7,7 +7,14 @@ An allocation can lose its reply and still reach Kubernetes storage. The interna
 `gameservercommit` capability freezes one Ready GameServer's namespace, name, UID,
 opaque resourceVersion and full Ready-to-Allocated update, including the full
 attempt digest. Its single conditional PUT never refreshes that version, selects
-another resource or retries a Retry-After response. Copied handles share the same
+another resource, follows a redirect or retries a Retry-After response. The local
+HTTP client preserves the operator's transport settings while refusing redirect
+resubmission and removes the PUT body's replay factory from a private request
+copy. This prevents the standard HTTP/1 and HTTP/2 transports from replaying the
+mutation, including an unprocessed stream. Shared defaults and the underlying
+transport remain unchanged. Operator-supplied transports are trusted configuration;
+an arbitrary custom retry implementation is outside this standard-transport guarantee.
+Copied handles share the same
 one-submission and irreversible drain state. Construction requires explicit
 enablement and operator-owned API configuration; each client admits at most 256
 distinct resource UIDs for its process lifetime.
