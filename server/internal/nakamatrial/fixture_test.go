@@ -138,6 +138,7 @@ type fixture struct {
 	connClosed                   chan struct{}
 	deleted                      []string
 	retryDelete                  bool
+	deleteResponse               <-chan struct{}
 	ambiguous                    bool
 	hold                         chan struct{}
 	entered                      chan struct{}
@@ -693,6 +694,19 @@ func (f *fixture) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delete(f.servers, name)
+		if resume := f.deleteResponse; resume != nil {
+			// Resource observers must remain available while the provider response
+			// is held; its acknowledgement precedes durable lease retirement.
+			f.mu.Unlock()
+			select {
+			case <-resume:
+			case <-r.Context().Done():
+			}
+			f.mu.Lock()
+			if r.Context().Err() != nil {
+				return
+			}
+		}
 		write(metav1.Status{Status: metav1.StatusSuccess})
 	default:
 		f.t.Error("native client issued unsupported mutation")
