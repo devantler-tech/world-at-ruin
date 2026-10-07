@@ -1,7 +1,7 @@
 extends Node
 ## The real world owns the batch, while its original terrain/cover remain intact.
 
-const NODE := "GroundPlateRubble"
+const NODE := "GroundPlates/GroundPlateRubble"
 const MAX_PLACEMENTS := 1152
 
 
@@ -26,6 +26,9 @@ func _ready() -> void:
 	var batch := world.get_node_or_null(NODE) as MultiMeshInstance3D
 	if batch == null:
 		_fail("opted-in built slabs have no edge-derived rubble batch")
+		return
+	if batch.get_parent() != world.get_node(WorldGen.GROUND_PLATES_NODE):
+		_fail("cosmetic rubble escaped the existing raised-stone node")
 		return
 	if world.get(&"ground_plate_rubble") is not Dictionary:
 		_fail("the real batch has no inspectable source/placement records")

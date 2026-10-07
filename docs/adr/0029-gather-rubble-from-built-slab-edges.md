@@ -41,6 +41,9 @@ material, with shadow casting disabled. Source records, apron count and total
 instances have explicit bounds: at most 192 aprons and 1,152 cluster instances.
 Each instance reuses a mesh containing four stone chunks; those chunks are not
 independent draw instances. Rubble has no collision, save data or reward.
+The cosmetic batch belongs beneath the existing `GroundPlates` node, keeping
+the world's top-level node inventory unchanged. The base-owned regression
+continues to require exactly the original overlay and its collision body.
 The starter cave doorway apron, cave footprint, shrine clearing and ruin
 footprints remain clear.
 

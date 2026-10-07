@@ -81,7 +81,7 @@ const GROUND_PLATES_NODE := "GroundPlates"
 ## disagree anywhere — not on a top, a lip, or a seam between two slabs.
 const GROUND_PLATES_BODY := "GroundPlatesBody"
 ## One extra cosmetic batch, never part of the baseline foliage inventory.
-const GROUND_PLATE_RUBBLE_NODE := "GroundPlateRubble"
+const GROUND_PLATE_RUBBLE_NODE := "GroundPlates/GroundPlateRubble"
 ## Side of the square cells the raised tops are indexed by for
 ## [method walkable_height_at], metres. A slab is about 1.2 m across, so a cell
 ## this size holds a handful of footprints and a query tests only those.
@@ -506,12 +506,14 @@ func _build_ground_plate_rubble() -> void:
 	if _ground_plate_rubble.is_empty():
 		return
 	var batch := MultiMeshInstance3D.new()
-	batch.name = GROUND_PLATE_RUBBLE_NODE
+	batch.name = "GroundPlateRubble"
 	batch.multimesh = CosmeticInstances.batch(
 		mesh, CosmeticInstances.transforms(mesh, _ground_plate_rubble))
 	batch.material_override = FoliageArt.material_for(FoliageGen.Kind.RUBBLE)
 	batch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(batch)
+	# Cosmetics belong to their existing treatment, preserving the trusted
+	# world's top-level inventory and its identity coordinate transform.
+	get_node(GROUND_PLATES_NODE).add_child(batch)
 
 
 ## Flip the plate treatment in a RUNNING world — the shader uniform and the

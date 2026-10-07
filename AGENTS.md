@@ -796,7 +796,8 @@ everything shipped afterwards is held to.
   are unchanged with the flag on. Foliage centres inside built slab polygons are excluded (#895);
   retained ash placements keep their stored traits, and opting out restores the complete original
   scatter. The flag-on node tree is the flag-off tree plus the
-  overlay node, its collision body and one separate cosmetic rubble batch. **The tops are solid exactly where drawn (#548):** one
+  overlay node and its collision body; the cosmetic rubble batch belongs beneath the overlay,
+  leaving the world's top-level inventory unchanged. **The tops are solid exactly where drawn (#548):** one
   `GroundPlatesBody` carries a trimesh built from the overlay mesh itself, lips included, so render and
   collision cannot disagree; `WorldGen.walkable_height_at()` answers the raised top inside a built
   slab (its ground plus that slab's thickness) and exactly `surface_height_at()` everywhere else, and it
