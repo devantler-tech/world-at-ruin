@@ -17,10 +17,19 @@ jq -s '{ci:.[0],guard:.[1]}' "$scratch/ci.json" "$scratch/guard.json" >"$scratch
 # admit reads parsed workflow data; it never evaluates a GitHub expression or
 # executes fixture-controlled shell. Closed key sets prevent optional filters,
 # conditions, inherited secrets and success-on-error settings from hiding work.
+# Action revisions are read from the workflow rather than repeated here, so a
+# routine version update does not need a matching edit to this file. What stays
+# fixed is their shape: each is one full commit id, both checkouts use the same
+# one, and the refusal controls build the very revision the scan step ran.
 admit() {
-  jq -e --arg checkout 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' \
-    --arg validator 'devantler-tech/.github/actions/validate-retired-repo-links@8c0214ff944f615c35b122c4c8776151dfb561ce' \
-    --arg source '8c0214ff944f615c35b122c4c8776151dfb561ce' '
+  jq -e '
+    def pinned($action): capture("^" + $action + "@(?<sha>[0-9a-f]{40})$").sha;
+    (.guard.jobs["retired-repo-links"].steps[0].uses | pinned("actions/checkout")) as $checkout_sha
+    | ("actions/checkout@" + $checkout_sha) as $checkout
+    | (.guard.jobs["retired-repo-links"].steps[1].uses
+      | pinned("devantler-tech/\\.github/actions/validate-retired-repo-links")) as $source
+    | ("devantler-tech/.github/actions/validate-retired-repo-links@" + $source) as $validator
+    |
     .ci.on == {pull_request:null,merge_group:null}
     and .ci.permissions == {contents:"read"}
     and (.ci.jobs["retired-repo-links"] |
@@ -32,7 +41,7 @@ admit() {
       and .if == "${{ always() }}"
       and (.steps | length) == 1
       and (.steps[0] | keys == ["uses","with"]
-        and .uses == "devantler-tech/.github/actions/aggregate-job-checks@d20784dd9135c336d1d39337f98ce03aca5e9304"
+        and (.uses | pinned("devantler-tech/\\.github/actions/aggregate-job-checks") | type) == "string"
         and (.with | keys) == ["job-results"]
         and (.with["job-results"] | contains("${{ needs.retired-repo-links.result }}"))))
     and (.guard | keys == ["jobs","name","on","permissions"]
@@ -108,11 +117,17 @@ for mutation in \
   '.ci.jobs["ci-required-checks"].steps[0].with["job-results"]="success"' \
   '.ci.jobs["ci-required-checks"].steps[0].if="false"' \
   '.ci.jobs["ci-required-checks"].steps[0]["continue-on-error"]=true' \
-  '.ci.jobs["ci-required-checks"].steps[0].uses="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"'; do
+  '.ci.jobs["ci-required-checks"].steps[0].uses="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"' \
+  '.guard.jobs["retired-repo-links"].steps[0].uses="actions/checkout@v7"' \
+  '.guard.jobs["retired-repo-links"].steps[3].uses="actions/checkout@bd0035dd8f41fcf1459b878882b8897443f8dc59"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@v7.2.10"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@main" | .guard.jobs["retired-repo-links"].steps[3].with.ref="main"' \
+  '.ci.jobs["ci-required-checks"].steps[0].uses="devantler-tech/.github/actions/aggregate-job-checks@v7"' \
+  '.ci.jobs["ci-required-checks"].steps[0].uses="example/.github/actions/aggregate-job-checks@bd0035dd8f41fcf1459b878882b8897443f8dc59"'; do
   jq "$mutation" "$scratch/bundle.json" >"$scratch/mutant.json"
   if admit "$scratch/mutant.json"; then
     echo "TEST FAIL -- workflow accepted $mutation" >&2
     exit 1
   fi
 done
-echo 'TEST PASS -- main-only shared guard, read-only credentials and 25 rejected wiring mutations'
+echo 'TEST PASS -- main-only shared guard, read-only credentials and 31 rejected wiring mutations'

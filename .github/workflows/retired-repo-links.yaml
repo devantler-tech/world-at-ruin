@@ -23,18 +23,20 @@ jobs:
           persist-credentials: false
       - name: Check active documentation
         id: links
-        uses: devantler-tech/.github/actions/validate-retired-repo-links@8c0214ff944f615c35b122c4c8776151dfb561ce # v7.2.6
+        uses: devantler-tech/.github/actions/validate-retired-repo-links@2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
         with:
           enabled: "true"
       - name: Require a completed scan
         env:
           VALIDATED: ${{ steps.links.outputs.validated }}
         run: test "$VALIDATED" = true
+      # Keep this ref equal to the revision the scan step above uses. Dependency
+      # automation updates only that step, so move both together.
       - name: Check out the exact validator for refusal controls
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: devantler-tech/.github
-          ref: 8c0214ff944f615c35b122c4c8776151dfb561ce # v7.2.6
+          ref: 2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
           path: .retired-link-validator-source
           persist-credentials: false
       - name: Prove retired links and incomplete scans fail
