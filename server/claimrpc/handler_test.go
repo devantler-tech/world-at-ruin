@@ -148,10 +148,38 @@ func TestAuthenticatedClaimCommitsBeforeSuccess(t *testing.T) {
 	}
 }
 
+// TestPrivateClaimAcceptsShorterToken exercises the handoff service's default
+// token window inside a longer durable lease, including idempotent admission.
+func TestPrivateClaimAcceptsShorterToken(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	var err error
+	f.token, err = zonesock.MintToken(f.allocation.AdmissionSecret, f.allocation.ID, f.allocation.Observer, time.Now().Add(handoff.DefaultTokenTTL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, _ := f.serve(t, func(context.Context, nakamalease.Lease) (handoff.Allocation, error) { return f.allocation, nil })
+	for range 2 {
+		if err := client.Claim(context.Background(), f.binding, f.token, 1); err != nil {
+			t.Fatalf("short-lived handoff refused inside its durable lease: %v", err)
+		}
+	}
+	stored, err := f.store.Load(context.Background(), f.record.Lease.UserID, f.record.Lease.ReservationID)
+	if err != nil || stored.Lease.ClaimedAt.IsZero() || !stored.Lease.ExpiresAt.Equal(f.record.Lease.ExpiresAt) {
+		t.Fatalf("short token changed the lease window or failed to claim: %v", err)
+	}
+	receipt, err := client.ClaimWithReceipt(context.Background(), f.binding, f.token, 1)
+	if err != nil || receipt.Fence.LeaseVersion != stored.Version || !receipt.Fence.Generation.Equal(stored.Lease.ClaimedAt) {
+		t.Fatalf("short token receipt changed the claim generation: %v", err)
+	}
+	if len(f.storage.WrittenValues()) != 2 {
+		t.Fatal("short token replay wrote another claim")
+	}
+}
+
 // TestPrivateClaimRejectsWrongAuthorityAndBinding varies each authority and
 // ownership component independently and requires storage to remain untouched.
 func TestPrivateClaimRejectsWrongAuthorityAndBinding(t *testing.T) {
-	for _, name := range []string{"no workload URI", "wrong trust domain", "sibling workload", "wrong namespace", "wrong UID", "wrong allocation", "wrong attempt", "wrong observer", "sibling token", "wrong expiry", "changed resource", "staging", "releasing", "expired"} {
+	for _, name := range []string{"no workload URI", "wrong trust domain", "sibling workload", "wrong namespace", "wrong UID", "wrong allocation", "wrong attempt", "wrong observer", "sibling token", "wrong expiry", "expired token", "changed resource", "staging", "releasing", "expired"} {
 		t.Run(name, func(t *testing.T) {
 			identity := "spiffe://claims.example/zone/world/uid-1"
 			switch name {
@@ -178,7 +206,9 @@ func TestPrivateClaimRejectsWrongAuthorityAndBinding(t *testing.T) {
 			case "sibling token":
 				f.token, _ = zonesock.MintToken([]byte(strings.Repeat("z", 32)), "zone-1", 1, f.record.Lease.ExpiresAt)
 			case "wrong expiry":
-				f.token, _ = zonesock.MintToken(f.allocation.AdmissionSecret, "zone-1", 1, f.record.Lease.ExpiresAt.Add(time.Second))
+				f.token, _ = zonesock.MintToken(f.allocation.AdmissionSecret, "zone-1", 1, f.record.Lease.ExpiresAt.Add(time.Nanosecond))
+			case "expired token":
+				f.token, _ = zonesock.MintToken(f.allocation.AdmissionSecret, "zone-1", 1, time.Now().Add(-time.Second))
 			case "changed resource":
 				f.allocation.ID = "zone-2"
 			case "staging", "releasing", "expired":

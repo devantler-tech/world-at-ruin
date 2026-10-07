@@ -794,6 +794,7 @@ func TestCreateRejectsMalformedSecretReferencesWithoutStorage(t *testing.T) {
 	}
 }
 
+// Replacement rebinds the durable version and refuses a stale caller before writing.
 func TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite(t *testing.T) {
 	storage, store := newLeaseStoreFixture(t)
 	first := mustCreateLease(t, store, validLease())
@@ -823,10 +824,8 @@ func TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite(t *testing.T) {
 	if loaded != current {
 		t.Fatalf("record after stale replace = %+v, want current %+v", loaded, current)
 	}
-	if len(storage.writes) != 3 ||
-		storage.writes[1].Version != "v1" ||
-		storage.writes[2].Version != "v1" {
-		t.Fatalf("replacement write versions = %+v, want both guarded by v1", storage.writes)
+	if len(storage.writes) != 2 || storage.writes[1].Version != "v1" {
+		t.Fatalf("replacement write versions = %+v, want one v1 write and no stale write", storage.writes)
 	}
 }
 
@@ -1590,6 +1589,16 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 		{staging, unclaimed, claimed, releasing, stagingReleasing},
 		{staging, dispatched, unclaimed, claimed, releasing, stagingReleasing, dispatchedReleasing},
 	}
+	expanded := []Lease{staging, dispatched, unclaimed, claimed, releasing, stagingReleasing, dispatchedReleasing}
+	for index := range expanded {
+		expanded[index].readerOnly = true
+		if index != 0 && index != 5 {
+			expanded[index].AllocatorBinding = AllocatorBinding{
+				GenerationID: "generation:1", MemberSetDigest: "5452b4d6f907967c5ef74179a64c12ea48755828ccea8fc9aac8092faa3bfe0d", PodUID: "pod-allocator-1",
+			}
+		}
+	}
+	wantSchemas = append(wantSchemas, expanded)
 
 	fixtures := savefixturetest.Read(t, "lease")
 	if len(fixtures) != len(wantSchemas) {
@@ -1654,8 +1663,8 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 			})
 		}
 	}
-	if head := fixtures[len(fixtures)-1].Version; head != schemaVersion {
-		t.Fatalf("lease schema ledger head = %d, writer = %d", head, schemaVersion)
+	if head := fixtures[len(fixtures)-1].Version; head != readableSchemaVersion {
+		t.Fatalf("lease schema ledger head = %d, reader = %d", head, readableSchemaVersion)
 	}
 }
 
@@ -1795,7 +1804,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 				object.Value = strings.Replace(
 					object.GetValue(),
 					`"schema":3`,
-					`"schema":4`,
+					`"schema":5`,
 					1,
 				)
 			},

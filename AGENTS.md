@@ -634,6 +634,24 @@ everything shipped afterwards is held to.
   default; terminal hub shutdown cancels admission, drains upgraded sockets and clears observer
   interest on the simulation owner before lifecycle shutdown, with bounded waits and visible
   errors; no durable lease release or process-death proof, per ADR 0007),
+  its **default-off authoritative movement** (`zone -movement-intents` plus explicit
+  wire-v3 negotiation; retained v1/v2 replication unchanged; bounded newest-input
+  mailbox applied only before the simulation step, server-owned ground speed,
+  silence expiry and a separate coalesced own-position/applied-sequence acknowledgement;
+  no player prediction composition or production activation, per ADR 0024),
+  its **default-off client movement networking** (`WAR_ZONE_MOVEMENT=1` selects
+  v3 at connect time; `ZoneConnection.queue_movement` submits newest finite planar
+  samples at most 30 Hz, with bounded writes, cumulative ACKs and fresh reconnect
+  state; ordinary v2 and player controls remain unchanged, per ADR 0025;
+  required client CI runs `WAR_GODOT_ZONE_PROOF=1 go -C server test -count=1
+  -timeout 90s ./cmd/zone -run '^TestNativeGodotMovement$'` against the built
+  verified-TLS zone, with missing prerequisites failed rather than skipped),
+  the **latent integer prediction core** (`GroundStep` and `PredictedMovement`,
+  ADR 0026 — explicit immutable isolated-flat configuration, exact integer
+  ground arithmetic and bounded speculative tick replay independent of sent
+  sequence ownership; shared actual Go position goldens plus the native TLS
+  prediction scenario; no boot, connection or player-controller caller,
+  collision parity, rendered correction or production configuration discovery),
   the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
@@ -648,7 +666,14 @@ everything shipped afterwards is held to.
   exact namespace/GameServer UID; opaque lease lookup, pinned resource/envelope resolution and
   canonical token verification precede a conditional claim in the existing schema; no-show cleanup
   races on that same version, replay reads durable state, and ambiguous admission retains the claim;
-  strict bounded requests, generic refusals and a verified client with no redirects; attested
+  strict bounded requests, generic refusals and a verified client with no redirects;
+  additive `/v2/claim` returns the original durable version/generation while `/v1/claim`
+  retains its empty acknowledgement. Explicit `zoneclaim.NewReceiptGate` admission retains
+  one immutable receipt across reconnects and failed upgrades; the command keeps the v1 gate.
+  The separately constructed completion handler requires exact workload identity plus a
+  server-injected irreversible termination verifier before original-version fencing and
+  UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
+  attested
   workload certificate issuance, platform listener deployment and session-end recovery remain
   separate work; the command composes the gate only through default-off `-private-claims`,
   requiring sealed Agones admission and separate verified mTLS credentials, loading bounded
@@ -657,7 +682,8 @@ everything shipped afterwards is held to.
   original claimed version, claim stamp, opaque key, attempt digest, allocation and pinned UID
   must all agree before atomically entering the existing release barrier; exact-UID resource
   cleanup precedes conditional reservation deletion; failures retain restart recovery state;
-  no new schema, endpoint, death detector or runtime activation; trusted end-of-session proof
+  no new storage schema or death detector; the private completion interface does not activate
+  a production listener or provide termination proof. Trusted end-of-session proof
   and production lifecycle composition remain #567/#569 work),
   the first **Nakama identity boundary**
   (`server/nakamaauth/` — locally validates audience-bound Google ID tokens, derives a
@@ -729,8 +755,11 @@ everything shipped afterwards is held to.
   the **orphan reconciler** (`server/orphanreaper/` — completes bounded resource
   and private lease scans, protects every stored attempt regardless of expiry,
   requires consecutive orphan observations plus grace, and deletes only the
-  revalidated UID and resource version; startup/periodic supervision is explicit
-  and remains inactive until production composition), and the **combat first
+  revalidated UID and resource version; the Nakama module supervises startup/periodic sweeps
+  only with the independent default-off `WAR_HANDOFF_ORPHANS_ENABLED` runtime.env flag,
+  shares its existing private lease store and resource scope, and drains both workers before
+  transport retirement; count-only observations and bounded settings are documented in that
+  package and ADR 0021), and the **combat first
   slice** (`server/sim/combat.go` — the telegraph cast
   lifecycle: painted at cast start, resolved once after a tick-counted cast time against
   positions at resolution, health/damage application, and one mob AI that deterministically
@@ -741,7 +770,8 @@ everything shipped afterwards is held to.
   filtering, real navmesh pathfinding and cast replication remain later children — with its own
   cross-platform golden). The zone-side sealed-envelope boot from
   `docs/adr/0002-seal-zone-admission-secrets-before-readiness.md` is available through
-  `zone -agones -agones-admission-public-key <path>`; orphan supervision, session-end recovery,
+  `zone -agones -agones-admission-public-key <path>`; production activation of orphan supervision
+  and its flag retirement (#1177), session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
   `deploy/` contains the opt-in private zone trial's tenant manifests. The host
@@ -762,8 +792,10 @@ everything shipped afterwards is held to.
   EXACTLY: each polygon is split along the terrain grid lines and quad diagonals it crosses so every
   piece lies in one terrain triangle, and the side strips split at the same crossings.
   `exposed_slab_geometry_test` holds that law on a hand-built creased ground and on the real world,
-  proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision, heights and
-  foliage are byte-identical with the flag on — the flag-on node tree is the flag-off tree plus the
+  proves two fresh builds agree, and proves the flag-off world's terrain mesh, collision and heights
+  are unchanged with the flag on. Foliage centres inside built slab polygons are excluded (#895);
+  retained ash placements keep their stored traits, and opting out restores the complete original
+  scatter. The flag-on node tree is the flag-off tree plus the
   overlay node and its collision body. **The tops are solid exactly where drawn (#548):** one
   `GroundPlatesBody` carries a trimesh built from the overlay mesh itself, lips included, so render and
   collision cannot disagree; `WorldGen.walkable_height_at()` answers the raised top inside a built
@@ -779,8 +811,13 @@ everything shipped afterwards is held to.
   seed: collision equals the query at every top and just past every edge (and is the terrain where no
   other top is), a player climbs and descends the thickest lip, crosses a seam and a three-slab
   junction, two fresh builds agree bit for bit, and hiding the overlay removes both. The treatment
-  stays opt-in until it clears the art gate; foliage still stands on the base ground inside a slab (#895), and a glancing
-  approach up a slope can still glide along a lip (#896, measured by `client/tools/plate_crossing_sweep.gd`).
+  stays opt-in until it clears the art gate. The step also tries bounded inward directions when a
+  glancing uphill stride lands on a rounded lip (#896); each path spends the held input's accelerated
+  stride and retains the floor-angle, rise, forward-gain, ledge and headroom guards. The unchanged
+  `client/tools/plate_crossing_sweep.gd` measures 0 stalls in 262 approaches, versus the prior 12.
+  Independent regressions hold actual raised-side support and forbid unearned travel from rest or
+  after changing direction, climbing tall walls, and stepping beneath insufficient headroom. Inspect
+  the [close frames and controller sequence](docs/evidence/issue-895-896-slab-crossings/README.md).
   The overlay keeps out
   of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact
   uniform and the overlay together in a running world so a measurement tool can compare both
@@ -804,6 +841,12 @@ everything shipped afterwards is held to.
   `client/registries/character_writer_vocabulary.json` subset, whose equipment-slot, skin,
   blend-shape and bone-key additions require the contract-stage save-capability advance.
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
+  - **Experimental content-pack builds:** `bash tools/build-contentpack.sh --experimental
+    client <new-output-directory>` stages a trusted local project privately, imports it natively and
+    produces a cumulative PCK plus exact-byte build evidence. Recovery owners and their remaps stay
+    outside the pack. Run `bash tools/test-contentpack.sh` for the exported-base precedence, receipt
+    and no-mount controls. This tooling grants no installation or production publication authority;
+    see `docs/adr/0014-build-experimental-cumulative-content-packs.md`.
 - **Validate before every PR:**
   `godot --headless --editor --quit --path client && godot --headless --quit-after 120 --path client` —
   the editor pass imports AND writes the global class-name cache (`--import` alone never writes
@@ -817,6 +860,17 @@ everything shipped afterwards is held to.
   GDScript lint uses `gdtoolkit==4.5.0` with the repository's explicit `.gdlintrc`; after installing
   that pinned tool, run `./tools/gdscript-lint.test.sh` to prove the policy rejects a real invalid
   fixture and `./tools/gdscript-lint.sh client` to lint the product tree. Both are blocking in CI.
+- **Native Nakama acceptance:** the separate generated `server/nakama-runtime/go.mod`/`go.sum`
+  graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.1
+  and native CGO. Keep the ordinary server graph intact. The explicitly experimental
+  `server/Dockerfile.nakama-native` image is unpublished;
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-two
+  named scenarios against fresh disposable PostgreSQL databases, including the built
+  sealed zone, native private claims, actual TLS WebSocket replication and opt-in
+  authoritative movement. Both native Linux
+  architectures feed the required CI aggregate. The tagged process suite fails
+  on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
+  and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
@@ -832,7 +886,7 @@ everything shipped afterwards is held to.
   **That candidate-owned discovery loop is not the product-law boundary.** The organization ruleset
   `Require workflow - World at Ruin trusted regressions`, managed declaratively by
   `devantler-tech/.github`, separately requires
-  `devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml` at
+  `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml` at
   `refs/heads/main`. The external workflow checks out the proposed product bytes as the candidate and
   the GitHub-supplied pull-request or merge-group base SHA as trusted World at Ruin bytes. It copies
   only the candidate's product tree into a throwaway evaluation root, replaces `client/tests/` with
@@ -841,12 +895,50 @@ everything shipped afterwards is held to.
   trusted `*_test.tscn`. A pull request can add, edit, delete or skip a checkout-local scene without
   changing which trusted scenes execute or how their verdict is judged; the external workflow is the
   aggregate required gate for both `pull_request` and `merge_group`.
-  provider-upjet-github v0.19.1 cannot express GitHub's immutable required-workflow SHA selector, so
+  provider-upjet-github v0.20.0 cannot express GitHub's immutable required-workflow SHA selector, so
   the live rule binds the reviewed Actions `main` branch. Change the external workflow only through
   an exact-head-reviewed Actions PR; preserve compatibility with the World base controller and
   harness, pass `tools/required-regression-control.test.sh`, and run live positive and missing-input
   controls. Change the rule itself only through the declarative `.github` release path, then read the
-  live ruleset back. The World repository must not carry a second copy of the ruleset workflow.
+  live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is a latent
+  required-workflow source for unprivileged `pull_request` and `merge_group` events. It runs
+  only when GitHub selects its canonical `refs/heads/main` workflow reference; ordinary
+  candidate-owned invocations skip the job. The resolver binds the GitHub integration SHA to the
+  event's merge commit, verifies the main-base and all three checkout identities, and invokes the
+  verified workflow-source controller and its sibling verdict runner with read-only permissions and
+  no persisted credentials. The event base supplies test scenes, settings, fixtures and ledgers,
+  never host helper selection. Harness and candidate data
+  are fetched anonymously into fresh repositories without credential variables or inherited Git
+  configuration; their exact event identities are independently verified. Candidate Godot runs
+  in a digest-bound, non-root container with no network, capabilities or host credentials; its
+  project and harness are read-only. The protected suite uses reviewed-base project settings and
+  the standard SceneTree loop; alternate binary configuration is refused before import. This
+  tests candidate code under base-owned engine settings. Candidate configuration changes remain
+  covered by ordinary CI; configuration-dependent features may be absent or fail in the frozen suite.
+  Autoloads and editor plugins are unsupported until the controller contract is reviewed.
+  Only disposable import state is writable during the editor scan.
+  Host import and scene logs are captured in a fresh controller-owned directory outside the
+  candidate tree, so candidate log symlinks cannot redirect host writes.
+  The real-container refusal test pins that execution boundary. Its ordinary skipped job is
+  preparation, never enforcement proof. Game-specific enforcement belongs at repository scope;
+  do not add another World-only organization rule to select this latent source.
+  The external catalogue required workflow remains active throughout activation; no ruleset cutover
+  is implied by these source bytes.
+- **Repository-owned trusted verdicts are default-off:**
+  `.github/workflows/repository-trusted-regressions.yaml` treats completed `CI` runs only as
+  notifications. Reviewed main code independently resolves current PR/integration or queue
+  identities, executes the frozen suite in the existing sandbox, and publishes through a separate
+  dedicated App job. Its key belongs only to the main-only `world-trusted-gate-publisher`
+  environment. Never reuse an inherited automation key or bind this context to the Actions App.
+  `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` is unset/off until explicit activation with the dedicated
+  `WAR_TRUSTED_GATE_APP_ID` and environment secret `WAR_TRUSTED_GATE_PRIVATE_KEY`.
+  Run `go -C tools/trusted-gate test -race ./...` plus the admission and workflow mutation tests
+  when changing it. ADR 0027 defines exact-head publication, readback, scope, overlap and recovery.
+  The operator's read-only `inspect` command proves rule shape only; live protected-key confinement,
+  nonzero scenes and tamper canaries remain separate gates before old-rule retirement.
+- **Shared workflow ownership:** lint, release creation and result aggregation use the canonical
+  `devantler-tech/.github` catalogue at one reviewed release. Their independent consumers justify
+  reuse. World-specific tests, policy, selectors and controller behavior remain in this repository.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
@@ -856,6 +948,11 @@ everything shipped afterwards is held to.
   `SaveVault.vault_path()` / `WAR_VAULT_PATH`. `SaveIsolation` (`tests/save_isolation.gd`) is the
   ONE place that lists those seams and redirects them all to throwaway `user://*_boot_probe.json`
   probes, so a seam added there reaches every harness without a single test changing.
+  It also disables ambient experimental update checks before scene loading and restores their
+  environment after the test. A networking control opts in only after isolation has succeeded.
+  Authenticated update history is the fourth seam (`UpdateHistory.history_path()` /
+  `WAR_UPDATE_HISTORY_PATH`), covered by the same real-file byte assertion. Its separate bounded
+  schema and locked acceptance rules are defined in [ADR 0017](docs/adr/0017-retain-authenticated-update-floors-at-locked-acceptance.md).
   Boot with **`IsolatedBoot`** (`tests/isolated_boot.gd`): `boot()` redirects every seam and returns
   the instantiated scene, or `null` when the redirect did not take — so a caller cannot hold a
   booted scene and an unisolated save at the same time. Drive `SaveIsolation` directly only when the
@@ -866,8 +963,30 @@ everything shipped afterwards is held to.
   prose** — a doc comment saying a test never boots `main.tscn` is not a violation (#309 was filed
   off a grep that made exactly that mistake and accused five correct files). A developer running the
   suite on a machine with a played save can also `export WAR_SAVE_PATH=/tmp/probe.json
-  WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json` to keep all
-  three fully out of reach.
+  WAR_VAULT_PATH=/tmp/probe_vault.json WAR_BOOT_RECOVERY_PATH=/tmp/probe_recovery.json
+  WAR_UPDATE_HISTORY_PATH=/tmp/probe_update_history.json` to keep all four fully out of reach.
+- **Allocator fence reference:** `server/internal/fencereference/` is default-off,
+  owns only an in-memory ledger and is not imported by production composition.
+  Its generation check and owned mutation share one authority lock; its real TLS
+  generated Allocate RPC tests must show an unfenced late commit and a fenced
+  refusal, including canceled/deadline-expired requests. Run
+  `go -C server test -race -count=1 -timeout 2m ./internal/fencereference`.
+  Follow [ADR 0012](docs/adr/0012-keep-allocator-fence-authority-at-the-commit-boundary.md):
+  process-local receipts cannot authorize native Agones writes, durable recovery
+  or production quarantine release. Production fencing remains #793 work.
+- **Exact GameServer commit experiment:** `server/internal/gameservercommit/`
+  remains explicitly enabled only by tests, outside production composition.
+  Run `tools/test-gameserver-commit.sh` for the required real kube-apiserver/etcd
+  proof with the pinned Agones CRD, plus `go -C server test -race -count=1
+  ./internal/gameservercommit ./internal/fencereference` for capability and import
+  guards. [ADR 0028](docs/adr/0028-fence-an-inactive-exact-version-gameserver-mutation.md)
+  binds receipts to one frozen UID/version mutation and its process incarnation.
+  Changed histories remain unknown; no receipt releases production quarantine.
+- **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
+  Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
+  allocation, source/readiness changes, lost responses and the production-import guard.
+  [ADR 0018](docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md)
+  keeps bindings observational: no allocator error or discovery result grants quarantine release.
 - **Server save history:** every persisted server schema uses
   `server/<package>/testdata/shipped_<family>_versions.txt` and
   `golden_<family>_v<N>.json`. The server durability check discovers ledgers in both the reviewed base
@@ -895,6 +1014,11 @@ everything shipped afterwards is held to.
   character, binding and audit tests assert preserved fields; lease fixtures retain each shipped shape's fields
   alongside separate transition tests. Fixture immutability alone does not prove lossless reading.
   Follow [the server save-data contract](docs/design/server-save-data.md) for schema changes.
+- **Offline update publication:** `server/cmd/updatepublisher` requires `-experimental` for every operation.
+  It is not imported by runtime composition and does not configure or publish production keys.
+  Run `GODOT_BIN=godot bash tools/test-updatepublisher.sh` after the client import to prove
+  actual command output reaches the native verifier. See
+  [offline publication](docs/design/offline-update-publisher.md) and ADR 0013.
 - **Validate the server before every PR:** from `server/`, `gofmt -l .` (must print nothing),
   `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` (includes the tick-determinism
   and golden-hash tests), `go build ./...`, and `govulncheck ./...`; run `govulncheck ./...` from
@@ -917,6 +1041,17 @@ everything shipped afterwards is held to.
 - **Determinism:** world generation is seeded (`WorldGen.WORLD_SEED`) — the same world every boot.
   Never introduce wall-clock or unseeded randomness into generation; differences between builds
   must be attributable to code.
+- **Ragged wrap geometry previews:** `WAR_RAGGED_CLOTH_DRAPE=1` retains the closed
+  wrap, its fully pinned waist and prior outward gathers. The independent default-off
+  `WAR_RAGGED_WRAP_REFINEMENT=1` additionally narrows the waist band and thins the shell;
+  it is inert without the drape prerequisite. Its accept-or-retire task is #1275, due 2026-11-01.
+  `RaggedDrape` also owns a private body mesh that restores only the newly exposed
+  equipment-inset skin; player morphs, imported resources and saved recipes stay intact.
+  The `ragged_cloth` capture includes `_unrefined` and `_unrefined_mask` arms that
+  remove this refinement alone, including its skin restoration, while retaining earlier
+  drape. The existing `_geometry_flat` arm removes all drape and cannot evidence
+  this refinement by itself. Both geometry and material previews remain independent
+  and default-off; the 2026-11-01 decisions never activate them.
 - **Player-visible work is judged on the frame, not the suite:** before calling a player-visible
   change ready, render or play it, look at it, and judge it against the
   **[Quality bar](#quality-bar--it-has-to-resemble-a-aaa-game)** (AAA resemblance). The PR must
@@ -994,13 +1129,20 @@ everything shipped afterwards is held to.
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
-  - `devantler-tech/actions/.github/workflows/world-at-ruin-required-regressions.yaml`
+  - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active
+    `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
+    scan, and proves seeded retired links and missing configuration fail. Its main path runs
+    only this read-only guard. Run `bash tools/retired-repo-links-workflow.test.sh` locally
+    with `yq` and `jq` to check routing, credentials and required-check wiring, including
+    rejection controls; use ShellCheck on that script and actionlint on both workflow files.
+    Hosted runs provide the actual PR and post-merge main execution proof.
+  - `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml`
     (`pull_request` + `merge_group`, invoked by the organization ruleset) runs trusted client
     regressions against the candidate product tree. Its workflow/controller selection comes from the
-    reviewed Actions source and its scenes, harness and runner come from the GitHub-supplied World at
+    reviewed catalogue source and its scenes, harness and runner come from the GitHub-supplied World at
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
-    aggregate, an empty trusted suite fails closed, and the obsolete local workflow cannot return.
+    aggregate, an empty trusted suite fails closed, and only the structurally pinned base-controlled local workflow may invoke the controller.
     The sole candidate test-data exception is the save-capability declaration: the controller
     reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
     every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5

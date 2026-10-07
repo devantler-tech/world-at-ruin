@@ -88,6 +88,11 @@ unfinished preview, with a separate accept-or-retire decision due 2026-11-01.
 [verified localhost tunnel](docs/zone-tunnel.md). It shows scripted replicas with a
 separate temporary character; shared controls and online progression remain in development.
 
+**Allocator safety work:** the [inactive fence reference](server/internal/fencereference/README.md)
+has a runnable TLS allocation proof for requests that outlive their deadline.
+Production handoff still retains uncertain allocations until the real allocator
+can prove that they cannot commit later.
+
 ## What this is (and isn't)
 
 - **Everything is text-authored** — scenes, world generation, materials, and characters are code,

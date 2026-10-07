@@ -25,6 +25,7 @@ const (
 	Collection = "world_at_ruin_handoff_leases"
 
 	schemaVersion         = 3
+	readableSchemaVersion = 4
 	previousSchemaVersion = 2
 	legacySchemaVersion   = 1
 	systemOwnerID         = "00000000-0000-0000-0000-000000000000"
@@ -32,6 +33,8 @@ const (
 )
 
 var (
+	// ErrReaderOnly holds expanded schemas until their separate writer activation.
+	ErrReaderOnly = errors.New("nakama lease: expanded record is reader only")
 	// ErrNotFound means no lease exists for the user/reservation key.
 	ErrNotFound = errors.New("nakama lease: not found")
 	// ErrConflict means the lease changed since the caller observed it.
@@ -71,19 +74,31 @@ type storageClient interface {
 // user and reservation identifiers select the Nakama object but are not
 // repeated inside its JSON value.
 type Lease struct {
-	UserID        string
-	ReservationID string
-	AttemptID     string
-	AllocationID  string
-	Observer      sim.EntityID
-	SecretRef     string
-	ExpiresAt     time.Time
-	ClaimedAt     time.Time
-	Staging       bool
-	Dispatched    bool
-	DispatchID    string
-	Releasing     bool
+	UserID           string
+	ReservationID    string
+	AttemptID        string
+	AllocationID     string
+	Observer         sim.EntityID
+	SecretRef        string
+	ExpiresAt        time.Time
+	ClaimedAt        time.Time
+	Staging          bool
+	Dispatched       bool
+	DispatchID       string
+	Releasing        bool
+	AllocatorBinding AllocatorBinding
+	readerOnly       bool
 }
+
+// AllocatorBinding identifies observations, never authenticated fence authority.
+type AllocatorBinding struct {
+	GenerationID    string
+	MemberSetDigest string
+	PodUID          string
+}
+
+// ReaderOnly reports an expanded durable schema that current mutations refuse.
+func (l Lease) ReaderOnly() bool { return l.readerOnly }
 
 // Record is a lease paired with the exact Nakama version that observed it.
 type Record struct {
@@ -143,8 +158,11 @@ func NewStore(storage storageClient) (*Store, error) {
 // normalizeObserved validates the caller's lease and exact storage version.
 // Its error deliberately describes the observation, not the embedded lease.
 func normalizeObserved(current Record) (Lease, error) {
+	if current.Lease.ReaderOnly() {
+		return Lease{}, ErrReaderOnly
+	}
 	observed, err := normalizeLease(current.Lease)
-	if err != nil || current.Version == "" || current.Version == "*" {
+	if err != nil || !validLeaseVersion(current.Version) {
 		return Lease{}, errors.New("nakama lease: invalid observed record")
 	}
 	return observed, nil
@@ -168,7 +186,13 @@ func (s *Store) loadExact(ctx context.Context, expected Record) (Record, error) 
 		return Record{}, err
 	}
 	if latest != expected {
+		if latest.Lease.ReaderOnly() {
+			return Record{}, ErrReaderOnly
+		}
 		return Record{}, ErrConflict
+	}
+	if latest.Lease.ReaderOnly() {
+		return Record{}, ErrReaderOnly
 	}
 	return latest, nil
 }
@@ -185,6 +209,9 @@ func (s *Store) writeOrLoad(ctx context.Context, lease Lease, version string) (R
 	if errors.Is(err, ErrNotFound) {
 		return Record{}, true, ErrConflict
 	}
+	if err == nil && latest.Lease.ReaderOnly() {
+		return Record{}, true, ErrReaderOnly
+	}
 	return latest, true, err
 }
 
@@ -195,6 +222,9 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
+	if normalized.ReaderOnly() || normalized.AllocatorBinding != (AllocatorBinding{}) {
+		return Record{}, ErrReaderOnly
+	}
 	if !normalized.ClaimedAt.IsZero() {
 		return Record{}, ErrClaimed
 	}
@@ -202,6 +232,9 @@ func (s *Store) Create(ctx context.Context, lease Lease) (Record, error) {
 		return Record{}, ErrReleasing
 	}
 	current, err := s.Load(ctx, normalized.UserID, normalized.ReservationID)
+	if err == nil && current.Lease.ReaderOnly() {
+		return Record{}, ErrReaderOnly
+	}
 	switch {
 	case err == nil && current.Lease == normalized:
 		return current, nil
@@ -288,6 +321,9 @@ func (s *Store) BeginDispatch(
 	if writeErr == nil {
 		return dispatched, true, nil
 	}
+	if errors.Is(writeErr, ErrReaderOnly) {
+		return Record{}, false, writeErr
+	}
 	reconcileCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
 		dispatchReconcileTTL,
@@ -306,6 +342,9 @@ func (s *Store) BeginDispatch(
 	}
 	if loadErr != nil {
 		return Record{}, false, loadErr
+	}
+	if latest.Lease.ReaderOnly() {
+		return Record{}, false, ErrReaderOnly
 	}
 	if latest.Lease.AttemptID == attemptID &&
 		latest.Lease.Staging &&
@@ -481,7 +520,7 @@ func (s *Store) Claim(
 		return Record{}, ErrStaging
 	}
 	if !observed.ClaimedAt.IsZero() {
-		return current, nil
+		return s.loadExact(ctx, Record{Lease: observed, Version: current.Version})
 	}
 	if claimedAt.IsZero() || claimedAt.UnixNano() <= 0 {
 		return Record{}, errors.New("nakama lease: invalid claim time")
@@ -522,6 +561,9 @@ func (s *Store) Release(
 	}
 	if err != nil {
 		return err
+	}
+	if current.Lease.ReaderOnly() {
+		return ErrReaderOnly
 	}
 	userID = current.Lease.UserID
 	if current.Lease.AttemptID != attemptID {
@@ -618,6 +660,9 @@ func (s *Store) reclaimExpiredObject(
 	if err != nil {
 		return err
 	}
+	if lease.ReaderOnly() {
+		return ErrReaderOnly
+	}
 	if !lease.ClaimedAt.IsZero() ||
 		(lease.Dispatched && !lease.Releasing) ||
 		(!lease.Releasing && now.Before(lease.ExpiresAt)) {
@@ -641,7 +686,19 @@ func (s *Store) reclaimExpiredObject(
 		lease = record.Lease
 		version = record.Version
 	}
+	if err := s.requireWriterKey(ctx, object.GetKey(), version); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
 	if err := reclaim(ctx, lease); err != nil {
+		return err
+	}
+	if err := s.requireWriterKey(ctx, object.GetKey(), version); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			return nil
+		}
 		return err
 	}
 	err = s.storage.StorageDelete(ctx, []*runtime.StorageDelete{
@@ -660,18 +717,18 @@ func (s *Store) reclaimExpiredObject(
 	}
 }
 
+// validListedObject requires a private canonical key and usable exact storage version.
 func validListedObject(object *api.StorageObject) bool {
 	if object == nil ||
 		object.GetCollection() != Collection ||
 		object.GetUserId() != systemOwnerID ||
-		object.GetVersion() == "" ||
+		!validLeaseVersion(object.GetVersion()) ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 ||
-		len(object.GetKey()) != sha256.Size*2 {
+		!handoffidentity.SHA256Hex(object.GetKey()) {
 		return false
 	}
-	decoded, err := hex.DecodeString(object.GetKey())
-	return err == nil && len(decoded) == sha256.Size
+	return true
 }
 
 // write derives the lease's private reservation key and delegates the write
@@ -689,12 +746,24 @@ func (s *Store) write(
 	)
 }
 
+// writeKey retains the legacy writer and rechecks durable eligibility before exact-version writes.
 func (s *Store) writeKey(
 	ctx context.Context,
 	key string,
 	lease Lease,
 	version string,
 ) (Record, error) {
+	if lease.ReaderOnly() || lease.AllocatorBinding != (AllocatorBinding{}) {
+		return Record{}, ErrReaderOnly
+	}
+	if version != "*" {
+		if err := s.requireWriterKey(ctx, key, version); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return Record{}, ErrConflict
+			}
+			return Record{}, err
+		}
+	}
 	value, err := json.Marshal(documentFrom(lease))
 	if err != nil {
 		return Record{}, errors.New("nakama lease: encode lease")
@@ -716,7 +785,7 @@ func (s *Store) writeKey(
 	if err != nil {
 		return Record{}, sanitizeStorageError(err)
 	}
-	if len(acks) != 1 || !nakamastorage.ValidAcknowledgement(acks[0], Collection, key, systemOwnerID) {
+	if len(acks) != 1 || !nakamastorage.ValidAcknowledgement(acks[0], Collection, key, systemOwnerID) || !validLeaseVersion(acks[0].GetVersion()) {
 		return Record{}, ErrStorage
 	}
 	return Record{
@@ -756,7 +825,7 @@ func (s *Store) Load(
 	if object.GetCollection() != Collection ||
 		object.GetKey() != key ||
 		object.GetUserId() != systemOwnerID ||
-		object.GetVersion() == "" ||
+		!validLeaseVersion(object.GetVersion()) ||
 		object.GetPermissionRead() != 0 ||
 		object.GetPermissionWrite() != 0 {
 		return Record{}, ErrStorage
@@ -772,17 +841,20 @@ func (s *Store) Load(
 }
 
 type document struct {
-	Schema         int    `json:"schema"`
-	AttemptID      string `json:"attempt_id"`
-	AllocationID   string `json:"allocation_id"`
-	Observer       uint64 `json:"observer"`
-	SecretRef      string `json:"secret_ref"`
-	ExpiresAtNanos int64  `json:"expires_at_nanos"`
-	ClaimedAtNanos *int64 `json:"claimed_at_nanos"`
-	Staging        bool   `json:"staging,omitempty"`
-	Dispatched     bool   `json:"dispatched,omitempty"`
-	DispatchID     string `json:"dispatch_id,omitempty"`
-	Releasing      bool   `json:"releasing,omitempty"`
+	Schema                   int    `json:"schema"`
+	AttemptID                string `json:"attempt_id"`
+	AllocationID             string `json:"allocation_id"`
+	Observer                 uint64 `json:"observer"`
+	SecretRef                string `json:"secret_ref"`
+	ExpiresAtNanos           int64  `json:"expires_at_nanos"`
+	ClaimedAtNanos           *int64 `json:"claimed_at_nanos"`
+	Staging                  bool   `json:"staging,omitempty"`
+	Dispatched               bool   `json:"dispatched,omitempty"`
+	DispatchID               string `json:"dispatch_id,omitempty"`
+	Releasing                bool   `json:"releasing,omitempty"`
+	AllocatorGenerationID    string `json:"allocator_generation_id,omitempty"`
+	AllocatorMemberSetDigest string `json:"allocator_member_set_digest,omitempty"`
+	AllocatorPodUID          string `json:"allocator_pod_uid,omitempty"`
 }
 
 // postLegacySchemaKeys are the document keys that postdate the legacy schema.
@@ -815,6 +887,7 @@ func carriesSchemaKey(value string, keys []string) (bool, error) {
 	return false, nil
 }
 
+// documentFrom emits only the active writer's fields, never an expanded binding.
 func documentFrom(lease Lease) document {
 	var claimedAtNanos *int64
 	if !lease.ClaimedAt.IsZero() {
@@ -836,7 +909,12 @@ func documentFrom(lease Lease) document {
 	}
 }
 
+// leaseFrom strictly decodes historical and expanded shapes while preserving reader-only provenance.
 func leaseFrom(value, userID, reservationID string) (Lease, error) {
+	members, memberErr := leaseMembers(value)
+	if memberErr != nil {
+		return Lease{}, ErrStorage
+	}
 	decoder := json.NewDecoder(strings.NewReader(value))
 	decoder.DisallowUnknownFields()
 	var stored document
@@ -846,7 +924,7 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Lease{}, errors.New("nakama lease: invalid stored lease")
 	}
-	if (stored.Schema != schemaVersion &&
+	if (stored.Schema != readableSchemaVersion && stored.Schema != schemaVersion &&
 		stored.Schema != previousSchemaVersion &&
 		stored.Schema != legacySchemaVersion) ||
 		stored.ExpiresAtNanos <= 0 ||
@@ -858,6 +936,9 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		if err != nil || carried {
 			return Lease{}, errors.New("nakama lease: invalid stored lease")
 		}
+	}
+	if !validBindingMembers(members, stored.Schema) {
+		return Lease{}, ErrStorage
 	}
 	if stored.Schema == previousSchemaVersion {
 		carried, err := carriesSchemaKey(value, postPreviousSchemaKeys[:])
@@ -871,17 +952,19 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 		reservationID = "listed"
 	}
 	lease := Lease{
-		UserID:        userID,
-		ReservationID: reservationID,
-		AttemptID:     stored.AttemptID,
-		AllocationID:  stored.AllocationID,
-		Observer:      sim.EntityID(stored.Observer),
-		SecretRef:     stored.SecretRef,
-		ExpiresAt:     time.Unix(0, stored.ExpiresAtNanos).UTC(),
-		Staging:       stored.Staging,
-		Dispatched:    stored.Dispatched,
-		DispatchID:    stored.DispatchID,
-		Releasing:     stored.Releasing,
+		UserID:           userID,
+		ReservationID:    reservationID,
+		AttemptID:        stored.AttemptID,
+		AllocationID:     stored.AllocationID,
+		Observer:         sim.EntityID(stored.Observer),
+		SecretRef:        stored.SecretRef,
+		ExpiresAt:        time.Unix(0, stored.ExpiresAtNanos).UTC(),
+		Staging:          stored.Staging,
+		Dispatched:       stored.Dispatched,
+		DispatchID:       stored.DispatchID,
+		Releasing:        stored.Releasing,
+		AllocatorBinding: AllocatorBinding{GenerationID: stored.AllocatorGenerationID, MemberSetDigest: stored.AllocatorMemberSetDigest, PodUID: stored.AllocatorPodUID},
+		readerOnly:       stored.Schema == readableSchemaVersion,
 	}
 	if stored.ClaimedAtNanos != nil {
 		lease.ClaimedAt = time.Unix(0, *stored.ClaimedAtNanos).UTC()
@@ -897,7 +980,11 @@ func leaseFrom(value, userID, reservationID string) (Lease, error) {
 	return normalized, nil
 }
 
+// normalizeLease validates lifecycle and binding together before canonicalizing identity and times.
 func normalizeLease(lease Lease) (Lease, error) {
+	if !validAllocatorBinding(lease) {
+		return Lease{}, ErrStorage
+	}
 	if !validUserID(lease.UserID) ||
 		!validOpaqueID(lease.ReservationID) ||
 		!validOpaqueID(lease.AttemptID) ||

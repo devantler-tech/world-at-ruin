@@ -99,45 +99,53 @@ func NewHMACVerifier(secret []byte, allocation string) (*HMACVerifier, error) {
 // signature is verified before the expiry is trusted, because an attacker
 // controls every unverified field.
 func (v *HMACVerifier) Verify(token string) (sim.EntityID, error) {
+	observer, _, err := v.VerifyWithExpiry(token)
+	return observer, err
+}
+
+// VerifyWithExpiry returns only authenticated, unexpired token fields. Private
+// claim handlers use its expiry to enforce the durable lease's upper bound
+// without requiring a short-lived handoff to last for the entire lease.
+func (v *HMACVerifier) VerifyWithExpiry(token string) (sim.EntityID, time.Time, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) < 5 ||
 		(parts[0] != tokenPrefix && parts[0] != legacyTokenPrefix) {
-		return 0, ErrTokenFormat
+		return 0, time.Time{}, ErrTokenFormat
 	}
 	observerIndex := len(parts) - 3
 	expiryIndex := len(parts) - 2
 	signatureIndex := len(parts) - 1
 	allocation := strings.Join(parts[1:observerIndex], ".")
 	if allocation == "" {
-		return 0, ErrTokenFormat
+		return 0, time.Time{}, ErrTokenFormat
 	}
 	observer, err := strconv.ParseUint(parts[observerIndex], 10, 64)
 	if err != nil {
-		return 0, ErrTokenFormat
+		return 0, time.Time{}, ErrTokenFormat
 	}
 	expiry, err := strconv.ParseInt(parts[expiryIndex], 10, 64)
 	if err != nil {
-		return 0, ErrTokenFormat
+		return 0, time.Time{}, ErrTokenFormat
 	}
 	sig, err := hex.DecodeString(parts[signatureIndex])
 	if err != nil {
-		return 0, ErrTokenFormat
+		return 0, time.Time{}, ErrTokenFormat
 	}
 	payload := strings.Join(parts[:signatureIndex], ".")
 	mac := hmac.New(sha256.New, v.secret)
 	mac.Write([]byte(payload))
 	if !hmac.Equal(sig, mac.Sum(nil)) {
-		return 0, ErrTokenForged
+		return 0, time.Time{}, ErrTokenForged
 	}
 	if allocation != v.allocation {
-		return 0, ErrTokenForged
+		return 0, time.Time{}, ErrTokenForged
 	}
 	expiresAt := time.Unix(0, expiry)
 	if parts[0] == legacyTokenPrefix {
 		expiresAt = time.Unix(expiry, 0)
 	}
 	if !v.now().Before(expiresAt) {
-		return 0, ErrTokenExpired
+		return 0, time.Time{}, ErrTokenExpired
 	}
-	return sim.EntityID(observer), nil
+	return sim.EntityID(observer), expiresAt, nil
 }

@@ -4,12 +4,14 @@ package nakamaruntime
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
 type config struct {
@@ -17,10 +19,13 @@ type config struct {
 	allocatorAddress, allocatorCA, allocatorCert, allocatorKey string
 	unwrapKeys                                                 []string
 	namespace, fleet, tlsPort, zoneDomain                      string
-	leaseTTL, rpcTimeout                                       time.Duration
+	leaseTTL, tokenTTL, rpcTimeout                             time.Duration
 	claims                                                     privateConfig
+	orphans                                                    orphanConfig
 }
 
+// readConfig validates enabled runtime settings before any dependency is acquired.
+// A disabled module ignores the settings for its optional workers and listener.
 func readConfig(env map[string]string) (config, error) {
 	var cfg config
 	switch env["WAR_HANDOFF_ENABLED"] {
@@ -74,6 +79,13 @@ func readConfig(env map[string]string) (config, error) {
 	if err != nil || cfg.leaseTTL < 2*time.Second || cfg.leaseTTL > 10*time.Minute {
 		return config{}, invalidConfig("WAR_HANDOFF_LEASE_TTL")
 	}
+	cfg.tokenTTL = handoff.DefaultTokenTTL
+	if value, supplied := env["WAR_HANDOFF_TOKEN_TTL"]; supplied {
+		cfg.tokenTTL, err = time.ParseDuration(value)
+		if err != nil || cfg.tokenTTL < time.Second || cfg.tokenTTL > handoff.MaxTokenTTL {
+			return config{}, invalidConfig("WAR_HANDOFF_TOKEN_TTL")
+		}
+	}
 	cfg.rpcTimeout = 30 * time.Second
 	if value, supplied := env["WAR_HANDOFF_RPC_TIMEOUT"]; supplied {
 		cfg.rpcTimeout, err = time.ParseDuration(value)
@@ -83,6 +95,9 @@ func readConfig(env map[string]string) (config, error) {
 	}
 	cfg.claims, err = readPrivateConfig(env)
 	cfg.claims.allocatorCA, cfg.claims.allocatorCert = cfg.allocatorCA, cfg.allocatorCert
+	if err == nil {
+		cfg.orphans, err = readOrphanConfig(env)
+	}
 	return cfg, err
 }
 

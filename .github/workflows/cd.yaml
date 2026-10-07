@@ -569,7 +569,7 @@ jobs:
           echo "checksum matches the manifest emitted from the build: ${ACTUAL}"
 
       - name: 🔧 Set up ORAS
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
 
       - name: 🔏 Set up cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -2272,7 +2272,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/actions/aggregate-job-checks@df7fd4f83edade31c121a9de563d9a7b9b1f900d # v13.10.3
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
         with:
           job-results: >-
             ${{ needs.publish-macos.result }}

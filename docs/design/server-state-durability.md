@@ -197,6 +197,16 @@ and strict decoding guarantees it strands them loudly rather than silently.
 So the bake condition is that **the retained rollback target itself carries the expanded reader**,
 registered and tested as the standing rollback candidate, before the writer is activated.
 
+Allocator generations currently read schema 2 (`open` and `draining`) while
+creation remains at schema 1. Leases read schema 4 while mutations remain at
+schema 3. The expanded records are readable observations, not legacy write or
+allocation authority: durable-schema checks hold mutations, resource cleanup,
+allocator dispatch and admission-secret resolution. Permanent fixtures and the
+registered history tests verify every expanded lifecycle. Serving-reader rollout
+and readback from the actual retained rollback artifact remain pending; these
+source tests do not meet the writer-activation gate. See
+[ADR 0019](../adr/0019-expand-allocator-readers-before-state-writers.md).
+
 ### A stored document is decoded strictly
 
 Decoding rejects unknown fields and trailing content. An unexpected field is a refusal, not
@@ -482,19 +492,19 @@ needs to write a guard for.
 | The reader accepts the legacy end of the range | `nakamalease` document decode | `TestLoadKeepsSchemaOneLeaseReadableAsNotReleasing` |
 | The reader rejects a schema outside the range | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unsupported schema`) |
 | Unknown fields are refused | `nakamalease` document decode | `TestLoadRejectsMalformedOrPublicStoredObjects` (`unknown JSON field`) |
-| A repeated known member is refused | `nakamalease` document decode | **gap (running code)** — `DisallowUnknownFields` does not reject duplicates; `{"schema":1,"schema":2}` decodes clean and keeps `2` |
-| A required nullable field cannot be omitted or nulled undetected | every record owner, **incl. `nakamalease` today** | **gap (running code)** — `claimed_at_nanos` is a `*int64`, so absent and explicit `null` are indistinguishable |
-| Trailing content is refused | `nakamalease` document decode | **unguarded (#491)** — `leaseFrom` *does* enforce this via its second decode and `io.EOF` check; no test appends a trailing token, so a regression would leave every named guard green |
-| A required field omitted from its own schema is refused | every record owner, **incl. `nakamalease` today** | **gap (running code)** — no schema declares a required-field set, so an omitted required field decodes as an implicit zero |
-| Every shipped lease schema **shape** stays readable, permanently | `nakamalease` document decode | `TestEveryShippedLeaseSchemaShapeStaysReadable` plus the base-anchored ledger and complete schema-one through schema-three lifecycle-shape goldens enforced by `tools/google-binding-durability-guard.sh` (the legacy required Server CI entry point) |
+| A repeated known member is refused | `nakamalease` document decode | `TestExpandedLeaseCorruptionFailsCompleteObservation` pins duplicate, escaped and Unicode-folded aliases through direct reads, claim lookup and complete protection scans |
+| Required schema-four lease members are presence-aware, with explicit null allowed only for the unclaimed stamp | `nakamalease` document decode | `TestExpandedLeaseCorruptionFailsCompleteObservation`; legacy schemas retain their shipped optional-field behavior |
+| Trailing content is refused | `nakamalease` document decode | `TestExpandedLeaseCorruptionFailsCompleteObservation` appends a second object and requires direct reads, claim lookup and complete protection scans to refuse it |
+| A required schema-four lease field omitted from its own schema is refused | `nakamalease` document decode | `TestExpandedLeaseCorruptionFailsCompleteObservation` checks every required field; historical schema behavior remains readable |
+| Every shipped lease schema **shape** stays readable, permanently | `nakamalease` document decode | `TestEveryShippedLeaseSchemaShapeStaysReadable` plus the base-anchored ledger and complete schema-one through schema-four lifecycle-shape goldens enforced by `tools/google-binding-durability-guard.sh` (the legacy required Server CI entry point) |
 | The player-mutation audit declares an exact schema and refuses unknown, repeated, missing or trailing fields | `playerstate` audit decode | `TestApplyRejectsMalformedAuditDocuments` |
 | Every shipped player-mutation audit schema stays readable, permanently | `playerstate` audit decode | `TestEveryShippedAuditSchemaStaysReadable` plus `server/playerstate/testdata/shipped_audit_versions.txt` and its matching golden |
 | The character writer declares an exact schema and its reader refuses unknown, repeated, missing, trailing or public records | `nakamacharacter` document encode/decode | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | Every shipped character-record schema stays readable, permanently | `nakamacharacter` document decode | `TestLoadKeepsEveryShippedCharacterSchemaReadable` plus `server/nakamacharacter/testdata/shipped_character_versions.txt` and its matching golden |
-| A refusal quarantines the record **across replicas** | `nakamalease.Store` | **unguarded** — met by the operation-level form: every write presents `current.Version` from a strict `Load`, so an undecodable document yields no version and blocks every write. No composite refusal→write test pins it |
+| Expanded records remain quarantined across restart, reconstructed observations, retries and cleanup | `nakamalease.Store`, `handoffalloc.Coordinator`, `claimrpc` | `TestExpandedLeaseCannotBeDowngradedOrRetiredByLegacyMutations`, `TestExpandedLeaseRestartHoldsAllResourceOperations`, `TestPrivateClaimHoldsExpandedSchemaBeforeSecretResolution` and `TestExpandedLeaseCorruptionFailsCompleteObservation` |
 | A refusal quarantines a character record across replicas | `nakamacharacter.Store` | `TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion` pins the strict-read + version-match form |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | `TestLoadRefusesLegacySchemaCarryingPostLegacyKeys`, `TestLoadRefusesSchemaTwoCarryingDispatched` |
-| Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **gap (running code)** — schema-three read/write code is inert because no concrete `GameServerResources` adapter or production coordinator caller exists, but no server-side guard yet registers a rollback target carrying that reader before the adapter activates it |
+| Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **pending runtime evidence** — concrete resource adapters exist, but production allocator composition is inactive; expanded reader fixtures do not prove serving rollout or compatibility of an actual retained rollback artifact |
 | A player-record mutation and its audit entry commit atomically | `playerstate.Store` | `TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite`, `TestApplyCreatesAPlayerRecordConditionallyWithItsAudit` |
 | Every character mutation uses the atomic player-state boundary | `nakamacharacter.Store` | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount` observes the character record and append-only audit in one storage write |
 | Every other future player-owned mutation uses the atomic boundary | future player-record owners | not yet built — #474 has no record owner or caller yet |

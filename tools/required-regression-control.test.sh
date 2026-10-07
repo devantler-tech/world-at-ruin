@@ -4,10 +4,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-control="${repo_root}/tools/required-regression-control.sh"
+control_source="${repo_root}/tools/required-regression-control.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
+workflow_source="${tmp_dir}/workflow-source"
+control="${workflow_source}/tools/required-regression-control.sh"
 trusted="${tmp_dir}/trusted"
 candidate="${tmp_dir}/candidate"
 empty_trusted="${tmp_dir}/empty-trusted"
@@ -15,6 +17,7 @@ bin_dir="${tmp_dir}/bin"
 run_log="${tmp_dir}/runs.log"
 
 mkdir -p \
+	"${workflow_source}/tools" \
 	"${trusted}/client/tests" \
 	"${trusted}/tools" \
 	"${candidate}/client/tests" \
@@ -22,12 +25,15 @@ mkdir -p \
 	"${empty_trusted}/tools" \
 	"${bin_dir}"
 
+cp "${control_source}" "${control}"
 printf '%s\n' 'trusted alpha harness' >"${trusted}/client/tests/alpha_test.tscn"
 printf '%s\n' 'trusted beta harness' >"${trusted}/client/tests/beta_test.tscn"
 printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alpha_test.tscn"
 printf '%s\n' 'beta_test' >"${candidate}/client/tests/ci-skip.txt"
 printf '%s\n' 'candidate product bytes' >"${candidate}/client/product.marker"
 printf '%s\n' '[application]' >"${candidate}/client/project.godot"
+printf '%s\n' '[application]' 'config/name="trusted suite"' >"${trusted}/client/project.godot"
+cp "${trusted}/client/project.godot" "${empty_trusted}/client/project.godot"
 mkdir -p "${trusted}/client/tests/data" "${candidate}/client/tests/data"
 printf '# historical declaration\n1\n2\n3\n4\n5\n6\n' >"${trusted}/client/tests/data/shipped_save_capability.txt"
 cp "${trusted}/client/tests/data/shipped_save_capability.txt" "${candidate}/client/tests/data/shipped_save_capability.txt"
@@ -43,8 +49,9 @@ printf '%s\n' imported >>"${REQUIRED_REGRESSION_RUN_LOG}.import"
 printf '%s\n' 'trusted import completed'
 GODOT
 chmod +x "${bin_dir}/godot"
+cp "${bin_dir}/godot" "${tmp_dir}/godot-import-stub"
 
-cat >"${trusted}/tools/run-client-test.sh" <<'RUNNER'
+cat >"${workflow_source}/tools/run-client-test.sh" <<'RUNNER'
 #!/bin/bash
 set -euo pipefail
 
@@ -56,6 +63,10 @@ if [ ! -f client/product.marker ]; then
 	exit 91
 fi
 
+if [ "$(cat client/project.godot)" != $'[application]\nconfig/name="trusted suite"' ]; then
+	echo 'candidate selected protected-suite project settings' >&2
+	exit 96
+fi
 expected="trusted ${name%_test} harness"
 actual="$(cat "client/tests/${name}.tscn")"
 if [ "${actual}" != "${expected}" ]; then
@@ -79,22 +90,35 @@ fi
 
 printf '%s\n' "TEST PASS -- ${name}"
 RUNNER
-chmod +x "${trusted}/tools/run-client-test.sh"
-cp "${trusted}/tools/run-client-test.sh" "${empty_trusted}/tools/run-client-test.sh"
+chmod +x "${workflow_source}/tools/run-client-test.sh"
+cp "${workflow_source}/tools/run-client-test.sh" "${empty_trusted}/tools/run-client-test.sh"
+
+# Historical base helpers are inert sentinels, never host control inputs.
+export REQUIRED_REGRESSION_LEGACY_LOG="${tmp_dir}/historical-host.log"
+for helper in required-regression-control run-client-test; do
+  cat >"${trusted}/tools/${helper}.sh" <<'HISTORICAL'
+#!/bin/bash
+printf '%s\n' 'historical helper executed' >>"${REQUIRED_REGRESSION_LEGACY_LOG}"
+exit 0
+HISTORICAL
+  chmod +x "${trusted}/tools/${helper}.sh"
+done
 
 failures=0
 
+# Accumulate every independently observed control failure before reporting.
 fail() {
 	printf 'required-regression-control regression: FAIL -- %s\n' "$1" >&2
 	failures=$((failures + 1))
 }
 
+# Locate every local workflow caller, including renamed definitions.
 find_local_controller_workflows() {
 	local workflows_dir="$1"
 	local workflow_file
 	for workflow_file in "${workflows_dir}"/*.yaml "${workflows_dir}"/*.yml; do
 		[ -f "${workflow_file}" ] || continue
-		if grep -Fq 'tools/required-regression-control.sh' "${workflow_file}"; then
+		if grep -Eq 'tools/(required-regression-control|run-sandboxed-trusted-regressions)[.]sh' "${workflow_file}"; then
 			basename "${workflow_file}"
 		fi
 	done
@@ -142,6 +166,147 @@ else
 	fi
 fi
 
+# Candidate log links must never redirect host capture into unrelated files.
+cp "${workflow_source}/tools/run-client-test.sh" "${tmp_dir}/fixture-runner"
+cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
+cat >"${bin_dir}/godot" <<'GODOT'
+#!/bin/bash
+set -euo pipefail
+if [[ " $* " == *" --editor "* ]]; then
+  printf '%s\n' 'benign fixture import'
+else
+  printf '%s\n' 'TEST PASS -- benign fixture scene'
+fi
+GODOT
+for sink in trusted-import alpha_test beta_test; do
+  printf 'unchanged inert sentinel\n' >"${tmp_dir}/${sink}.sentinel"
+  ln -s "${tmp_dir}/${sink}.sentinel" "${candidate}/${sink}.log"
+done
+if ! PATH="${bin_dir}:${PATH}" /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+  fail "real verdict runner did not accept benign scenes with candidate log links: $(<"${control_output}")"
+fi
+for sink in trusted-import alpha_test beta_test; do
+  if [ "$(cat "${tmp_dir}/${sink}.sentinel")" != 'unchanged inert sentinel' ]; then
+    fail "candidate ${sink}.log redirected host output"
+  fi
+  rm "${candidate}/${sink}.log"
+done
+[ "$(grep -c 'TEST PASS -- benign fixture scene' "${control_output}")" -eq 2 ] ||
+  fail 'real verdict runner did not capture both benign scene outcomes'
+cp "${tmp_dir}/fixture-runner" "${workflow_source}/tools/run-client-test.sh"
+cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
+
+# Execute the real launcher/controller with a divergent event-base helper pair.
+# Only the external compiler/container runtime are stubs in this ownership test.
+cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
+for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime sandbox-godot; do
+  cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
+done
+cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
+mkdir -p "${workflow_source}/.github/containers" "${trusted}/docs/phase-0" \
+  "${candidate}/server/wire" "${candidate}/.github/workflows"
+cp "${repo_root}/.github/containers/trusted-regressions.Dockerfile" "${workflow_source}/.github/containers/"
+printf 'historical frame fixture\n' >"${trusted}/docs/phase-0/cave-chamber.png"
+printf 'candidate source data\n' >"${candidate}/server/wire/wire.go"
+printf 'candidate source data\n' >"${candidate}/.github/workflows/ci.yaml"
+cat >"${bin_dir}/go" <<'COMPILER'
+#!/bin/bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then
+    printf '#!/bin/bash\nexit 0\n' >"$2"
+    chmod +x "$2"
+    exit 0
+  fi
+  shift
+done
+exit 2
+COMPILER
+cat >"${bin_dir}/docker" <<'CONTAINER'
+#!/bin/bash
+set -euo pipefail
+case "$1" in
+  build) exit 0 ;;
+  image) printf 'sha256:%064d\n' 0 ;;
+  run)
+    for arg in "$@"; do
+      case "$arg" in
+        res://tests/*_test.tscn)
+          name="${arg##*/}"
+          printf '%s\n' "${name%.tscn}" >>"${REQUIRED_REGRESSION_RUN_LOG}"
+          ;;
+      esac
+    done
+    printf 'TEST PASS -- benign contained fixture\n'
+    ;;
+
+  *) exit 2 ;;
+esac
+CONTAINER
+chmod +x "${bin_dir}/go" "${bin_dir}/docker"
+: >"${run_log}"
+: >"${REQUIRED_REGRESSION_LEGACY_LOG}"
+if ! PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+  /bin/bash "${workflow_source}/tools/run-sandboxed-trusted-regressions.sh" "${trusted}" "${candidate}" \
+  >"${control_output}" 2>&1; then
+  fail "workflow-source launcher did not evaluate base-owned data: $(<"${control_output}")"
+fi
+if [ "$(<"${run_log}")" != $'alpha_test\nbeta_test' ]; then
+  fail 'launcher did not execute both scenes through workflow-source host helpers'
+fi
+if [ -s "${REQUIRED_REGRESSION_LEGACY_LOG}" ]; then
+  fail 'launcher executed a historical base host helper'
+fi
+rm "${bin_dir}/go" "${bin_dir}/docker"
+cp "${tmp_dir}/fixture-runner" "${workflow_source}/tools/run-client-test.sh"
+
+# Missing inputs and import failures refuse before any trusted scene can run.
+for broken in project trusted_project trusted_project_link runner import; do
+	: >"${run_log}"
+	case "$broken" in
+	project) mv "${candidate}/client/project.godot" "${tmp_dir}/project.godot" ;;
+	trusted_project) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot" ;;
+	trusted_project_link) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot"; ln -s "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
+	runner) chmod -x "${workflow_source}/tools/run-client-test.sh" ;;
+	import) printf '#!/bin/bash\necho "ERROR: deliberate import failure"\nexit 1\n' >"${bin_dir}/godot" ;;
+	esac
+	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+		fail "missing $broken input or failed import was accepted"
+	fi
+	[ ! -s "${run_log}" ] || fail "$broken refusal executed a regression scene"
+	case "$broken" in
+	project) mv "${tmp_dir}/project.godot" "${candidate}/client/project.godot" ;;
+	trusted_project) mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
+	trusted_project_link) rm "${trusted}/client/project.godot"; mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
+	runner) chmod +x "${workflow_source}/tools/run-client-test.sh" ;;
+	import) cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot" ;;
+	esac
+done
+
+# Unsupported startup configuration is refused before importing candidate code.
+for setting in autoload editor_plugins override symlink binary binary_link; do
+  cp "${candidate}/client/project.godot" "${tmp_dir}/clean-project"
+  case "$setting" in
+    autoload) printf '\n[autoload]\n' >>"${candidate}/client/project.godot" ;;
+    editor_plugins) printf '\n[editor_plugins]\n' >>"${candidate}/client/project.godot" ;;
+    override) printf '[application]\n' >"${candidate}/client/override.cfg" ;;
+    symlink) rm "${candidate}/client/project.godot"; ln -s "${tmp_dir}/clean-project" "${candidate}/client/project.godot" ;;
+    binary) printf 'unsupported binary configuration\n' >"${candidate}/client/project.binary" ;;
+    binary_link) ln -s nonexistent "${candidate}/client/project.binary" ;;
+  esac
+  : >"${run_log}.import"
+  if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+    fail "accepted unsupported startup configuration: $setting"
+  elif ! grep -q 'startup configuration' "${control_output}"; then
+    fail "startup refusal was not explicit: $setting"
+  fi
+  [ ! -s "${run_log}.import" ] || fail "imported unsupported configuration: $setting"
+  rm -f "${candidate}/client/project.godot" "${candidate}/client/override.cfg" "${candidate}/client/project.binary"
+  cp "${tmp_dir}/clean-project" "${candidate}/client/project.godot"
+done
+
 # Only the planned capability declaration is candidate input. A candidate
 # cannot change trusted history or hide that its writer has advanced.
 ledger="${candidate}/client/tests/data/shipped_save_capability.txt"
@@ -161,6 +326,9 @@ run_capability_case() {
 		elif ! grep -q 'save-capability declaration' "${control_output}"; then
 			fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
 		fi
+	fi
+	if [ "${want}" = pass ] && [ ! -s "${run_log}.import" ]; then
+		fail "${label}: passing candidate did not record its import"
 	fi
 	if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
 		fail "${label}: candidate ran before declaration validation"
@@ -234,14 +402,18 @@ if ! find_local_controller_workflows "${workflow_fixture_dir}" |
 fi
 
 local_workflows="$(find_local_controller_workflows "${repo_root}/.github/workflows")"
-if [ -n "${local_workflows}" ]; then
-	fail "candidate-repository workflows invoke the required-regression controller: ${local_workflows}"
+if [ "${local_workflows}" != $'repository-trusted-regressions.yaml\ntrusted-regressions.yaml' ]; then
+	fail "only the base-owned product workflow may invoke the controller: ${local_workflows}"
+elif ! bash "${repo_root}/tools/trusted-regression-workflow-guard.sh"; then
+	fail "the product workflow does not preserve the base-owned controller boundary"
+elif ! bash "${repo_root}/tools/repository-trusted-gate-workflow-guard.sh"; then
+	fail "the repository publisher workflow does not preserve the independent credential boundary"
 fi
 
 external_workflow='.github/workflows/world-at-ruin-required-regressions.yaml'
 for contract in "${repo_root}/AGENTS.md" \
 	"${repo_root}/docs/adr/0003-pin-required-regressions-outside-candidate-control.md"; do
-	if ! grep -Fq 'devantler-tech/actions' "${contract}" ||
+	if ! grep -Fq 'devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml' "${contract}" ||
 		! grep -Fq "${external_workflow}" "${contract}" ||
 		! grep -Fq 'refs/heads/main' "${contract}"; then
 		fail "$(basename "${contract}") does not name the live external workflow source contract"

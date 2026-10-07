@@ -64,8 +64,12 @@ Underlying storage errors and document contents do not appear in returned errors
 ## Compatibility and operational authority
 
 Schema 1 contains `schema`, `generation_id`, `member_pod_uids`,
-`member_set_digest` and `state`; its only supported state is `open`. The permanent
-ledger and golden fixture preserve this shape. The registered historical test
+`member_set_digest` and `state`; its only supported state is `open`. Schema 2
+retains that complete membership and admits `open` and `draining`. Both schema-2
+states are readable observations only: `Record.ReaderOnly()` is true, matching
+`CreateOpen` calls refuse adoption without writing, and the allocator-peer client
+refuses them before discovery or dispatch. The current writer still emits schema 1.
+The permanent ledger and golden fixtures preserve every shape. The registered historical test
 checks every field through the decoder and the real store read path. Conventional
 collection and reader registrations accompany the ledger for automatic schema
 discovery.

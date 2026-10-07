@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,7 +17,261 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"github.com/devantler-tech/world-at-ruin/server/zoneclaim"
 )
+
+func postJSON(t *testing.T, client *http.Client, ctx context.Context, endpoint, body string) (int, http.Header, []byte) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.StatusCode, response.Header, data
+}
+
+func TestCompletionMalformedDescriptorsNeverReachAuthority(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	r := f.admittedReceipt(t)
+	proofCalls := 0
+	cleanupCalls := 0
+	_, server := f.completion(t, func(context.Context, zoneclaim.Receipt) error { proofCalls++; return nil }, func(context.Context, nakamalease.Lease) error { cleanupCalls++; return nil })
+	transport := &http.Transport{TLSClientConfig: f.clientTLS}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	document, err := json.Marshal(map[string]any{"schema": 1, "namespace": "world", "lease_object_id": r.Fence.LeaseObjectID, "lease_version": r.Fence.LeaseVersion, "attempt_digest": r.Fence.AttemptDigest, "allocation_id": "zone-1", "gameserver_uid": "uid-1", "observer": 1, "generation_nanos": strconv.FormatInt(r.Fence.Generation.UnixNano(), 10)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := string(document)
+	for name, body := range map[string]string{
+		"duplicate":         strings.Replace(valid, "{", `{"namespace":"world",`, 1),
+		"escaped duplicate": strings.Replace(valid, "{", `{"namespac\u0065":"world",`, 1),
+		"alias":             strings.Replace(valid, `"namespace"`, `"Namespace"`, 1),
+		"missing":           strings.Replace(valid, `,"schema":1`, "", 1),
+		"null":              strings.Replace(valid, `"schema":1`, `"schema":null`, 1),
+		"future":            strings.Replace(valid, `"schema":1`, `"schema":2`, 1),
+		"trailing":          valid + `{}`, "oversize": strings.Repeat(" ", 4096) + valid, "array": `[]`,
+		"negative generation": strings.Replace(valid, strconv.FormatInt(r.Fence.Generation.UnixNano(), 10), "-1", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			statusCode, _, data := postJSON(t, client, t.Context(), server.URL+"/v1/session/end", body)
+			if statusCode != http.StatusForbidden || string(data) != "zone claim refused\n" || proofCalls != 0 || cleanupCalls != 0 {
+				t.Fatal("malformed completion reached authority or exposed details")
+			}
+		})
+	}
+	statusCode, _, _ := postJSON(t, client, t.Context(), server.URL+"/v1/session/end", valid)
+	if statusCode != http.StatusNoContent || proofCalls != 1 || cleanupCalls != 1 {
+		t.Fatal("valid completion control failed")
+	}
+}
+
+func TestCompletionClientSendsOnceAndRefusesUnexpectedResponses(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	receipt := f.admittedReceipt(t)
+	for _, mode := range []string{"redirect", "error", "extra body", "oversize", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			var calls atomic.Int32
+			var redirected atomic.Int32
+			release := make(chan struct{})
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.URL.Path != "/v1/session/end" {
+					redirected.Add(1)
+					return
+				}
+				switch mode {
+				case "redirect":
+					http.Redirect(w, r, "/other", http.StatusTemporaryRedirect)
+				case "error":
+					http.Error(w, "private failure", http.StatusServiceUnavailable)
+				case "extra body":
+					_, _ = io.WriteString(w, "private failure")
+				case "oversize":
+					_, _ = io.WriteString(w, strings.Repeat("x", 8192))
+				case "canceled":
+					select {
+					case <-r.Context().Done():
+					case <-release:
+					}
+				}
+			}))
+			server.TLS = f.serverTLS
+			server.StartTLS()
+			defer server.Close()
+			defer close(release)
+			client, err := NewCompletionClient(server.URL+"/v1/session/end", f.clientTLS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			if err := client.Complete(ctx, receipt); !errors.Is(err, ErrRefused) {
+				t.Fatal("unexpected completion response acknowledged")
+			}
+			if calls.Load() != 1 || redirected.Load() != 0 {
+				t.Fatal("completion followed redirect or retried")
+			}
+		})
+	}
+	for _, endpoint := range []string{"http://claims.example/v1/session/end", "https://claims.example/v1/session/end?x=1", "https://claims.example/v1/claim", "https://user@claims.example/v1/session/end"} {
+		if client, err := NewCompletionClient(endpoint, f.clientTLS); err == nil {
+			client.Close()
+			t.Fatal("unsafe completion endpoint accepted")
+		}
+	}
+}
+
+func TestCompletionClientAllowsCallerBudgetBeyondClaimTimeout(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	receipt := f.admittedReceipt(t)
+	var cleanupCalls atomic.Int32
+	h, err := NewCompletionHandler(f.store, endVerifierFunc(func(ctx context.Context, _ zoneclaim.Receipt) error {
+		timer := time.NewTimer(5500 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	}), func(context.Context, nakamalease.Lease) error { cleanupCalls.Add(1); return nil }, Config{Namespace: "world", TrustDomain: "claims.example", Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(h)
+	server.TLS = f.serverTLS
+	server.StartTLS()
+	defer server.Close()
+	client, err := NewCompletionClient(server.URL+"/v1/session/end", f.clientTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := client.Complete(ctx, receipt); err != nil {
+		t.Fatal("completion stopped before its caller budget")
+	}
+	if cleanupCalls.Load() != 1 {
+		t.Fatal("completion did not observe exact cleanup")
+	}
+}
+
+func TestReceiptClientRejectsMalformedOrSubstitutedIdentity(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	document := `{"schema":1,"namespace":"world","lease_object_id":"` + f.binding.LeaseObjectID + `","lease_version":"v2","attempt_digest":"` + f.binding.AttemptDigest + `","allocation_id":"zone-1","gameserver_uid":"uid-1","observer":1,"generation_nanos":"2000000000000000001"}`
+	for name, body := range map[string]string{
+		"valid": document, "duplicate": strings.Replace(document, "{", `{"namespace":"world",`, 1),
+		"alias":           strings.Replace(document, `"namespace"`, `"Namespace"`, 1),
+		"unknown":         strings.Replace(document, "{", `{"secret":"x",`, 1),
+		"null":            strings.Replace(document, `"lease_version":"v2"`, `"lease_version":null`, 1),
+		"wildcard":        strings.Replace(document, `"lease_version":"v2"`, `"lease_version":"*"`, 1),
+		"control version": strings.Replace(document, `"lease_version":"v2"`, `"lease_version":"v\n2"`, 1),
+		"trailing":        document + `{}`, "oversize": strings.Repeat(" ", 4096) + document,
+		"leading zero":     strings.Replace(document, `"2000000000000000001"`, `"02000000000000000001"`, 1),
+		"float generation": strings.Replace(document, `"2000000000000000001"`, `2000000000000000001`, 1),
+		"overflow":         strings.Replace(document, `"2000000000000000001"`, `"9223372036854775808"`, 1),
+		"other uid":        strings.Replace(document, `"uid-1"`, `"uid-2"`, 1),
+		"other observer":   strings.Replace(document, `"observer":1`, `"observer":2`, 1),
+		"other namespace":  strings.Replace(document, `"namespace":"world"`, `"namespace":"other"`, 1),
+		"other key":        strings.Replace(document, f.binding.LeaseObjectID, strings.Repeat("0", 64), 1),
+		"other allocation": strings.Replace(document, `"zone-1"`, `"zone-2"`, 1),
+		"other attempt":    strings.Replace(document, f.binding.AttemptDigest, strings.Repeat("a", 52), 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v2/claim" {
+					t.Error("receipt client did not select additive version")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			server.TLS = f.serverTLS
+			server.StartTLS()
+			defer server.Close()
+			client, err := NewClient(server.URL+"/v1/claim", f.clientTLS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			receipt, err := client.ClaimWithReceipt(t.Context(), f.binding, f.token, 1)
+			if name == "valid" {
+				if err != nil || receipt.Fence.LeaseVersion != "v2" || receipt.Fence.Generation.UnixNano() != 2000000000000000001 {
+					t.Fatalf("exact receipt refused or rounded: %v", err)
+				}
+			} else if !errors.Is(err, ErrRefused) || receipt.Fence.LeaseVersion != "" {
+				t.Fatal("unsafe receipt accepted or returned partial identity")
+			}
+		})
+	}
+}
+
+func TestReceiptClientReplaysOnlyOriginalClaim(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	client, _ := f.serve(t, func(context.Context, nakamalease.Lease) (handoff.Allocation, error) { return f.allocation, nil })
+	first, err := client.ClaimWithReceipt(t.Context(), f.binding, f.token, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeat, err := client.ClaimWithReceipt(t.Context(), f.binding, f.token, 1)
+	if err != nil || repeat != first {
+		t.Fatal("reconnect replaced original receipt")
+	}
+	bad := f.binding
+	bad.GameServerUID = "uid-2"
+	if _, err := client.ClaimWithReceipt(t.Context(), bad, f.token, 1); err == nil {
+		t.Fatal("substituted binding authorized")
+	}
+	if len(f.storage.WrittenValues()) != 2 {
+		t.Fatal("replay wrote another claim")
+	}
+}
+
+func TestV2ClaimReturnsOriginalDurableReceipt(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	f.storage.AfterWrite = func(int) error { return errors.New("lost acknowledgement") }
+	_, server := f.serve(t, func(context.Context, nakamalease.Lease) (handoff.Allocation, error) { return f.allocation, nil })
+	transport := &http.Transport{TLSClientConfig: f.clientTLS}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	var original string
+	for range 2 {
+		statusCode, header, data := postJSON(t, client, t.Context(), server.URL+"/v2/claim", requestBody(t, f))
+		if statusCode != http.StatusOK || header.Get("Cache-Control") != "no-store" || header.Get("Content-Type") != "application/json" {
+			t.Fatalf("claim receipt missing: status=%d", statusCode)
+		}
+		var receipt map[string]any
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := f.store.LoadForClaim(t.Context(), f.binding.LeaseObjectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(receipt) != 9 || receipt["schema"] != float64(1) || receipt["namespace"] != "world" || receipt["lease_object_id"] != f.binding.LeaseObjectID || receipt["lease_version"] != stored.Version || receipt["attempt_digest"] != f.binding.AttemptDigest || receipt["allocation_id"] != "zone-1" || receipt["gameserver_uid"] != "uid-1" || receipt["observer"] != float64(1) || receipt["generation_nanos"] != strconv.FormatInt(stored.Lease.ClaimedAt.UnixNano(), 10) {
+			t.Fatalf("receipt does not identify original durable claim: %s", data)
+		}
+		if original != "" && string(data) != original {
+			t.Fatal("replay replaced the original receipt")
+		}
+		original = string(data)
+	}
+	if len(f.storage.WrittenValues()) != 2 {
+		t.Fatal("receipt replay rewrote the claim generation")
+	}
+}
 
 // requestBody uses literal protocol keys so a production encoder regression
 // cannot silently change both sides of the decoding tests.
@@ -56,19 +311,9 @@ func TestHandlerRefusesMalformedBodiesBeforeResolving(t *testing.T) {
 		"object":    `[]`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/v1/claim", strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			request.Header.Set("Content-Type", "application/json")
-			response, err := client.Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			content, err := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if err != nil || response.StatusCode != http.StatusForbidden || string(content) != "zone claim refused\n" {
-				t.Fatalf("unsafe refusal: status=%d error=%v body=%q", response.StatusCode, err, content)
+			statusCode, _, content := postJSON(t, client, context.Background(), server.URL+"/v1/claim", body)
+			if statusCode != http.StatusForbidden || string(content) != "zone claim refused\n" {
+				t.Fatalf("unsafe refusal: status=%d body=%q", statusCode, content)
 			}
 		})
 	}

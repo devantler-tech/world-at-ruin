@@ -145,6 +145,26 @@ zone/dungeon server:
   tracker/encoder and Godot decoder/store/connection agree on exact frames.
   It exists as a pinned contract *before* transport selection, so the socket
   child builds against a settled format instead of inventing one.
+- **Authoritative movement trial** — `zone -listen … -movement-intents` enables
+  explicit wire-v3 negotiation without changing retained v1/v2 peers. A fixed
+  intent carries only increasing sequence, ground direction and sprint; the
+  simulation owner applies server-owned speed before its normal deterministic
+  step. `-movement-hold-ticks` bounds silence handling to 1–300 ticks (default
+  three). Replays, malformed input and the per-tick frame budget cannot prolong
+  movement. Own-position acknowledgements report a completed tick and applied
+  sequence through a separate coalesced slot, surviving replication resync.
+  Disconnect clears control and reconnect starts with fresh sequence state.
+  The flag is off by default and swimming is reserved but refused. The Godot
+  client requests v2 ordinarily; explicit `WAR_ZONE_MOVEMENT=1` selects the
+  bounded v3 producer. See [ADR 0024](../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md)
+  and [ADR 0025](../docs/adr/0025-bound-opt-in-client-movement-networking.md).
+- **Isolated client prediction reference** — latent integer libraries match
+  the actual one-actor server step and return corrections from bounded tick
+  replay. Explicit speed, bounds and hold settings are required; v3 does not
+  distribute them or attest when a sample reached its mailbox. Shared Go/Godot
+  position vectors and the required native TLS prediction scenario exercise
+  this boundary. Player controls, collision prediction, rendering and live
+  configuration remain separate work. See [ADR 0026](../docs/adr/0026-keep-client-ground-prediction-explicit.md).
 - **Zone shutdown** — after the simulation loop stops, the command closes HTTP
   ingress, calls `Hub.Shutdown` with a five-second budget, then notifies Agones.
   The hub permanently refuses admission, cancels pending claims, closes upgraded
@@ -335,9 +355,13 @@ zone/dungeon server:
   (`PermissionRead: 0`, `PermissionWrite: 0`), use a strict versioned JSON
   schema, omit the raw user/reservation identifiers and admission-secret bytes,
   and expose only sanitized errors. The reader permanently accepts every
-  ledgered schema-one through schema-three lifecycle shape, with base-anchored
+  ledgered schema-one through schema-four lifecycle shape, with base-anchored
   ledgers and complete goldens preventing a shipped shape from being rewritten
-  or removed. Schema-three writes add a durable `dispatched` point of no return
+  or removed. Schema-four reads preserve the three-scalar allocator binding in
+  all seven lifecycle shapes, including finalized records after dispatch flags
+  are cleared. They remain read-only: fresh durable checks refuse every legacy
+  mutation, cleanup, allocation and private claim path before external work.
+  Schema-three writes add a durable `dispatched` point of no return
   and unique dispatch-call identity, while the existing durable `releasing`
   barrier atomically decides whether zone admission or external cleanup owns
   an attempt. A paginated private-collection sweep exact-version
@@ -546,7 +570,7 @@ the allocator-generation fence supervisor of
 production composition of the private zone claim endpoint and fenced session-end recovery,
 the client entry point that enables Google account
 provisioning, the party and chat half of the Nakama social surface, client
-prediction and reconciliation, real navmesh geometry, and Postgres/CNPG
+prediction and reconciliation in the player controller, real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope, and the concrete resource adapter validates, unwraps and recovers it;
 the fence, private claim listener composition and platform deployment of the
@@ -558,6 +582,38 @@ boundary, allocation API boundary, GameServer resource boundary, private lease
 store, concrete Agones resource adapter, durable handoff coordinator and fail-closed
 handoff core are in place; later slices build on those tested seams instead of
 creating a parallel meta service.
+
+## Pinned allocator peer transport
+
+`allocatorpeer` is an opt-in library with no production caller. It binds a
+complete private generation to one selected Pod UID, independently trusted
+server name and server key. Complete discovery chooses a deterministic literal
+socket, and the generation and discovery are checked again after TLS readiness.
+Only that socket is dialed. The generated allocation API still passes through
+the existing pool, correlation and admission-response validation.
+
+The constructor accepts bounded static root/certificate/key DER bytes and owns
+their parsed copies. Normal TLS 1.3 chain and hostname verification precedes
+the selected server SPKI check. Caller callbacks, DNS routing, proxies,
+service-config changes and alternate endpoint/member fallback are absent.
+
+Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` from the
+repository root. The native proof composes the generation store, namespaced
+HTTPS discovery and a real mutual-TLS generated Allocate service. The API
+server and storage backend are hermetic fixtures; no deployed provider is
+claimed. Every post-invocation failure remains uncertain, including an
+empty-pool answer, malformed response, cancellation or lost response.
+
+Bindings are observations. They do not authorize native commit fencing,
+quarantine release or durable incarnation recovery. Configured retries are
+disabled and the zero replay buffer commits this pinned unary request before
+reading its response. Native connection loss after an effect causes one uncertain
+return and no repeated handler, with the listener still available for reconnection.
+Transparent retries can occur during stream creation before request DATA; this
+does not guarantee at-most-once execution across separate operations or restarts.
+See [ADR 0018](../docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md).
+Production commit-boundary work in #793 and provider evaluation in #569 remain
+open. No persisted schema, collection, writer or runtime activation changes.
 
 ## Validate
 
@@ -580,3 +636,8 @@ CI runs exactly this in the `Server CI (Go)` job, aggregated into the
 - **Forward-only by construction.** Simulation units are integers and the tick
   rate is a constant; there is no wall-clock or unseeded randomness in the
   authoritative path, so a build's behaviour is fully attributable to its code.
+
+The explicitly experimental [native Nakama acceptance bundle](nakamaruntime/README.md#experimental-native-nakama-acceptance)
+builds and loads the actual plugin against disposable PostgreSQL. Its separate
+locked graph and native amd64/arm64 CI establish source behavior; production
+activation remains separately gated.

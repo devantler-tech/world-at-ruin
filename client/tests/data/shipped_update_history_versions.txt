@@ -1,0 +1,2 @@
+# Append-only update-history reader versions. Each needs a preserved golden.
+1
