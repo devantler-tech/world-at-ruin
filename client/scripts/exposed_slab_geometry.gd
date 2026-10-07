@@ -160,7 +160,12 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 		var slab_triangles := _emit_slab(st, polygon, thickness, half, step, height, normal, color)
 		if slab_triangles <= 0:
 			continue
-		tops.append({&"polygon": polygon, &"thickness": thickness})
+		tops.append({
+			&"polygon": polygon,
+			&"thickness": thickness,
+			&"identity": identity,
+			&"edge_ash": _edge_ash_cover(field, polygon, normal),
+		})
 		stats[&"built"] += 1
 		triangles += slab_triangles
 		stats[&"max_triangles_per_slab"] = maxi(
@@ -308,6 +313,36 @@ static func _exposed_at(field: ExposedSlabField, world_seed: int, at: Vector2,
 		&"drift": drift,
 	})
 	return bool(verdict.get(&"exposed", false))
+
+
+## Ash immediately outside the ORIGINAL fracture edges, before triangle-grid
+## splitting. Three samples distinguish a buried edge from an intact exposed
+## neighbour; the rubble child consumes this source record, never a second
+## independent scatter field. The ash sheet is the same drift/slope expression
+## used by the terrain shader and _exposed_at, without the discrete slab pick.
+static func _edge_ash_cover(field: ExposedSlabField, polygon: PackedVector2Array,
+		normal: Callable) -> PackedFloat32Array:
+	var cover := PackedFloat32Array()
+	for index in polygon.size():
+		var a := polygon[index]
+		var b := polygon[(index + 1) % polygon.size()]
+		var direction := b - a
+		if direction.length_squared() <= WELD * WELD:
+			cover.append(0.0)
+			continue
+		var outward := Vector2(direction.y, -direction.x).normalized()
+		var ash := 0.0
+		for along: float in [0.25, 0.5, 0.75]:
+			var probe := a.lerp(b, along) + outward * 0.18
+			var n: Vector3 = normal.call(probe.x, probe.y)
+			var drift := field.ground_drift(probe)
+			var rock := field.rock_mix_for(clampf(1.0 - n.y, 0.0, 1.0), drift)
+			var sheet := clampf(smoothstep(-ExposedSlabField.ASH_CONTACT,
+				ExposedSlabField.ASH_CONTACT, drift - ExposedSlabField.EXPOSED_THRESHOLD)
+				+ rock, 0.0, 1.0)
+			ash += 1.0 - sheet
+		cover.append(ash / 3.0)
+	return cover
 
 
 static func _emit_slab(st: SurfaceTool, polygon: PackedVector2Array, thickness: float,

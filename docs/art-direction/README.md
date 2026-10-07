@@ -317,6 +317,19 @@ Committed skin textures exist (`client/assets/characters/humanoid_kit/skins/*.pn
 `ImageTexture`s at runtime. **Debris is textured too** — `debris.gdshader:34` samples `albedo_tex`,
 which `foliage_art.gd:93-101` fills with generated stone textures for bone piles and rubble.
 
+The default-off WAR_GROUND_PLATES=1 treatment also gathers cosmetic chips and grit at selected
+ash-facing edges of the actual raised polygons. Original fracture edges supply stable source
+records and outward ash samples; shared raised tops and landmark approaches stay clear. Larger
+chips beside the lip grade into smaller grit in the ash, with at most 192 aprons and 1,152
+cluster instances in one generated opaque batch, each reusing a mesh of four stone chunks.
+The whole scaled footprint stays clear of intact tops and protected approaches; an apron
+that loses every larger lip chip is rejected. This improves the transition without changing the
+base terrain, solid tops or original foliage records. Repeated cluster silhouettes and the
+missing contact shadows still require visual judgment, and regional exposure and the raised
+stone's performance activation gate remain open.
+The [close walking and grazing evidence](../evidence/issue-549-slab-rubble/README.md)
+isolates this cosmetic batch and retains repeat, restore and opt-out controls.
+
 What is arithmetic-only is **the ground, the cave rock and the masonry** — `terrain.gdshader`,
 `cave_rock.gdshader` and `masonry.gdshader` compute colour from noise with no texture at all. That
 is the surface area this gap covers; say "the ground, cave rock and masonry have no textures", not

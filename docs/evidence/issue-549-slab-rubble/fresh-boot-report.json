@@ -1,0 +1,64 @@
+{
+	"aprons": 192,
+	"ash_cover": 0.975698947906494,
+	"batch_surfaces": 1,
+	"chunks_per_cluster": 4,
+	"cluster_footprint_radius": 0.411487281322479,
+	"edge_a": [
+		26.6594085693359,
+		7.95103311538696
+	],
+	"edge_b": [
+		26.055685043335,
+		7.7935037612915
+	],
+	"max_placements": 1152,
+	"placement_unit": "cluster_instances",
+	"placements": 1148,
+	"selected_clusters": [
+		{
+			"pos": "(26.38489, 1.98079, 8.360443)",
+			"scale": 0.695526060108095
+		},
+		{
+			"pos": "(26.41695, 1.98533, 8.331367)",
+			"scale": 0.665741617009044
+		},
+		{
+			"pos": "(26.04487, 1.959867, 8.574915)",
+			"scale": 0.176903163278475
+		},
+		{
+			"pos": "(26.18168, 1.934484, 8.614182)",
+			"scale": 0.24993181235157
+		},
+		{
+			"pos": "(26.02588, 1.961874, 8.575943)",
+			"scale": 0.233733525723219
+		},
+		{
+			"pos": "(26.1513, 1.964494, 8.514415)",
+			"scale": 0.272622221643105
+		}
+	],
+	"source_edge": 0,
+	"source_identity": "(1409, 22, 6)",
+	"views": [
+		{
+			"changed_fraction": 0.00350260416666667,
+			"control_fraction": 0.0,
+			"draw_calls_after": 212,
+			"draw_calls_before": 211,
+			"eye": "(24.27814, 2.769748, 11.50734)",
+			"name": "walking"
+		},
+		{
+			"changed_fraction": 0.00990885416666667,
+			"control_fraction": 0.0,
+			"draw_calls_after": 163,
+			"draw_calls_before": 162,
+			"eye": "(25.21429, 2.295341, 10.09803)",
+			"name": "grazing"
+		}
+	]
+}

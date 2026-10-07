@@ -779,7 +779,7 @@ everything shipped afterwards is held to.
   NetworkPolicy resources must stay out of the tenant artifact. Run
   `go -C server test -count=1 ../tools/deploy-manifests/main.go ../tools/deploy-manifests/main_test.go`
   (Go and `kubectl` required) to check the actual rendered bundle and nested-resource refusals.
-- **Raised exposed-stone overlay (#547, ADR 0001) — default-off, one batch, solid where drawn.** Under
+- **Raised exposed-stone overlay (#547, ADR 0001) — default-off, solid where drawn.** Under
   `WAR_GROUND_PLATES=1` `WorldGen` adds one `GroundPlates` `MeshInstance3D` after the rest of the
   world is built: `ExposedSlabGeometry` walks the deterministic `ExposedSlabField`, lifts every slab
   whose site and enough of whose corners the field decides are exposed (`MIN_EXPOSED_CORNER_SHARE`)
@@ -796,7 +796,8 @@ everything shipped afterwards is held to.
   are unchanged with the flag on. Foliage centres inside built slab polygons are excluded (#895);
   retained ash placements keep their stored traits, and opting out restores the complete original
   scatter. The flag-on node tree is the flag-off tree plus the
-  overlay node and its collision body. **The tops are solid exactly where drawn (#548):** one
+  overlay node and its collision body; the cosmetic rubble batch belongs beneath the overlay,
+  leaving the world's top-level inventory unchanged. **The tops are solid exactly where drawn (#548):** one
   `GroundPlatesBody` carries a trimesh built from the overlay mesh itself, lips included, so render and
   collision cannot disagree; `WorldGen.walkable_height_at()` answers the raised top inside a built
   slab (its ground plus that slab's thickness) and exactly `surface_height_at()` everywhere else, and it
@@ -818,6 +819,24 @@ everything shipped afterwards is held to.
   Independent regressions hold actual raised-side support and forbid unearned travel from rest or
   after changing direction, climbing tall walls, and stepping beneath insufficient headroom. Inspect
   the [close frames and controller sequence](docs/evidence/issue-895-896-slab-crossings/README.md).
+  **Chips and grit follow actual edges (#549, ADR 0029):** the built top records carry stable
+  identities and ash-cover samples immediately outside their original fracture edges.
+  ExposedSlabRubble ranks eligible ash-facing edges and gathers larger chips beside the lip,
+  smaller grit further out. Shared raised-stone edges, shrine and ruin clearings, the cave
+  footprint and the doorway walk-out apron remain clear for the entire scaled cluster footprint.
+  Circle/polygon distances and protected-circle radius sums reuse at most nine nearby cells
+  of the existing raised-top index. Every accepted apron retains larger chips and finer grit.
+  No original foliage placement is appended or rewritten. At most 192 aprons and 1,152 cluster
+  instances render in one unshadowed GroundPlateRubble MultiMesh using the existing generated
+  opaque rubble art (four stone chunks per instance); it has no
+  collision or saved state. Live opt-out hides it and repeated opt-in reuses the batch.
+  exposed_slab_rubble_test holds source, graded reach, clear neighbours, count bounds,
+  reordered-source and process-RNG independence. ground_plate_rubble_test proves fresh/live
+  convergence and the unchanged base terrain, plate collision and foliage records.
+  client/tools/plate_rubble_capture.tscn captures walking and grazing before/after/control
+  arms of one real boot; use 1280×720, all three redirected save seams and
+  WAR_PLATE_RUBBLE_SHOT_DIR. The art, regional exposure and GPU activation gates remain open.
+  Inspect the [same-build close frames and fresh-boot controls](docs/evidence/issue-549-slab-rubble/README.md).
   The overlay keeps out
   of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact
   uniform and the overlay together in a running world so a measurement tool can compare both
@@ -825,7 +844,9 @@ everything shipped afterwards is held to.
   [`client/tools/plate_geometry_budget.gd`](client/tools/plate_geometry_budget.gd) (windowed only,
   1280×720, VSync off, shipping volumetrics): it reads the viewport's measured GPU frame time for
   600 steady frames per state and reports candidate/slab/exposed/built counts, vertices, triangles,
-  surfaces and draw calls. **On Metal that GPU timer reads 0.0 in every frame, as ADR 0001 already
+  surfaces and draw calls. Its shader-only arm explicitly hides both tops and cosmetic rubble;
+  the full-on arm includes both, and plate_geometry_state_test holds those state meanings.
+  **On Metal that GPU timer reads 0.0 in every frame, as ADR 0001 already
   recorded for the command-line profiler, and the tool reports UNAVAILABLE rather than a pass** —
   it prints wall-clock frame time beside it as a GPU-bound *proxy* for what a player feels, never as
   the budget measurement. Its frames are the close-range evidence under
