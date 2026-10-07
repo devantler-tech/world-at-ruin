@@ -270,9 +270,10 @@ func _test_world() -> void:
 	var expected_names := off_names.duplicate()
 	expected_names.append(WorldGen.GROUND_PLATES_NODE)
 	expected_names.append(WorldGen.GROUND_PLATES_BODY)
+	expected_names.append(WorldGen.GROUND_PLATE_RUBBLE_NODE)
 	if on_names != expected_names:
-		_fail("the on-state tree is %s, expected the off-state tree plus one %s and its %s"
-			% [on_names, WorldGen.GROUND_PLATES_NODE, WorldGen.GROUND_PLATES_BODY])
+		_fail("the on-state tree is %s, expected exactly the original tree plus tops, their collision and one cosmetic rubble batch"
+			% [on_names])
 	if _terrain_hash(a) != off_terrain:
 		_fail("the base terrain mesh changed with the flag on")
 	if _collision_hash(a) != off_collision:

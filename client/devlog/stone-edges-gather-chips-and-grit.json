@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-07",
+  "title": "Chips and grit at weathered stone edges",
+  "notes": [
+    "The existing WAR_GROUND_PLATES=1 preview now gathers small chips and finer grit beside selected ash-facing slab edges. Their aprons follow the actual built stone instead of scattering independently across the world.",
+    "Intact neighbouring slabs, the starter cave walk-out apron, shrine clearing and ruin footprints stay clear. One bounded cosmetic batch leaves the original terrain, solid stone and foliage records intact; switching the preview off restores the ordinary cover.",
+    "Close and grazing same-build comparisons isolate the added fragments from the raised tops. The generated cluster shape and missing contact shadows still need judgment; regional exposure, the performance activation gate and Phase 0 art acceptance remain open."
+  ]
+}

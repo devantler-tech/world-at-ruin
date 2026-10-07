@@ -200,10 +200,7 @@ func _ready() -> void:
 ## state. The uniform and the overlay flip together through the world's own
 ## toggle, so nothing but the treatment differs between two calls.
 func _measure(state: String, plates: bool, overlay_visible: bool) -> Dictionary:
-	_world.set_ground_plates_enabled(plates)
-	var overlay := _world.get_node_or_null(WorldGen.GROUND_PLATES_NODE) as MeshInstance3D
-	if overlay != null:
-		overlay.visible = plates and overlay_visible
+	_set_measurement_state(plates, overlay_visible)
 	for _f in SETTLE_FRAMES:
 		_cam.current = true
 		await get_tree().process_frame
@@ -275,6 +272,18 @@ func _volumetrics_enabled() -> bool:
 func _quiet_the_world() -> void:
 	var hidden := FrameMetrics.quiet(_main, ["Wanderer", "Npcs", "Creatures", "Hud", "Replicas"])
 	print("  quieted: %s" % ", ".join(hidden))
+
+
+## Shader-only means shader-only, even after the opt-in treatment gains rubble.
+## The full on arm retains the actual treatment; no budget threshold changes.
+func _set_measurement_state(plates: bool, overlay_visible: bool) -> void:
+	_world.set_ground_plates_enabled(plates)
+	var overlay := _world.get_node_or_null(WorldGen.GROUND_PLATES_NODE) as MeshInstance3D
+	if overlay != null:
+		overlay.visible = plates and overlay_visible
+	var rubble := _world.get_node_or_null(WorldGen.GROUND_PLATE_RUBBLE_NODE) as MultiMeshInstance3D
+	if rubble != null:
+		rubble.visible = plates and overlay_visible
 
 
 func _unusable(message: String) -> void:

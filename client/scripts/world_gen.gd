@@ -80,6 +80,8 @@ const GROUND_PLATES_NODE := "GroundPlates"
 ## very mesh the player sees, so the walked surface and the visible one cannot
 ## disagree anywhere — not on a top, a lip, or a seam between two slabs.
 const GROUND_PLATES_BODY := "GroundPlatesBody"
+## One extra cosmetic batch, never part of the baseline foliage inventory.
+const GROUND_PLATE_RUBBLE_NODE := "GroundPlateRubble"
 ## Side of the square cells the raised tops are indexed by for
 ## [method walkable_height_at], metres. A slab is about 1.2 m across, so a cell
 ## this size holds a handful of footprints and a query tests only those.
@@ -101,6 +103,13 @@ var _ground_plates_stats := {}
 ## the cell index over them. Empty when the overlay was never built.
 var _ground_plate_tops: Array[Dictionary] = []
 var _ground_plate_index := {}
+var _ground_plate_rubble: Array[Dictionary] = []
+var _ground_plate_aprons: Array[Dictionary] = []
+## Original cosmetic placements and slab-edge provenance, returned as owned copies.
+var ground_plate_rubble: Dictionary:
+	get:
+		return {&"placements": _ground_plate_rubble.duplicate(true),
+			&"aprons": _ground_plate_aprons.duplicate(true)}
 ## The ground regions this world was dealt, built once at generation and read
 ## for every terrain vertex. See [GroundRegions].
 var _region_sites: Array[GroundRegions.Site] = []
@@ -471,6 +480,38 @@ func _build_ground_plates() -> void:
 	collider.shape = shape
 	body.add_child(collider)
 	add_child(body)
+	_build_ground_plate_rubble()
+
+
+## Cosmetic chips and grit gather only at the built slabs' ash-facing edges.
+## One batch adds no physics and never mutates the original foliage records.
+func _build_ground_plate_rubble() -> void:
+	var keep_outs := _foliage_keep_outs()
+	if not _cave_apron.is_empty():
+		keep_outs.append([_cave_apron[0], _cave_apron[1]])
+	var mesh := FoliageArt.mesh_for(FoliageGen.Kind.RUBBLE)
+	var footprint_radius := ExposedSlabRubble.mesh_radius(mesh)
+	var protected := func(x: float, z: float, radius: float) -> bool:
+		for circle: Array in keep_outs:
+			if Vector2(x, z).distance_to(circle[0]) <= float(circle[1]) + radius:
+				return true
+		return false
+	var stone := func(x: float, z: float, radius: float) -> bool:
+		return ExposedSlabRubble.intersects_index(Vector2(x, z), radius,
+			_ground_plate_tops, _ground_plate_index, GROUND_PLATE_INDEX_CELL)
+	var result := ExposedSlabRubble.new().build(
+		_ground_plate_tops, surface_height_at, protected, stone, footprint_radius)
+	_ground_plate_rubble.assign(result[&"placements"])
+	_ground_plate_aprons.assign(result[&"aprons"])
+	if _ground_plate_rubble.is_empty():
+		return
+	var batch := MultiMeshInstance3D.new()
+	batch.name = GROUND_PLATE_RUBBLE_NODE
+	batch.multimesh = CosmeticInstances.batch(
+		mesh, CosmeticInstances.transforms(mesh, _ground_plate_rubble))
+	batch.material_override = FoliageArt.material_for(FoliageGen.Kind.RUBBLE)
+	batch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(batch)
 
 
 ## Flip the plate treatment in a RUNNING world — the shader uniform and the
@@ -494,6 +535,9 @@ func set_ground_plates_enabled(on: bool) -> void:
 			_refresh_foliage()
 		return
 	overlay.visible = on
+	var rubble := get_node_or_null(GROUND_PLATE_RUBBLE_NODE) as MultiMeshInstance3D
+	if rubble != null:
+		rubble.visible = on
 	# The stone is solid only while it is drawn: a hidden top a body still
 	# stood on would be the render/physics disagreement #548 exists to remove.
 	var body := get_node_or_null(GROUND_PLATES_BODY)
