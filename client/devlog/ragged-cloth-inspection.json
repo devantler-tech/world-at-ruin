@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-01",
+  "title": "Inspect the ragged cloth",
+  "notes": [
+    "Opt into WAR_RAGGED_CLOTH_DETAIL=1 to preview finer woven fibres, worn colour and matte cloth highlights on the existing ragged base. Ordinary launches keep the current material.",
+    "Fixed front, rear and gameplay captures compare the real garment with a flat-material control, so its surface can be judged close up.",
+    "The rigid flap shape, thick belt, rear opening and missing drape, seams and fraying remain below the reference. This preview does not clear the clothing or Phase 0 art gate."
+  ]
+}

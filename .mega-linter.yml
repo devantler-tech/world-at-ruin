@@ -15,7 +15,15 @@ LINTER_RULES_PATH: .
 # The pinned Go flavour already includes Go; the harness uses only its standard library.
 # Missing tools, a broken test or a policy regression must fail the required lint job.
 PRE_COMMANDS:
-  - command: go test -v -count=1 -timeout=3m tools/lychee-retry/lychee_test.go
+  - command: go test -v -count=1 tools/lychee-retry/main.go tools/lychee-retry/main_test.go
+    cwd: workspace
+    run_before_linters: true
+    continue_if_failed: false
+  - command: go build -o /tmp/world-at-ruin-lychee tools/lychee-retry/main.go
+    cwd: workspace
+    run_before_linters: true
+    continue_if_failed: false
+  - command: LYCHEE_VALIDATOR=/tmp/world-at-ruin-lychee go test -v -count=1 -timeout=3m tools/lychee-retry/lychee_test.go
     cwd: workspace
     run_before_linters: true
     continue_if_failed: false
@@ -131,3 +139,5 @@ SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (\.github/workflows/.*)
 # of requests is bounded by lychee.toml: at most six attempts, each with this 45-second
 # timeout, plus retry backoff. Lychee checks URLs concurrently.
 SPELL_LYCHEE_ARGUMENTS: "--timeout 45"
+SPELL_LYCHEE_CLI_EXECUTABLE:
+  - /tmp/world-at-ruin-lychee

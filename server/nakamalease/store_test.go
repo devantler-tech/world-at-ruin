@@ -5,16 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/savefixturetest"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
@@ -796,6 +794,7 @@ func TestCreateRejectsMalformedSecretReferencesWithoutStorage(t *testing.T) {
 	}
 }
 
+// Replacement rebinds the durable version and refuses a stale caller before writing.
 func TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite(t *testing.T) {
 	storage, store := newLeaseStoreFixture(t)
 	first := mustCreateLease(t, store, validLease())
@@ -825,10 +824,8 @@ func TestReplaceUsesObservedVersionAndStaleRecordCannotOverwrite(t *testing.T) {
 	if loaded != current {
 		t.Fatalf("record after stale replace = %+v, want current %+v", loaded, current)
 	}
-	if len(storage.writes) != 3 ||
-		storage.writes[1].Version != "v1" ||
-		storage.writes[2].Version != "v1" {
-		t.Fatalf("replacement write versions = %+v, want both guarded by v1", storage.writes)
+	if len(storage.writes) != 2 || storage.writes[1].Version != "v1" {
+		t.Fatalf("replacement write versions = %+v, want one v1 write and no stale write", storage.writes)
 	}
 }
 
@@ -1592,39 +1589,25 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 		{staging, unclaimed, claimed, releasing, stagingReleasing},
 		{staging, dispatched, unclaimed, claimed, releasing, stagingReleasing, dispatchedReleasing},
 	}
+	expanded := []Lease{staging, dispatched, unclaimed, claimed, releasing, stagingReleasing, dispatchedReleasing}
+	for index := range expanded {
+		expanded[index].readerOnly = true
+		if index != 0 && index != 5 {
+			expanded[index].AllocatorBinding = AllocatorBinding{
+				GenerationID: "generation:1", MemberSetDigest: "5452b4d6f907967c5ef74179a64c12ea48755828ccea8fc9aac8092faa3bfe0d", PodUID: "pod-allocator-1",
+			}
+		}
+	}
+	wantSchemas = append(wantSchemas, expanded)
 
-	ledgerBytes, err := os.ReadFile(filepath.Join(
-		"testdata",
-		"shipped_lease_versions.txt",
-	))
-	if err != nil {
-		t.Fatalf("read lease schema ledger: %v", err)
-	}
-	versions := strings.Fields(string(ledgerBytes))
-	if len(versions) != len(wantSchemas) {
+	fixtures := savefixturetest.Read(t, "lease")
+	if len(fixtures) != len(wantSchemas) {
 		t.Fatalf("lease schema ledger has %d versions, want %d independent expectation sets",
-			len(versions), len(wantSchemas))
+			len(fixtures), len(wantSchemas))
 	}
-	for index, rawVersion := range versions {
-		version, err := strconv.Atoi(rawVersion)
-		if err != nil {
-			t.Fatalf("lease schema ledger entry %q: %v", rawVersion, err)
-		}
-		if version != index+1 {
-			t.Fatalf(
-				"lease schema ledger[%d] = %d, want %d",
-				index,
-				version,
-				index+1,
-			)
-		}
-		goldenBytes, err := os.ReadFile(filepath.Join(
-			"testdata",
-			fmt.Sprintf("golden_lease_v%d.json", version),
-		))
-		if err != nil {
-			t.Fatalf("read lease schema %d goldens: %v", version, err)
-		}
+	for index, fixture := range fixtures {
+		version := fixture.Version
+		goldenBytes := fixture.Bytes
 		var goldens []json.RawMessage
 		if err := json.Unmarshal(goldenBytes, &goldens); err != nil {
 			t.Fatalf("decode lease schema %d golden set: %v", version, err)
@@ -1680,13 +1663,8 @@ func TestEveryShippedLeaseSchemaShapeStaysReadable(t *testing.T) {
 			})
 		}
 	}
-	lastVersion, err := strconv.Atoi(versions[len(versions)-1])
-	if err != nil || lastVersion != schemaVersion {
-		t.Fatalf(
-			"lease schema ledger head = %q, writer = %d",
-			versions[len(versions)-1],
-			schemaVersion,
-		)
+	if head := fixtures[len(fixtures)-1].Version; head != readableSchemaVersion {
+		t.Fatalf("lease schema ledger head = %d, reader = %d", head, readableSchemaVersion)
 	}
 }
 
@@ -1826,7 +1804,7 @@ func TestLoadRejectsMalformedOrPublicStoredObjects(t *testing.T) {
 				object.Value = strings.Replace(
 					object.GetValue(),
 					`"schema":3`,
-					`"schema":4`,
+					`"schema":5`,
 					1,
 				)
 			},

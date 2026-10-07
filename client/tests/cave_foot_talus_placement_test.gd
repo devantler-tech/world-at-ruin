@@ -25,15 +25,8 @@ func _ready() -> void:
 		_fail("the cave-foot placement library exposes no placements API")
 		return
 
-	var flat_ground := func(_x: float, _z: float) -> float:
-		return 0.0
-	var material := func(_x: float, _z: float) -> Dictionary:
-		return {
-			&"color": Color(0.30, 0.27, 0.23),
-			&"roughness": 0.88,
-			&"normal": Vector3.UP,
-			&"height": 0.0,
-		}
+	var flat_ground := CaveTestSupport.flat_ground
+	var material := CaveTestSupport.flat_material
 	var built := CaveSystemGen.build_geometry(SEED, flat_ground, material)
 	var contact := built[&"terrain_contact_mesh"] as ArrayMesh
 	var mouth: Vector3 = (built[&"layout"] as Dictionary)[&"mouth"]

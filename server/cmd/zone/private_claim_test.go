@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -31,6 +29,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/agones/agonestest"
 	"github.com/devantler-tech/world-at-ruin/server/claimrpc"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
@@ -47,34 +46,19 @@ func (f commandResolver) Resolve(ctx context.Context, lease nakamalease.Lease) (
 // claimIdentity issues a workload leaf under an isolated root for the private service.
 func claimIdentity(t *testing.T, identity string) (*x509.CertPool, string, string) {
 	t.Helper()
-	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rootKey := cryptotest.NewKey(t)
 	root := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &rootKey.PublicKey, rootKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err = x509.ParseCertificate(rootDER)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rootDER := cryptotest.Issue(t, root, root, &rootKey.PublicKey, rootKey)
+	root = cryptotest.Parse(t, rootDER)
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	uri, err := url.Parse(identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), NotBefore: root.NotBefore, NotAfter: root.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, URIs: []*url.URL{uri}}
-	der, err := x509.CreateCertificate(rand.Reader, leaf, root, &key.PublicKey, rootKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	der := cryptotest.Issue(t, leaf, root, &key.PublicKey, rootKey)
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		t.Fatal(err)

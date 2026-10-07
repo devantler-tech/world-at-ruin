@@ -2,9 +2,6 @@ package claimrpc
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -21,6 +18,7 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/handoff"
+	"github.com/devantler-tech/world-at-ruin/server/internal/cryptotest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -78,26 +76,14 @@ func newFixture(t *testing.T, identity string) *fixture {
 // the client URI is the identity the claim handler must independently authorize.
 func certificates(t *testing.T, identity string) (*tls.Config, *tls.Config) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := cryptotest.NewKey(t)
 	ca := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	der, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
+	der := cryptotest.Issue(t, ca, ca, &key.PublicKey, key)
+	root := cryptotest.Parse(t, der)
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
 	issue := func(serial int64, client bool) tls.Certificate {
-		leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		leafKey := cryptotest.NewKey(t)
 		leaf := &x509.Certificate{SerialNumber: big.NewInt(serial), NotBefore: ca.NotBefore, NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
 		if client {
 			leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
@@ -109,10 +95,7 @@ func certificates(t *testing.T, identity string) (*tls.Config, *tls.Config) {
 				leaf.URIs = []*url.URL{uri}
 			}
 		}
-		encoded, err := x509.CreateCertificate(rand.Reader, leaf, ca, &leafKey.PublicKey, key)
-		if err != nil {
-			t.Fatal(err)
-		}
+		encoded := cryptotest.Issue(t, leaf, ca, &leafKey.PublicKey, key)
 		return tls.Certificate{Certificate: [][]byte{encoded}, PrivateKey: leafKey}
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{issue(2, false)}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert}, &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool, Certificates: []tls.Certificate{issue(3, true)}}
@@ -165,10 +148,38 @@ func TestAuthenticatedClaimCommitsBeforeSuccess(t *testing.T) {
 	}
 }
 
+// TestPrivateClaimAcceptsShorterToken exercises the handoff service's default
+// token window inside a longer durable lease, including idempotent admission.
+func TestPrivateClaimAcceptsShorterToken(t *testing.T) {
+	f := newFixture(t, "spiffe://claims.example/zone/world/uid-1")
+	var err error
+	f.token, err = zonesock.MintToken(f.allocation.AdmissionSecret, f.allocation.ID, f.allocation.Observer, time.Now().Add(handoff.DefaultTokenTTL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, _ := f.serve(t, func(context.Context, nakamalease.Lease) (handoff.Allocation, error) { return f.allocation, nil })
+	for range 2 {
+		if err := client.Claim(context.Background(), f.binding, f.token, 1); err != nil {
+			t.Fatalf("short-lived handoff refused inside its durable lease: %v", err)
+		}
+	}
+	stored, err := f.store.Load(context.Background(), f.record.Lease.UserID, f.record.Lease.ReservationID)
+	if err != nil || stored.Lease.ClaimedAt.IsZero() || !stored.Lease.ExpiresAt.Equal(f.record.Lease.ExpiresAt) {
+		t.Fatalf("short token changed the lease window or failed to claim: %v", err)
+	}
+	receipt, err := client.ClaimWithReceipt(context.Background(), f.binding, f.token, 1)
+	if err != nil || receipt.Fence.LeaseVersion != stored.Version || !receipt.Fence.Generation.Equal(stored.Lease.ClaimedAt) {
+		t.Fatalf("short token receipt changed the claim generation: %v", err)
+	}
+	if len(f.storage.WrittenValues()) != 2 {
+		t.Fatal("short token replay wrote another claim")
+	}
+}
+
 // TestPrivateClaimRejectsWrongAuthorityAndBinding varies each authority and
 // ownership component independently and requires storage to remain untouched.
 func TestPrivateClaimRejectsWrongAuthorityAndBinding(t *testing.T) {
-	for _, name := range []string{"no workload URI", "wrong trust domain", "sibling workload", "wrong namespace", "wrong UID", "wrong allocation", "wrong attempt", "wrong observer", "sibling token", "wrong expiry", "changed resource", "staging", "releasing", "expired"} {
+	for _, name := range []string{"no workload URI", "wrong trust domain", "sibling workload", "wrong namespace", "wrong UID", "wrong allocation", "wrong attempt", "wrong observer", "sibling token", "wrong expiry", "expired token", "changed resource", "staging", "releasing", "expired"} {
 		t.Run(name, func(t *testing.T) {
 			identity := "spiffe://claims.example/zone/world/uid-1"
 			switch name {
@@ -195,7 +206,9 @@ func TestPrivateClaimRejectsWrongAuthorityAndBinding(t *testing.T) {
 			case "sibling token":
 				f.token, _ = zonesock.MintToken([]byte(strings.Repeat("z", 32)), "zone-1", 1, f.record.Lease.ExpiresAt)
 			case "wrong expiry":
-				f.token, _ = zonesock.MintToken(f.allocation.AdmissionSecret, "zone-1", 1, f.record.Lease.ExpiresAt.Add(time.Second))
+				f.token, _ = zonesock.MintToken(f.allocation.AdmissionSecret, "zone-1", 1, f.record.Lease.ExpiresAt.Add(time.Nanosecond))
+			case "expired token":
+				f.token, _ = zonesock.MintToken(f.allocation.AdmissionSecret, "zone-1", 1, time.Now().Add(-time.Second))
 			case "changed resource":
 				f.allocation.ID = "zone-2"
 			case "staging", "releasing", "expired":

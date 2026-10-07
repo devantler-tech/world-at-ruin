@@ -88,6 +88,8 @@ func _ready() -> void:
 		_finish()
 		return
 	_check_shared_helpers()
+	_check_crop_helpers(img)
+	_check_terrain_helpers()
 	var cave: Dictionary = Metrics.measure(img)
 	if int(cave["samples"]) <= 0:
 		_fail("fixture yielded no samples at all — the metric never ran")
@@ -315,6 +317,76 @@ func _finish() -> void:
 		return
 	print("TEST PASS — frame separation metric matches its recorded baseline and can report the opposite")
 	get_tree().quit(0)
+
+
+func _check_crop_helpers(cave: Image) -> void:
+	var fixture := Image.create(3, 2, false, Image.FORMAT_RGB8)
+	fixture.fill(Color.BLACK)
+	fixture.set_pixel(1, 0, Color.RED)
+	fixture.set_pixel(2, 0, Color.GREEN)
+	fixture.set_pixel(1, 1, Color.BLUE)
+	fixture.set_pixel(2, 1, Color.WHITE)
+	var crop := Rect2(1.0 / 3.0, 0.0, 1.0, 1.0)
+	var bounds: Rect2i = Metrics.crop_bounds(Vector2i(3, 2), crop)
+	if bounds != Rect2i(1, 0, 2, 2):
+		_fail("crop upper bounds must clip exclusively to the frame: %s" % bounds)
+	var actual: PackedFloat32Array = Metrics.crop_luma(fixture, crop)
+	var expected := PackedFloat32Array([0.2126, 0.7152, 0.0722, 1.0])
+	if actual.size() != expected.size():
+		_fail("crop must contain every pixel once in row-major order")
+	else:
+		for i in actual.size():
+			_near("cropped primary pixel %d" % i, actual[i], expected[i], 0.0000001)
+	if not Metrics.crop_luma(fixture, Rect2(1.0, 0.0, 0.0, 1.0)).is_empty():
+		_fail("zero-width crop contributed pixels")
+	# A committed first-party frame also exercises the full-sized population.
+	var cave_crop := Rect2(0.1, 0.58, 0.8, 0.3)
+	var cave_bounds: Rect2i = Metrics.crop_bounds(Vector2i(cave.get_width(), cave.get_height()), cave_crop)
+	var pixels: PackedFloat32Array = Metrics.crop_luma(cave, cave_crop)
+	if pixels.size() != cave_bounds.size.x * cave_bounds.size.y:
+		_fail("cave crop population differs from its bounds")
+		return
+	var i := 0
+	for y in range(cave_bounds.position.y, cave_bounds.end.y):
+		for x in range(cave_bounds.position.x, cave_bounds.end.x):
+			if absf(pixels[i] - cave.get_pixel(x, y).get_luminance()) > 0.0000001:
+				_fail("cave crop differs from independent per-pixel luma at %d,%d" % [x, y])
+				return
+			i += 1
+
+
+func _check_terrain_helpers() -> void:
+	var main := Node3D.new()
+	var mover := Node3D.new()
+	mover.name = "Mover"
+	main.add_child(mover)
+	var popup := Control.new()
+	main.add_child(popup)
+	var world := Node3D.new()
+	world.name = "World"
+	main.add_child(world)
+	var terrain := MeshInstance3D.new()
+	terrain.name = "Terrain"
+	world.add_child(terrain)
+	var scenery := Node3D.new()
+	scenery.name = "Scenery"
+	world.add_child(scenery)
+	if Metrics.terrain_material(main) != null:
+		_fail("missing terrain mesh returned a material")
+	var material := ShaderMaterial.new()
+	terrain.mesh = BoxMesh.new()
+	terrain.mesh.surface_set_material(0, material)
+	if Metrics.terrain_material(main) != material:
+		_fail("terrain lookup did not return its actual surface material")
+	var hidden: Array[String] = Metrics.quiet_terrain(main, ["Mover"], false)
+	if mover.visible or scenery.visible or not terrain.visible or not popup.visible:
+		_fail("named-only quieting changed its canvas or terrain boundary")
+	if not "Mover" in hidden or not "Scenery" in hidden:
+		_fail("quieting omitted hidden nodes from its report")
+	Metrics.quiet_terrain(main, ["Mover"])
+	if popup.visible:
+		_fail("default quieting failed to hide an unnamed canvas")
+	main.free()
 
 
 ## Law 7: the helpers every measurement tool shares. `luma_buffer` is Rec. 709

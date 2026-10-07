@@ -528,13 +528,7 @@ static func layered_outfit_pickers_enabled() -> bool:
 ## its outermost piece and made read-only because this control cannot honestly
 ## represent both layers at once. It also cannot originate a layered list.
 func _add_region_outfit_picker(into: Container, slot: String) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	into.add_child(row)
-	var label := Label.new()
-	label.text = slot.replace("_", " ")
-	label.custom_minimum_size = Vector2(130, 0)
-	row.add_child(label)
+	var row := _new_labeled_row(into, slot.replace("_", " "))
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	picker.add_item("bare")
@@ -559,14 +553,8 @@ func _add_region_outfit_picker(into: Container, slot: String) -> void:
 ## per-frame knob — same contract as the bone sliders) while preserving every
 ## other layer on the region.
 func _add_layer_outfit_picker(into: Container, slot: String, layer: String) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	into.add_child(row)
-	var label := Label.new()
 	var layer_label := "armour" if layer == "armor" else layer
-	label.text = "%s · %s" % [slot.replace("_", " "), layer_label]
-	label.custom_minimum_size = Vector2(130, 0)
-	row.add_child(label)
+	var row := _new_labeled_row(into, "%s · %s" % [slot.replace("_", " "), layer_label])
 	var picker := OptionButton.new()
 	picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	picker.add_item("bare")
@@ -638,13 +626,7 @@ static func _pieces_in_slot(registry: Dictionary, slot: String, layer := "") -> 
 
 ## Which skin the body wears — "clay" is the untextured kit body.
 func _add_skin_picker(into: Container) -> void:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	into.add_child(row)
-	var label := Label.new()
-	label.text = "skin"
-	label.custom_minimum_size = Vector2(130, 0)
-	row.add_child(label)
+	var row := _new_labeled_row(into, "skin")
 	_skin_picker = OptionButton.new()
 	_skin_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_skin_picker.add_item("clay")
@@ -672,13 +654,7 @@ func _add_bone_slider(into: Container, spec: Array) -> void:
 
 
 func _labeled_slider(into: Container, text: String, minimum: float, maximum: float) -> HSlider:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	into.add_child(row)
-	var label := Label.new()
-	label.text = text
-	label.custom_minimum_size = Vector2(130, 0)
-	row.add_child(label)
+	var row := _new_labeled_row(into, text)
 	var slider := HSlider.new()
 	slider.min_value = minimum
 	slider.max_value = maximum
@@ -960,3 +936,15 @@ func _close(apply_changes: bool) -> void:
 		_light.queue_free()
 	closed.emit()
 	queue_free()
+
+
+## Common row shell; controls retain their own values and mutation callbacks.
+func _new_labeled_row(into: Container, text: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	into.add_child(row)
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size = Vector2(130, 0)
+	row.add_child(label)
+	return row

@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
-	"unicode"
 	"unicode/utf8"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 )
 
@@ -54,18 +54,10 @@ func openDocument(generationID string, members []string) (document, error) {
 
 // validIdentity preserves opaque UTF-8 spelling within the documented bounds.
 func validIdentity(value string, maxBytes int) bool {
-	if len(value) == 0 || len(value) > maxBytes || !utf8.ValidString(value) {
-		return false
-	}
-	for _, char := range value {
-		if unicode.IsControl(char) || unicode.IsSpace(char) {
-			return false
-		}
-	}
-	return true
+	return handoffidentity.OpaqueUTF8(value, maxBytes)
 }
 
-// decodeDocument accepts exactly the shipped schema and refuses ambiguous JSON.
+// decodeDocument accepts every readable schema and refuses ambiguous JSON.
 // Persisted membership must already be canonical and match its recorded digest.
 func decodeDocument(value string) (document, error) {
 	if len(value) > maxDocumentBytes || !validJSONUnicode(value) {
@@ -106,7 +98,9 @@ func decodeDocument(value string) (document, error) {
 			return document{}, ErrStorage
 		}
 	}
-	if nakamastorage.EndObject(decoder) != nil || len(seen) != 5 || got.Schema != 1 || got.State != "open" {
+	if nakamastorage.EndObject(decoder) != nil || len(seen) != 5 ||
+		(got.Schema != 1 && got.Schema != 2) ||
+		(got.State != "open" && (got.Schema != 2 || got.State != "draining")) {
 		return document{}, ErrStorage
 	}
 	want, err := openDocument(got.GenerationID, got.MemberPodUIDs)
@@ -163,5 +157,6 @@ func (d document) record(version string) Record {
 	return Record{
 		GenerationID: d.GenerationID, MemberPodUIDs: slices.Clone(d.MemberPodUIDs),
 		MemberSetDigest: d.MemberSetDigest, State: d.State, Version: version,
+		readerOnly: d.Schema != 1,
 	}
 }

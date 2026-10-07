@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for first-run wardrobe frame coverage (#653, under #222).
 ##
 ## The capture used to drive only the head clothing/armour pair. That left the
@@ -19,7 +19,6 @@ const EXPECTED_STATES := [
 	{"slot": "hands", "layer": "armor", "piece": "ashen_bindings", "shot": "first_run_hands_armor"},
 ]
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -54,14 +53,3 @@ func _ready() -> void:
 		return
 	print("TEST PASS — first-run capture plans all 7 production-active wardrobe states, including hands armour")
 	get_tree().quit(0)
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_failed = true
-		var message := "%s — expected %s, got %s" % [label, expected, actual]
-		push_error(message)
-		print("TEST FAIL — %s" % message)
-		get_tree().quit(1)

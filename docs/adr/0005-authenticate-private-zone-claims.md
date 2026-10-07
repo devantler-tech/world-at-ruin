@@ -29,7 +29,9 @@ After authenticating the workload, the handler strictly decodes a bounded
 request, loads the private lease by its opaque object key, checks the exact
 attempt digest/allocation/observer/UID, and resolves the pinned resource and
 sealed envelope independently. The submitted token must equal the canonical
-token for that lease's secret, allocation, observer and exact expiry. All
+token for that lease's secret, allocation and observer, with an authenticated
+expiry no later than the lease's. Claim completion is bounded by the token's
+own expiry without changing the durable lease window. All
 failures produce the same refusal without token or storage details.
 
 The storage owner claims by exact version using the existing lease schema.

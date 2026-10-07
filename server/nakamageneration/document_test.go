@@ -33,9 +33,12 @@ func TestEveryShippedGenerationSchemaStaysReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions := strings.Fields(string(ledger))
-	want := []document{{
+	want := [][]document{{{
 		Schema: 1, GenerationID: "generation-1", MemberPodUIDs: []string{"pod-a", "pod-b"},
 		MemberSetDigest: goldenDigest, State: "open",
+	}}, {
+		{Schema: 2, GenerationID: "generation-open", MemberPodUIDs: []string{"pod-a", "pod-b"}, MemberSetDigest: goldenDigest, State: "open"},
+		{Schema: 2, GenerationID: "generation-draining", MemberPodUIDs: []string{"pod-a", "pod-b"}, MemberSetDigest: goldenDigest, State: "draining"},
 	}}
 	if len(versions) != len(want) {
 		t.Fatalf("historical expectations cover %d versions, ledger has %d", len(want), len(versions))
@@ -45,7 +48,7 @@ func TestEveryShippedGenerationSchemaStaysReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fixtures.Close() })
-	for index, wantDocument := range want {
+	for index, wantDocuments := range want {
 		version := versions[index]
 		if version != strconv.Itoa(index+1) {
 			t.Fatalf("noncontiguous ledger: %q", versions)
@@ -54,16 +57,27 @@ func TestEveryShippedGenerationSchemaStaysReadable(t *testing.T) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		got, decodeErr := decodeDocument(string(raw))
-		if decodeErr != nil || !reflect.DeepEqual(got, wantDocument) {
-			t.Fatalf("schema %s lost historical fields: %+v, %v", version, got, decodeErr)
+		rawDocuments := []json.RawMessage{raw}
+		if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
+			if err := json.Unmarshal(raw, &rawDocuments); err != nil {
+				t.Fatal(err)
+			}
 		}
-		storage := nakamastoragetest.New()
-		storage.Seed(nakamastoragetest.Object{Collection: Collection, Key: "generation-1", Value: string(raw), Version: "historical-version"})
-		loaded, loadErr := newTestStore(t, storage).Load(t.Context(), "generation-1")
-		wantRecord := Record{GenerationID: "generation-1", MemberPodUIDs: []string{"pod-a", "pod-b"}, MemberSetDigest: goldenDigest, State: "open", Version: "historical-version"}
-		if loadErr != nil || !reflect.DeepEqual(loaded, wantRecord) || len(storage.WriteCalls) != 0 {
-			t.Fatalf("schema %s store did not preserve history: %+v, %v", version, loaded, loadErr)
+		if len(rawDocuments) != len(wantDocuments) {
+			t.Fatalf("schema %s has %d shapes, want %d", version, len(rawDocuments), len(wantDocuments))
+		}
+		for shape, wantDocument := range wantDocuments {
+			got, decodeErr := decodeDocument(string(rawDocuments[shape]))
+			if decodeErr != nil || !reflect.DeepEqual(got, wantDocument) {
+				t.Fatalf("schema %s shape %d lost fields: %+v, %v", version, shape, got, decodeErr)
+			}
+			storage := nakamastoragetest.New()
+			storage.Seed(nakamastoragetest.Object{Collection: Collection, Key: wantDocument.GenerationID, Value: string(rawDocuments[shape]), Version: "historical-version"})
+			loaded, loadErr := newTestStore(t, storage).Load(t.Context(), wantDocument.GenerationID)
+			wantRecord := Record{GenerationID: wantDocument.GenerationID, MemberPodUIDs: []string{"pod-a", "pod-b"}, MemberSetDigest: goldenDigest, State: wantDocument.State, Version: "historical-version", readerOnly: index == 1}
+			if loadErr != nil || !reflect.DeepEqual(loaded, wantRecord) || len(storage.WriteCalls) != 0 {
+				t.Fatalf("schema %s shape %d store lost fields: %+v, %v", version, shape, loaded, loadErr)
+			}
 		}
 	}
 }
@@ -151,7 +165,7 @@ func TestRefusedDocumentsRemainByteIdenticalAndCannotBeRecreated(t *testing.T) {
 		field string
 		value any
 	}{
-		"new-schema": {"schema", 2}, "string-schema": {"schema", "1"},
+		"new-schema": {"schema", 3}, "string-schema": {"schema", "1"},
 		"wrong-id": {"generation_id", "generation-2"}, "empty-id": {"generation_id", ""},
 		"unsorted":      {"member_pod_uids", []string{"pod-b", "pod-a"}},
 		"duplicates":    {"member_pod_uids", []string{"pod-a", "pod-a"}},

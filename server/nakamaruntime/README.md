@@ -4,6 +4,8 @@ The Go plugin at `cmd/nakama` registers `war_handoff` over the real handoff
 service, durable lease coordinator, Agones resource adapter and admission
 keyring. It supervises no-show cleanup until Nakama invokes its shutdown hook.
 An independent opt-in hosts the private claim handler over mutual TLS.
+Another independent opt-in supervises orphan cleanup after complete resource
+and private lease observations.
 The module is **off by default**. No deployment manifest or client call enables it.
 
 ## Build and configure
@@ -40,6 +42,7 @@ projection; private key bytes belong in mounted files.
 | `WAR_HANDOFF_TLS_PORT_NAME` | The Fleet's player-facing TLS port name. |
 | `WAR_HANDOFF_ZONE_DOMAIN` | Managed DNS suffix, e.g. `zones.example`. |
 | `WAR_HANDOFF_LEASE_TTL` | Go duration from `2s` to `10m`; typically `1m`. A handoff needs at least one second remaining after allocation. |
+| `WAR_HANDOFF_TOKEN_TTL` | Optional signed handoff lifetime from `1s` to `5m`, default `30s`. It cannot extend the durable lease. |
 | `WAR_HANDOFF_RPC_TIMEOUT` | Optional deadline, `1s` to `1m`, default `30s`. A shorter caller deadline or session expiry wins. |
 
 Enabled initialization rejects missing/malformed settings before connection or
@@ -96,8 +99,13 @@ certificates in either direction, and the server key is not a workload root.
 Initialization reserves the socket before registering `war_handoff` and begins
 serving only after shutdown registration succeeds. Every initialization failure
 releases the listener and acquired transports. The listener is HTTPS only,
-requires verified workload certificates and serves only the existing `/v1/claim`
-contract. Claim and session-end operations are never registered as public RPCs.
+requires verified workload certificates and serves `/v1/claim` (empty admission
+acknowledgement) and `/v2/claim` (the original durable claim receipt). The zone
+command uses v1; receipt-aware admission requires explicit source composition.
+The separately constructed session-end handler is not registered on this listener
+or on a public RPC. It requires independent, irreversible termination authority
+as well as verified workload identity; no production verifier is supplied. See
+[ADR 0020](../../docs/adr/0020-retain-exact-claim-receipts-for-private-completion.md).
 
 The listener permits at most 64 connected clients, uses HTTP/1.1 without stream
 multiplexing, sets an 8 KiB header limit (plus the HTTP server's framing allowance),
@@ -106,6 +114,10 @@ after its response, so idle zone clients never hold one of the 64 slots. Claim
 bodies remain capped at 4096 bytes. The same lease store and pinned
 Agones resolver used by allocation independently verify the claim and persist
 ownership before success. Lost responses retain the claim for an exact replay.
+The canonical signed token may expire before its durable lease (the handoff
+service defaults to 30 seconds). Claims verify its exact allocation and observer,
+refuse expiry beyond the lease, and bound claim completion by the token's own
+expiry. A shorter token never changes the stored lease window.
 
 The zone's `-claim-url` must use a hostname covered by the server certificate;
 its `-claim-ca` trusts the private server and its separate workload certificate
@@ -113,6 +125,46 @@ chains to `WAR_HANDOFF_CLAIMS_CA_FILE`. A bind address does not establish privat
 network exposure: deployment must restrict reachability and issue attested
 per-GameServer identities. No platform resource is changed by this option.
 See [ADR 0009](../../docs/adr/0009-host-private-claims-in-the-nakama-runtime.md).
+
+## Orphan supervision
+
+With `WAR_HANDOFF_ENABLED=true`, these runtime.env settings enable the existing
+orphan reconciler. Absent or disabled opt-in performs no orphan scan; other orphan
+settings are ignored. The enclosing module's disabled state ignores all of them.
+
+| Setting | Contract |
+| --- | --- |
+| `WAR_HANDOFF_ORPHANS_ENABLED` | Exactly `true` to enable; absent or `false` keeps cleanup off. Other values fail startup. |
+| `WAR_HANDOFF_ORPHANS_GRACE` | Optional Go duration, `30s`–`1h`, default `2m`. At least two complete observations and the full grace precede deletion. |
+| `WAR_HANDOFF_ORPHANS_INTERVAL` | Optional Go duration, `1s`–`1h`, default `30s`. Startup sweeps immediately; subsequent sweeps are serial. |
+| `WAR_HANDOFF_ORPHANS_TIMEOUT` | Optional Go duration, `1ms`–`1m`, default `30s`. Bounds the whole resource/lease/cleanup sweep; the existing Kubernetes request timeout may be shorter. |
+| `WAR_HANDOFF_ORPHANS_MAX_PAGES` | Optional canonical decimal integer, `1`–`1000`, default `100`. Each resource and private lease scan has this page budget, with 100 objects per page. |
+
+Malformed enabled settings fail before connection or registration. Namespace and
+Fleet come from the existing handoff configuration; there is no second cleanup
+scope, credential surface or lease store. GameServer enumeration completes before
+the private lease scan. Any extant attempt protects its resources, including
+expired, staging, dispatched, claimed, releasing and reader-only leases. Only the
+coordinator may retire a lease through its existing barriers. Malformed, partial,
+inconsistent, timed-out or over-budget observations authorize no delete and
+discard earlier grace history. A restart also starts with fresh history.
+
+Cleanup excludes Ready pool members and resources without attempt labels. A
+fresh read must retain namespace, Fleet, attempt, Allocated state and exact UID;
+deletion also requires UID and resource-version preconditions. A lost delete
+acknowledgement is observed once and retried on a later complete sweep if still
+unresolved. Transient failures do not stop the periodic worker.
+
+The native plugin forwards its Nakama logger for aggregate observations: one
+fixed outcome and scanned/waiting/protected/deleted/changed/failed counts per
+sweep. Raw provider errors, identities, paths and lease contents never enter
+these records. Legacy callers of `Initialize` may omit logging; use
+`InitializeWithLogger` to supply it.
+
+This option supplies source composition. It does not activate a deployed module,
+grant RBAC, add allocator fencing or establish session-end authority. Production
+artifact/cluster proof and flag retirement remain tracked by #1177. See
+[ADR 0021](../../docs/adr/0021-supervise-orphan-cleanup-in-the-nakama-runtime.md).
 
 ## RPC contract
 
@@ -155,11 +207,14 @@ is a later protocol change, not something this module infers.
 
 Initialization's context is detached after composition because its request
 lifetime is not the module lifetime. RPC and shutdown registration must both
-succeed before the expiry goroutine and optional private listener start. Initialization
+succeed before the expiry/orphan workers and optional private listener start. Initialization
 failures close acquired clients. Shutdown cancels public and private admission,
-closes the listener, and waits for the reconciler and every admitted handler
+closes the listener, and waits for both workers and every admitted handler
 (including detached fence-and-cleanup work) within the earlier of the supplied
-deadline or five seconds when the private listener is enabled, then closes transports once.
+deadline or five seconds when the private listener is enabled. Transports close
+exactly once after both workers and every handler actually return. If the hook's
+deadline expires first, retirement continues asynchronously after the drain;
+a timeout never permits closing a transport underneath ongoing work.
 With the listener disabled, the supplied shutdown context bounds the drain. Remaining connections
 are force-closed at the deadline. An unexpected private serving failure cancels
 module admission, so new public handoffs are refused until runtime replacement. Storage clients must
@@ -185,3 +240,71 @@ Private-listener tests send real verified HTTPS claims through the runtime's
 lease store and resource adapter, reject anonymous/untrusted peers, preserve
 claims against no-show cleanup, exercise initialization rollback, and prove
 connection bounds plus cancellation/drain before dependency retirement.
+Orphan tests compose the real private store and generated Agones HTTP client,
+exercise elapsed grace, restart and failed-observation history, retained lease
+fixtures, scoped lists, UID/resource-version deletes, resource replacement and
+lost delete acknowledgements. Held-worker tests prove a shutdown deadline cannot
+retire dependencies early.
+
+## Experimental native Nakama acceptance
+
+The native bundle uses the separate generated locks `server/nakama-runtime/go.mod`
+and `server/nakama-runtime/go.sum`, aligned with Nakama 3.40's runtime API 1.47.
+It leaves the ordinary server dependency graph intact. From `server/`:
+
+```sh
+go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
+  -experimental -source . -output /tmp/new-war-native-bundle
+```
+
+The output must be absent. The builder selects the exact Go 1.27.1 toolchain,
+native CGO and compatible flags for both the Nakama binary and WAR plugin; its
+`bundle.json` records actual graph and artifact hashes. This command builds a
+trial artifact and does not publish or deploy it.
+
+The separate acceptance image is built from the repository root and never
+published by CI:
+
+```sh
+docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
+  -t world-at-ruin-nakama-native:trial .
+bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
+```
+
+The image refuses a default invocation. Twenty-two named mandatory scenarios use
+the real loaded plugin, authentication and PostgreSQL-backed private storage.
+Eleven scenarios run the built sealed zone command through generated SDK sidecars,
+consume the authenticated handoff and decode a real TLS WebSocket snapshot.
+The command uses its own random admission secret; fixture-side minting is absent
+from this closed-loop path. Normal TLS chain and hostname verification remain
+active while only the exact fixture DNS endpoint routes to loopback.
+Held native storage writes and generated resource lookups expose claim-before-upgrade
+and shutdown ordering. Workload identity, sibling isolation, changed SDK revisions,
+restart cleanup, wrapping-key rotation and ambiguous allocation replies each have
+negative controls. The image supplies only disposable fixture
+credentials; the script publishes no ports and removes its own containers and
+network. Linux amd64 and arm64 CI both execute the packaged runtime. Missing
+trial inputs fail; the `war_native_trial` build tag selects this explicit process
+suite separately from ordinary unit tests.
+
+The movement scenario additionally proves default-off v3 refusal, explicit
+negotiation, increasing applied-sequence acknowledgements, server-bounded ground
+movement, expiry, malformed-input refusal and reconnect without inherited input.
+It reads back the same durable claim before and after movement and keeps normal
+TLS verification. The shipping Godot client remains on v2; this is a server
+capability trial, not player input/prediction delivery or production activation.
+
+Lock maintenance is deliberate: use Go's alternate-module commands to resolve
+both `github.com/heroiclabs/nakama/v3` and `./cmd/nakama`, plus the tagged native
+trial package, and run `go mod download -modfile=nakama-runtime/go.mod` to retain
+checksums for every selected platform dependency. Never edit generated sums or
+substitute the ordinary graph for the full runtime graph. The container build
+checks that dependency download leaves both lock files byte-identical and scans
+the full native server/plugin for reachable vulnerabilities.
+
+These disposable checks establish source behavior. Production serving artifacts,
+rollout, attested credentials and the existing authority/fencing gates remain
+under #569 and #1177. Experimental build retirement is tracked by #1192. See
+[ADR 0022](../../docs/adr/0022-prove-the-native-nakama-runtime-with-disposable-storage.md) and
+[ADR 0023](../../docs/adr/0023-exercise-native-handoffs-through-built-sealed-zones.md) and
+[ADR 0024](../../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md).

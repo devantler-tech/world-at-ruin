@@ -174,6 +174,28 @@ out="$(run_stamp "$d" --require-all)" && rc=0 || rc=$?
 printf '%s' "$out" | grep -q '7.1.0 — Ash drifts" more than once' ||
 	t_fail "a copied entry was refused for the wrong reason: $out"
 
+# --- 2d. A branch overtaken by two sibling releases ---
+# A branch overtaken by two sibling releases receives its actual squash
+# release, keeping the authored path rather than being renamed by its author.
+d="$(new_repo)"
+printf 'seed\n' > "$d/README"
+step "$d" "seed" v8.0.0
+git -C "$d" checkout -qb branch-entry
+entry next "Overtaken" > "$d/client/devlog/overtaken-ash.json"
+step "$d" "author on a branch"
+git -C "$d" checkout -q main
+printf 'first sibling\n' >> "$d/README"
+step "$d" "first sibling release" v8.1.0
+printf 'second sibling\n' >> "$d/README"
+step "$d" "second sibling release" v8.2.0
+git -C "$d" merge -q --squash branch-entry
+step "$d" "ship the overtaken branch" v8.3.0
+out="$(run_stamp "$d" --require-all)" || t_fail "an overtaken squash branch failed to stamp: $out"
+[ "$(version_of "$d/client/devlog/overtaken-ash.json")" = "8.3.0" ] ||
+	t_fail "an overtaken branch was stamped for a sibling release"
+[ "$(find "$d/client/devlog" -name '*.json' | wc -l | tr -d ' ')" = 1 ] ||
+	t_fail "stamping renamed or copied the authored entry"
+
 # --- 3. Unreleased: left alone, and fatal only when a release is being built ---
 d="$(new_repo)"
 printf 'seed\n' > "$d/README"

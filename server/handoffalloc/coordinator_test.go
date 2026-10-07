@@ -2347,16 +2347,7 @@ func TestAllocateReleasesADefinitivelyUnallocatedDispatch(t *testing.T) {
 	if !reflect.DeepEqual(next, retainedAllocation(validAllocation())) {
 		t.Fatalf("fresh attempt allocation = %+v, want %+v", next, validAllocation())
 	}
-	if len(f.resources.provisions) != 2 ||
-		f.resources.provisions[0].AttemptID != testAttemptID ||
-		f.resources.provisions[1].AttemptID != "attempt-8" ||
-		len(f.resources.reconciliations) != 0 {
-		t.Fatalf(
-			"dispatches = %+v, reconciliations = %+v; want one per attempt",
-			f.resources.provisions,
-			f.resources.reconciliations,
-		)
-	}
+	requireFreshDispatches(t, f.resources, testAttemptID, "attempt-8")
 }
 
 func TestServiceHandoffAfterAnEmptyPoolSucceedsOnTheNextAttempt(t *testing.T) {
@@ -2379,16 +2370,7 @@ func TestServiceHandoffAfterAnEmptyPoolSucceedsOnTheNextAttempt(t *testing.T) {
 	); err != nil {
 		t.Fatalf("retry after capacity returned an error: %v", err)
 	}
-	if len(f.resources.provisions) != 2 ||
-		f.resources.provisions[0].AttemptID != testAttemptID ||
-		f.resources.provisions[1].AttemptID != "attempt-8" ||
-		len(f.resources.reconciliations) != 0 {
-		t.Fatalf(
-			"dispatches = %+v, reconciliations = %+v; want one per attempt",
-			f.resources.provisions,
-			f.resources.reconciliations,
-		)
-	}
+	requireFreshDispatches(t, f.resources, testAttemptID, "attempt-8")
 }
 
 // TestReconcileCannotReportAnAttemptUnallocated keeps the quarantine when the
@@ -2631,5 +2613,17 @@ func TestUnallocatedAnswerYieldsToAnAdopterThatObservedAHiddenCommit(t *testing.
 	record := loadTestLease(t, f.store, "load adopter's allocation: %v")
 	if record.Lease.Staging || record.Lease.Releasing || record.Lease.AllocationID != validAllocation().ID {
 		t.Fatalf("adopter's allocation = %+v, want the finalized lease", record.Lease)
+	}
+}
+
+// requireFreshDispatches observes every dispatch in order, including extras.
+func requireFreshDispatches(t *testing.T, resources *recordingResources, attempts ...string) {
+	t.Helper()
+	actual := make([]string, len(resources.provisions))
+	for i, provision := range resources.provisions {
+		actual[i] = provision.AttemptID
+	}
+	if !reflect.DeepEqual(actual, attempts) || len(resources.reconciliations) != 0 {
+		t.Fatalf("dispatches = %+v, reconciliations = %+v; want one per attempt %v", resources.provisions, resources.reconciliations, attempts)
 	}
 }

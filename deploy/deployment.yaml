@@ -42,9 +42,8 @@ spec:
             - /credentials/tls.crt
             - -tls-key
             - /credentials/tls.key
-            # Bound loaded certificate lifetime; the demonstration may restart.
-            - -duration
-            - 1h
+            # New TLS handshakes load current projected material; keep the
+            # demonstration serving until normal pod termination.
           env:
             - name: WAR_ZONE_ADMISSION_SECRET
               valueFrom:
@@ -70,12 +69,30 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           readinessProbe:
-            tcpSocket:
-              port: zone-tls
+            exec:
+              command:
+                - /zoneprobe
+                - -tls-only
+                - -url
+                - wss://127.0.0.1:8443/zone
+                - -tls-server-name-file
+                - /credentials/tls.crt
+                - -timeout
+                - 1500ms
+            timeoutSeconds: 2
             periodSeconds: 5
           livenessProbe:
-            tcpSocket:
-              port: zone-tls
+            exec:
+              command:
+                - /zoneprobe
+                - -tls-only
+                - -url
+                - wss://127.0.0.1:8443/zone
+                - -tls-server-name-file
+                - /credentials/tls.crt
+                - -timeout
+                - 1500ms
+            timeoutSeconds: 2
             initialDelaySeconds: 10
             periodSeconds: 10
           volumeMounts:

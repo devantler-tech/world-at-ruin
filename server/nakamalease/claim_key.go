@@ -2,11 +2,10 @@ package nakamalease
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
-	"strings"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/runtime"
 )
@@ -15,8 +14,7 @@ import (
 // Raw player and reservation IDs are neither needed nor returned. This lookup
 // is routing only; the private claim service must independently authenticate it.
 func (s *Store) LoadForClaim(ctx context.Context, key string) (Record, error) {
-	decoded, err := hex.DecodeString(key)
-	if err != nil || len(decoded) != 32 || strings.ToLower(key) != key {
+	if !handoffidentity.SHA256Hex(key) {
 		return Record{}, ErrStorage
 	}
 	if err := ctx.Err(); err != nil {
@@ -36,7 +34,7 @@ func (s *Store) LoadForClaim(ctx context.Context, key string) (Record, error) {
 		return Record{}, ErrStorage
 	}
 	object := objects[0]
-	if !validListedObject(object) || object.GetKey() != key || object.GetVersion() == "*" || len(object.GetVersion()) > 1024 || !unambiguousLeaseObject(object.GetValue()) {
+	if !validListedObject(object) || object.GetKey() != key {
 		return Record{}, ErrStorage
 	}
 	lease, err := leaseFrom(object.GetValue(), "", "")
@@ -60,6 +58,9 @@ func (s *Store) ClaimByKey(ctx context.Context, key string, current Record, at t
 	latest, err := s.LoadForClaim(ctx, key)
 	if err != nil {
 		return Record{}, err
+	}
+	if latest.Lease.ReaderOnly() {
+		return Record{}, ErrReaderOnly
 	}
 	if matchingClaim(latest, current) {
 		return latest, nil
@@ -85,6 +86,9 @@ func (s *Store) ClaimByKey(ctx context.Context, key string, current Record, at t
 	// Both a rejected CAS and a lost success response can mean this exact
 	// allocation was claimed by another call. A changed allocation never can.
 	latest, readErr := s.LoadForClaim(ctx, key)
+	if readErr == nil && latest.Lease.ReaderOnly() {
+		return Record{}, ErrReaderOnly
+	}
 	if readErr == nil && matchingClaim(latest, current) {
 		return latest, nil
 	}
@@ -97,7 +101,7 @@ func (s *Store) ClaimByKey(ctx context.Context, key string, current Record, at t
 // matchingClaim accepts a durable admission stamp only when all other allocation
 // ownership fields still equal the independently verified observation.
 func matchingClaim(latest, expected Record) bool {
-	if latest.Lease.ClaimedAt.IsZero() {
+	if latest.Lease.ReaderOnly() || expected.Lease.ReaderOnly() || latest.Lease.ClaimedAt.IsZero() {
 		return false
 	}
 	left, right := latest.Lease, expected.Lease

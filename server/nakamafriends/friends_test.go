@@ -323,6 +323,14 @@ func mustStatus(t *testing.T, boundary *Boundary, ctx context.Context, subject, 
 	return state
 }
 
+// relationFixture creates two authenticated sessions over one private graph.
+// Each scenario performs and checks its own invitations and relationship changes.
+func relationFixture(t *testing.T) (*fakeGraph, *Boundary, context.Context, context.Context) {
+	t.Helper()
+	graph := newFakeGraph()
+	return graph, newBoundary(t, graph), session(alice, aliceUsername), session(bob, bobUsername)
+}
+
 func TestFakeGraphRejectsWhatTheRuntimeModuleRejects(t *testing.T) {
 	graph := newFakeGraph()
 	cases := map[string]error{
@@ -346,11 +354,10 @@ func TestFakeGraphRejectsWhatTheRuntimeModuleRejects(t *testing.T) {
 	}
 }
 
+// TestInviteCreatesAPendingInviteAndTheReciprocalInviteMakesFriends retains both
+// players' independent views and reopens the relationship through a fresh boundary.
 func TestInviteCreatesAPendingInviteAndTheReciprocalInviteMakesFriends(t *testing.T) {
-	graph := newFakeGraph()
-	boundary := newBoundary(t, graph)
-	aliceCtx := session(alice, aliceUsername)
-	bobCtx := session(bob, bobUsername)
+	graph, boundary, aliceCtx, bobCtx := relationFixture(t)
 
 	if err := boundary.Invite(aliceCtx, alice, bob); err != nil {
 		t.Fatalf("alice invites bob: %v", err)
@@ -490,11 +497,10 @@ func TestInviteRefusesATargetTheSubjectHasBlocked(t *testing.T) {
 	}
 }
 
+// TestBlockRecordsTheBlockAndRemoveClearsIt checks unilateral blocking, a refused
+// reciprocal invitation and the later explicit unblock.
 func TestBlockRecordsTheBlockAndRemoveClearsIt(t *testing.T) {
-	graph := newFakeGraph()
-	boundary := newBoundary(t, graph)
-	aliceCtx := session(alice, aliceUsername)
-	bobCtx := session(bob, bobUsername)
+	_, boundary, aliceCtx, bobCtx := relationFixture(t)
 	if err := boundary.Invite(bobCtx, bob, alice); err != nil {
 		t.Fatalf("bob invites alice: %v", err)
 	}
@@ -523,11 +529,9 @@ func TestBlockRecordsTheBlockAndRemoveClearsIt(t *testing.T) {
 	}
 }
 
+// TestRemoveEndsAFriendshipOnBothSides verifies removal clears both directed edges.
 func TestRemoveEndsAFriendshipOnBothSides(t *testing.T) {
-	graph := newFakeGraph()
-	boundary := newBoundary(t, graph)
-	aliceCtx := session(alice, aliceUsername)
-	bobCtx := session(bob, bobUsername)
+	_, boundary, aliceCtx, bobCtx := relationFixture(t)
 	if err := boundary.Invite(aliceCtx, alice, bob); err != nil {
 		t.Fatalf("alice invites bob: %v", err)
 	}

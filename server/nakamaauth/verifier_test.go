@@ -2,100 +2,31 @@ package nakamaauth
 
 import (
 	"context"
-	"net"
 	"strings"
-	"sync"
 	"testing"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/nakamaaccounttest"
 	"github.com/heroiclabs/nakama-common/api"
-	"github.com/heroiclabs/nakama/v3/apigrpc"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const testSession = "signed-session-token"
 
-type accountServer struct {
-	apigrpc.UnimplementedNakamaServer
+type accountServer = nakamaaccounttest.Server
 
-	mu          sync.Mutex
-	calls       int
-	auth        []string
-	gatewayAuth []string
-	trace       []string
-	account     *api.Account
-	accountErr  error
-}
-
-func (s *accountServer) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.Account, error) {
-	md, _ := metadata.FromIncomingContext(ctx)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls++
-	s.auth = append([]string(nil), md.Get("authorization")...)
-	s.gatewayAuth = append([]string(nil), md.Get("grpcgateway-authorization")...)
-	s.trace = append([]string(nil), md.Get("x-trace-id")...)
-	return s.account, s.accountErr
-}
-
-func (s *accountServer) observed() (int, []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.calls, append([]string(nil), s.auth...)
-}
-
-func (s *accountServer) observedTrace() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.trace...)
-}
-
-func (s *accountServer) observedGatewayAuthorization() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.gatewayAuth...)
-}
-
+// verifierAgainst connects the real session verifier to the in-memory Nakama account RPC transport.
 func verifierAgainst(t *testing.T, server *accountServer) *Verifier {
 	t.Helper()
-
-	listener := bufconn.Listen(1024 * 1024)
-	grpcServer := grpc.NewServer()
-	apigrpc.RegisterNakamaServer(grpcServer, server)
-	go func() {
-		_ = grpcServer.Serve(listener)
-	}()
-	t.Cleanup(grpcServer.Stop)
-	t.Cleanup(func() {
-		_ = listener.Close()
-	})
-
-	conn, err := grpc.NewClient(
-		"passthrough:///nakama-test",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return listener.DialContext(ctx)
-		}),
-	)
-	if err != nil {
-		t.Fatalf("create Nakama test client: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = conn.Close()
-	})
-
-	return NewVerifier(apigrpc.NewNakamaClient(conn))
+	return NewVerifier(nakamaaccounttest.Client(t, server))
 }
 
+// TestVerifySessionForwardsBearerAndReturnsUserID checks that real account RPC verification
+// forwards the session and returns the verified player.
 func TestVerifySessionForwardsBearerAndReturnsUserID(t *testing.T) {
 	server := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
+		Account: &api.Account{User: &api.User{Id: "player-42"}},
 	}
 	verifier := verifierAgainst(t, server)
 
@@ -107,7 +38,7 @@ func TestVerifySessionForwardsBearerAndReturnsUserID(t *testing.T) {
 		t.Fatalf("VerifySession user ID = %q, want player-42", userID)
 	}
 
-	calls, auth := server.observed()
+	calls, auth := server.Observed()
 	if calls != 1 {
 		t.Fatalf("GetAccount calls = %d, want 1", calls)
 	}
@@ -116,9 +47,11 @@ func TestVerifySessionForwardsBearerAndReturnsUserID(t *testing.T) {
 	}
 }
 
+// TestVerifySessionReplacesInheritedAuthorizationMetadata prevents caller-supplied metadata from
+// overriding the explicit session credential.
 func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
 	server := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
+		Account: &api.Account{User: &api.User{Id: "player-42"}},
 	}
 	verifier := verifierAgainst(t, server)
 	ctx := metadata.NewOutgoingContext(
@@ -135,25 +68,27 @@ func TestVerifySessionReplacesInheritedAuthorizationMetadata(t *testing.T) {
 		t.Fatalf("VerifySession returned an error: %v", err)
 	}
 
-	_, auth := server.observed()
+	_, auth := server.Observed()
 	if len(auth) != 1 || auth[0] != "Bearer "+testSession {
 		t.Fatalf("authorization metadata = %q, want only supplied bearer credential", auth)
 	}
-	if gatewayAuth := server.observedGatewayAuthorization(); len(gatewayAuth) != 0 {
+	if gatewayAuth := server.ObservedGatewayAuthorization(); len(gatewayAuth) != 0 {
 		t.Fatalf(
 			"gRPC-Gateway authorization metadata = %q, want stripped",
 			gatewayAuth,
 		)
 	}
-	trace := server.observedTrace()
+	trace := server.ObservedTrace()
 	if len(trace) != 1 || trace[0] != "trace-7" {
 		t.Fatalf("trace metadata = %q, want preserved trace-7", trace)
 	}
 }
 
+// TestVerifySessionPreservesSanitizedGRPCCode keeps the upstream RPC status code while removing the
+// session and private error text.
 func TestVerifySessionPreservesSanitizedGRPCCode(t *testing.T) {
 	server := &accountServer{
-		accountErr: status.Error(codes.Unavailable, "upstream unavailable for "+testSession),
+		AccountErr: status.Error(codes.Unavailable, "upstream unavailable for "+testSession),
 	}
 	verifier := verifierAgainst(t, server)
 
@@ -169,12 +104,14 @@ func TestVerifySessionPreservesSanitizedGRPCCode(t *testing.T) {
 	}
 }
 
+// TestVerifySessionFailsClosed rejects unavailable or malformed account responses and preserves
+// cancellation.
 func TestVerifySessionFailsClosed(t *testing.T) {
 	tests := []struct {
 		name       string
 		session    string
-		account    *api.Account
-		accountErr error
+		Account    *api.Account
+		AccountErr error
 		wantCalls  int
 		wantError  string
 	}{
@@ -186,21 +123,21 @@ func TestVerifySessionFailsClosed(t *testing.T) {
 		{
 			name:       "Nakama rejects session",
 			session:    testSession,
-			accountErr: status.Error(codes.Unauthenticated, "rejected "+testSession),
+			AccountErr: status.Error(codes.Unauthenticated, "rejected "+testSession),
 			wantCalls:  1,
 			wantError:  "Unauthenticated",
 		},
 		{
 			name:      "account has no user",
 			session:   testSession,
-			account:   &api.Account{},
+			Account:   &api.Account{},
 			wantCalls: 1,
 			wantError: "account response has no user ID",
 		},
 		{
 			name:      "account user has no ID",
 			session:   testSession,
-			account:   &api.Account{User: &api.User{}},
+			Account:   &api.Account{User: &api.User{}},
 			wantCalls: 1,
 			wantError: "account response has no user ID",
 		},
@@ -209,8 +146,8 @@ func TestVerifySessionFailsClosed(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := &accountServer{
-				account:    test.account,
-				accountErr: test.accountErr,
+				Account:    test.Account,
+				AccountErr: test.AccountErr,
 			}
 			verifier := verifierAgainst(t, server)
 
@@ -227,7 +164,7 @@ func TestVerifySessionFailsClosed(t *testing.T) {
 			if strings.Contains(err.Error(), testSession) {
 				t.Fatalf("VerifySession error leaked the session token: %q", err)
 			}
-			calls, _ := server.observed()
+			calls, _ := server.Observed()
 			if calls != test.wantCalls {
 				t.Fatalf("GetAccount calls = %d, want %d", calls, test.wantCalls)
 			}

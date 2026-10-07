@@ -171,18 +171,72 @@ static func changed_fraction(a: PackedFloat32Array, b: PackedFloat32Array, step:
 ## run that is the character creator, added unnamed as `@CharacterCreator@nnn`,
 ## which a name list silently misses (it did, for three runs' worth of
 ## `relief_read` readings). Returns what was hidden, for the tool's log.
-static func quiet(main: Node, mover_names: Array[String]) -> Array[String]:
+static func quiet(main: Node, mover_names: Array[String], hide_canvases: bool = true) -> Array[String]:
 	var hidden: Array[String] = []
 	for node_name in mover_names:
 		var node := main.get_node_or_null(NodePath(node_name))
 		if node != null and "visible" in node:
 			node.set("visible", false)
 			hidden.append(node_name)
-	for child in main.get_children():
-		if (child is CanvasLayer or child is Control) and not String(child.name) in hidden:
-			child.set("visible", false)
-			hidden.append(String(child.name))
+	if hide_canvases:
+		for child in main.get_children():
+			if (child is CanvasLayer or child is Control) and not String(child.name) in hidden:
+				child.set("visible", false)
+				hidden.append(String(child.name))
 	return hidden
+
+
+## Pixel bounds for a normalized crop; upper edges are exclusive and clip to
+## the frame. Callers supply non-negative crop origins, as both instruments do.
+static func crop_bounds(size: Vector2i, crop: Rect2) -> Rect2i:
+	var x0 := int(crop.position.x * float(size.x))
+	var y0 := int(crop.position.y * float(size.y))
+	var x1 := mini(int((crop.position.x + crop.size.x) * float(size.x)), size.x)
+	var y1 := mini(int((crop.position.y + crop.size.y) * float(size.y)), size.y)
+	return Rect2i(x0, y0, maxi(x1 - x0, 0), maxi(y1 - y0, 0))
+
+
+## Every cropped RGB8 pixel in row-major order, without resampling. This is a
+## different population from measure's point grid and must stay separate.
+static func crop_luma(img: Image, crop: Rect2) -> PackedFloat32Array:
+	var rgb := img.duplicate() as Image
+	rgb.convert(Image.FORMAT_RGB8)
+	var w := rgb.get_width()
+	var bounds := crop_bounds(Vector2i(w, rgb.get_height()), crop)
+	var out := PackedFloat32Array()
+	if bounds.size.x <= 0 or bounds.size.y <= 0:
+		return out
+	var data := rgb.get_data()
+	out.resize(bounds.size.x * bounds.size.y)
+	var n := 0
+	for y in range(bounds.position.y, bounds.end.y):
+		var row := y * w
+		for x in range(bounds.position.x, bounds.end.x):
+			var o := (row + x) * 3
+			out[n] = (float(data[o]) * 0.2126 + float(data[o + 1]) * 0.7152
+				+ float(data[o + 2]) * 0.0722) / 255.0
+			n += 1
+	return out
+
+
+## Terrain-only instruments also hide scenery silhouettes while retaining the
+## caller's canvas policy. Capture's existing quiet() default stays unchanged.
+static func quiet_terrain(main: Node, mover_names: Array[String], hide_canvases: bool = true) -> Array[String]:
+	var hidden := quiet(main, mover_names, hide_canvases)
+	var world := main.get_node_or_null("World")
+	if world != null:
+		for child in world.get_children():
+			if child.name != "Terrain" and "visible" in child:
+				child.set("visible", false)
+				hidden.append(String(child.name))
+	return hidden
+
+
+static func terrain_material(main: Node) -> ShaderMaterial:
+	var terrain := main.get_node_or_null("World/Terrain") as MeshInstance3D
+	if terrain == null or terrain.mesh == null:
+		return null
+	return terrain.mesh.surface_get_material(0) as ShaderMaterial
 
 
 ## Spelled out because the obvious-looking `int(q * (n - 1))` is a DIFFERENT

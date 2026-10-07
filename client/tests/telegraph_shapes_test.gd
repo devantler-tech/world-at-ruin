@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the Telegraph geometry library (issue #54).
 ##
 ## Telegraphs are the combat "signal in the ground": the server resolves a hit
@@ -14,7 +14,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/telegraph_shapes_test.tscn
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -90,17 +89,3 @@ func _ready() -> void:
 
 	print("TEST PASS — telegraph geometry predicates hold (circle, ring, cone, rect; planar; degenerate-safe)")
 	get_tree().quit(0)
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

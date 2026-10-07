@@ -1,4 +1,4 @@
-extends Node
+extends "res://tests/boolean_verdict.gd"
 ## Regression test for the Discovery exploration tracker (issue #71).
 ##
 ## Discovery answers one question — "has this player reached this place yet?" —
@@ -14,7 +14,6 @@ extends Node
 ##
 ## Run: godot --headless --path client res://tests/discovery_test.tscn
 
-var _failed := false
 
 
 func _ready() -> void:
@@ -177,17 +176,3 @@ func _run_scripted_walk(d: Discovery) -> String:
 
 func _eq_list(actual: Array[String], expected: String, label: String) -> void:
 	_check(",".join(actual) == expected, true, "%s (got \"%s\")" % [label, ",".join(actual)])
-
-
-func _check(actual: bool, expected: bool, label: String) -> void:
-	if _failed:
-		return
-	if actual != expected:
-		_fail("%s — expected %s, got %s" % [label, expected, actual])
-
-
-func _fail(message: String) -> void:
-	_failed = true
-	push_error(message)
-	print("TEST FAIL — %s" % message)
-	get_tree().quit(1)

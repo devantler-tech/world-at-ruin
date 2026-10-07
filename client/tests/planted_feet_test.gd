@@ -42,23 +42,17 @@ const BLEND_WINDOW_S := 0.36
 ## The same 15% of body speed the gait is held to on the drive.
 const MAX_BLEND_SLIP := 0.15
 
-var _had_flag := false
-var _original_flag := ""
-var _had_run_flag := false
-var _original_run_flag := ""
+var _flag_state: Dictionary = {}
 var _recipe: Dictionary = {}
 
 
 func _ready() -> void:
-	_had_flag = OS.has_environment(FLAG)
-	_original_flag = OS.get_environment(FLAG)
-	_had_run_flag = OS.has_environment(RUN_FLAG)
-	_original_run_flag = OS.get_environment(RUN_FLAG)
-	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
-	if not (loaded is Dictionary):
-		_fail("could not load %s" % RECIPE_PATH)
+	_flag_state = TestEnvironment.snapshot([FLAG, RUN_FLAG])
+	var fixture := LocomotionTestSupport.recipe_fixture(RECIPE_PATH)
+	if not fixture["problem"].is_empty():
+		_fail(fixture["problem"])
 		return
-	_recipe = loaded
+	_recipe = fixture["recipe"]
 
 	if not _check_foot_path():
 		return
@@ -309,8 +303,7 @@ func _check_blend_holds(subject: Dictionary) -> bool:
 
 ## The angle between two rotations, exact near zero where `angle_to` is not.
 func _angle_between(a: Quaternion, b: Quaternion) -> float:
-	var delta := a.inverse() * b
-	return 2.0 * atan2(Vector3(delta.x, delta.y, delta.z).length(), absf(delta.w))
+	return LocomotionTestSupport.rotation_distance(a, b)
 
 
 ## 4b. On the body's own ground plane each gait keeps a foot down for its whole
@@ -452,11 +445,7 @@ func _set_flags() -> void:
 
 
 func _restore_flags() -> void:
-	for pair: Array in [[FLAG, _had_flag, _original_flag], [RUN_FLAG, _had_run_flag, _original_run_flag]]:
-		if pair[1]:
-			OS.set_environment(pair[0], pair[2])
-		else:
-			OS.unset_environment(pair[0])
+	TestEnvironment.restore(_flag_state)
 
 
 func _fail(message: String) -> bool:

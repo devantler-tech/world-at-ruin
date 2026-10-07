@@ -119,13 +119,21 @@ var _cave_cover: Array = []
 ## pinned to walk-out grade.
 var _cave_apron: Array = []
 
-## Every cosmetic prop this world scattered, as [FoliageGen] produced them.
+## The baseline scatter, recorded in the original batch order and lifted pose.
 ## Retained because a MultiMesh's instance transforms live in the RenderingServer
 ## and are NOT readable under `--headless` (they read back as identity, and its
 ## `buffer` is empty), so this placement list is the only headless-verifiable
-## record of where scenery actually went — and it is the record that carries the
+## record of the generated scenery — and it is the record that carries the
 ## laws worth pinning (determinism, keep-outs, resting on the ground).
+## The current filtered draw list lives separately in _visible_foliage.
 var _foliage: Array[Dictionary] = []
+## Original rendered poses remain immutable while the slab preview filters draws.
+var _foliage_poses := {}
+var _visible_foliage: Array[Dictionary] = []
+## Copy of the current draw instances, in batch order, at their original lifted poses.
+var visible_foliage_placements: Array[Dictionary]:
+	get:
+		return _visible_foliage.duplicate(true)
 ## Representative, non-zero phase used by evidence captures. The ordinary game
 ## never calls the capture freeze and keeps its live wind, flame, and light.
 const CAPTURE_ANIMATION_TIME := 1.0
@@ -160,13 +168,11 @@ func _ready() -> void:
 	_build_starter_cave()
 	_scatter_ruins()
 	_build_shrine()
-	# LAST: foliage keeps out of every landmark, so it needs the ruin sites and
-	# the shrine to already exist in the tree.
 	_scatter_foliage()
-	# LAST of all, and only opted in: the raised slab overlay keeps out of the
-	# starter cave, so its hull padding has to be known (#547).
+	# Keep the baseline scene order and scatter; only the submitted cover changes.
 	if _ground_plates_enabled:
 		_build_ground_plates()
+		_refresh_foliage()
 
 func _process(delta: float) -> void:
 	_time += delta
@@ -260,21 +266,15 @@ func _raw_height(x: float, z: float) -> float:
 ## the ground must use it (mid-triangle the two can differ by tens of cm).
 ## Returns NO_GROUND outside the terrain bounds.
 func surface_height_at(x: float, z: float) -> float:
-	var step := SIZE / QUADS
-	var half := SIZE / 2.0
-	var gx := (x + half) / step
-	var gz := (z + half) / step
-	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+	var cell := _terrain_cell(x, z)
+	if cell.is_empty():
 		return NO_GROUND
-	var ix := mini(int(gx), QUADS - 1)
-	var iz := mini(int(gz), QUADS - 1)
-	var fx := gx - ix
-	var fz := gz - iz
-	var w := QUADS + 1
-	var h00 := _heights[iz * w + ix]
-	var h10 := _heights[iz * w + ix + 1]
-	var h01 := _heights[(iz + 1) * w + ix]
-	var h11 := _heights[(iz + 1) * w + ix + 1]
+	var fx: float = cell[&"fx"]
+	var fz: float = cell[&"fz"]
+	var h00: float = cell[&"h00"]
+	var h10: float = cell[&"h10"]
+	var h01: float = cell[&"h01"]
+	var h11: float = cell[&"h11"]
 	# Quads split along the v00→v11 diagonal (see _build_terrain): the
 	# (v00, v11, v10) triangle covers fx >= fz, (v00, v01, v11) the rest.
 	if fx >= fz:
@@ -287,30 +287,53 @@ func surface_height_at(x: float, z: float) -> float:
 ## than the cave hull's normal: slope-aware ash/rock shading must answer as the
 ## neighbouring ground does even though the cave foot itself is near-vertical.
 func surface_normal_at(x: float, z: float) -> Vector3:
-	var step := SIZE / QUADS
-	var half := SIZE / 2.0
-	var gx := (x + half) / step
-	var gz := (z + half) / step
-	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+	var cell := _terrain_cell(x, z)
+	if cell.is_empty():
 		return Vector3.UP
-	var ix := mini(int(gx), QUADS - 1)
-	var iz := mini(int(gz), QUADS - 1)
-	var fx := gx - ix
-	var fz := gz - iz
-	var w := QUADS + 1
-	var x0 := ix * step - half
-	var z0 := iz * step - half
-	var x1 := x0 + step
-	var z1 := z0 + step
-	var v00 := Vector3(x0, _heights[iz * w + ix], z0)
-	var v10 := Vector3(x1, _heights[iz * w + ix + 1], z0)
-	var v01 := Vector3(x0, _heights[(iz + 1) * w + ix], z1)
-	var v11 := Vector3(x1, _heights[(iz + 1) * w + ix + 1], z1)
+	var fx: float = cell[&"fx"]
+	var fz: float = cell[&"fz"]
+	var vertices := _terrain_cell_vertices(cell)
+	var v00 := vertices[0]
+	var v10 := vertices[1]
+	var v01 := vertices[2]
+	var v11 := vertices[3]
 	# Same two triangles and same clockwise front-face convention as
 	# _build_terrain/_add_tri. These operand orders point upward.
 	if fx >= fz:
 		return (v11 - v00).cross(v10 - v00).normalized()
 	return (v01 - v00).cross(v11 - v00).normalized()
+
+
+## The grid cell and its exact corner heights, shared by rendered-surface queries.
+## Positive edges clamp to the last cell while keeping a fraction of one.
+func _terrain_cell(x: float, z: float) -> Dictionary:
+	var step := SIZE / QUADS
+	var half := SIZE / 2.0
+	var gx := (x + half) / step
+	var gz := (z + half) / step
+	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+		return {}
+	var ix := mini(int(gx), QUADS - 1)
+	var iz := mini(int(gz), QUADS - 1)
+	var w := QUADS + 1
+	return {
+		&"ix": ix, &"iz": iz, &"fx": gx - ix, &"fz": gz - iz,
+		&"h00": _heights[iz * w + ix], &"h10": _heights[iz * w + ix + 1],
+		&"h01": _heights[(iz + 1) * w + ix], &"h11": _heights[(iz + 1) * w + ix + 1],
+	}
+
+
+func _terrain_cell_vertices(cell: Dictionary) -> Array[Vector3]:
+	var step := SIZE / QUADS
+	var half := SIZE / 2.0
+	var x0 := int(cell[&"ix"]) * step - half
+	var z0 := int(cell[&"iz"]) * step - half
+	var x1 := x0 + step
+	var z1 := z0 + step
+	return [
+		Vector3(x0, cell[&"h00"], z0), Vector3(x1, cell[&"h10"], z0),
+		Vector3(x0, cell[&"h01"], z1), Vector3(x1, cell[&"h11"], z1),
+	]
 
 
 func _build_terrain() -> void:
@@ -468,6 +491,7 @@ func set_ground_plates_enabled(on: bool) -> void:
 	if overlay == null:
 		if on:
 			_build_ground_plates()
+			_refresh_foliage()
 		return
 	overlay.visible = on
 	# The stone is solid only while it is drawn: a hidden top a body still
@@ -477,6 +501,7 @@ func set_ground_plates_enabled(on: bool) -> void:
 		for collider in body.get_children():
 			if collider is CollisionShape3D:
 				(collider as CollisionShape3D).set_deferred(&"disabled", not on)
+	_refresh_foliage()
 
 
 ## Height of the surface a body walks on at world (x, z): the top of a raised
@@ -543,11 +568,9 @@ func _index_ground_plate_tops(tops: Array) -> void:
 		var polygon := top[&"polygon"] as PackedVector2Array
 		var index := _ground_plate_tops.size()
 		_ground_plate_tops.append(top)
-		var lo := polygon[0]
-		var hi := polygon[0]
-		for p in polygon:
-			lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
-			hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+		var bounds := ExposedSlabGeometry.polygon_bounds(polygon)
+		var lo := bounds[0]
+		var hi := bounds[1]
 		for cz in range(floori(lo.y / GROUND_PLATE_INDEX_CELL), floori(hi.y / GROUND_PLATE_INDEX_CELL) + 1):
 			for cx in range(floori(lo.x / GROUND_PLATE_INDEX_CELL), floori(hi.x / GROUND_PLATE_INDEX_CELL) + 1):
 				var cell := Vector2i(cx, cz)
@@ -597,27 +620,18 @@ func _ground_color(shade: Vector3, palette_at: Vector3) -> Color:
 ## shaders must reproduce that triangle interpolation or region boundaries and
 ## low-poly face shading split again at the contact.
 func rendered_ground_color_at(x: float, z: float) -> Color:
-	var step := SIZE / QUADS
-	var half := SIZE / 2.0
-	var gx := (x + half) / step
-	var gz := (z + half) / step
-	if gx < 0.0 or gz < 0.0 or gx > QUADS or gz > QUADS or _heights.is_empty():
+	var cell := _terrain_cell(x, z)
+	if cell.is_empty():
 		var fallback_y := height_at(x, z)
 		return _mesh_vertex_color(
 			_ground_color(Vector3(x, fallback_y, z), Vector3(x, fallback_y, z)))
-	var ix := mini(int(gx), QUADS - 1)
-	var iz := mini(int(gz), QUADS - 1)
-	var fx := gx - ix
-	var fz := gz - iz
-	var w := QUADS + 1
-	var x0 := ix * step - half
-	var z0 := iz * step - half
-	var x1 := x0 + step
-	var z1 := z0 + step
-	var v00 := Vector3(x0, _heights[iz * w + ix], z0)
-	var v10 := Vector3(x1, _heights[iz * w + ix + 1], z0)
-	var v01 := Vector3(x0, _heights[(iz + 1) * w + ix], z1)
-	var v11 := Vector3(x1, _heights[(iz + 1) * w + ix + 1], z1)
+	var fx: float = cell[&"fx"]
+	var fz: float = cell[&"fz"]
+	var vertices := _terrain_cell_vertices(cell)
+	var v00 := vertices[0]
+	var v10 := vertices[1]
+	var v01 := vertices[2]
+	var v11 := vertices[3]
 	if fx >= fz:
 		var centre := (v00 + v11 + v10) / 3.0
 		return (
@@ -1171,16 +1185,7 @@ func _rubble_chunk_mesh(rng: RandomNumberGenerator, size: Vector3) -> ArrayMesh:
 		Vector3(lo.x, hi.y, lo.z) + jitter.call(), Vector3(hi.x, hi.y, lo.z) + jitter.call(),
 		Vector3(hi.x, hi.y, hi.z) + jitter.call(), Vector3(lo.x, hi.y, hi.z) + jitter.call(),
 	]
-	var faces := [
-		[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0],
-		[6, 7, 3, 2], [5, 6, 2, 1], [7, 4, 0, 3],
-	]
-	# Godot front faces wind CLOCKWISE (see _add_tri): emit each triangle
-	# reversed, or the chunk is inside-out — pass-through for raycasts and
-	# half-solid for bodies, the v0.1.x sink/bump bug class.
-	for f: Array in faces:
-		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[2]]); st.add_vertex(corners[f[1]])
-		st.add_vertex(corners[f[0]]); st.add_vertex(corners[f[3]]); st.add_vertex(corners[f[2]])
+	_append_box_faces(st, corners)
 	st.generate_normals()
 	return st.commit()
 
@@ -1193,11 +1198,16 @@ func _add_box(st: SurfaceTool, lo: Vector3, hi: Vector3) -> void:
 		Vector3(lo.x, hi.y, lo.z), Vector3(hi.x, hi.y, lo.z),
 		Vector3(hi.x, hi.y, hi.z), Vector3(lo.x, hi.y, hi.z),
 	]
+	_append_box_faces(st, c)
+
+
+## Clockwise faces shared by regular boxes and jittered rubble. Corner creation
+## stays with each caller so the random draw order is unchanged.
+func _append_box_faces(st: SurfaceTool, c: Array[Vector3]) -> void:
 	var faces := [
 		[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0],
 		[6, 7, 3, 2], [5, 6, 2, 1], [7, 4, 0, 3],
 	]
-	# Clockwise, per _add_tri's convention.
 	for f: Array in faces:
 		st.add_vertex(c[f[0]]); st.add_vertex(c[f[2]]); st.add_vertex(c[f[1]])
 		st.add_vertex(c[f[0]]); st.add_vertex(c[f[3]]); st.add_vertex(c[f[2]])
@@ -1251,16 +1261,39 @@ func _scatter_foliage() -> void:
 	for kind in FoliageGen.KIND_COUNT:
 		var batch := by_kind[kind] as Array
 		_build_foliage_batch(kind, batch)
-		# Record what was actually rendered, in the same batch/instance order the
-		# MultiMeshes were filled, so the placement list mirrors the world.
 		for placement: Dictionary in batch:
 			_foliage.append(placement)
+	_visible_foliage = _foliage.duplicate(true)
 
 
-## Every cosmetic prop in this world, in render order — a copy, so a caller can
+## Filter the original scatter, never redraw it: remaining ash cover keeps
+## its stored position and traits, and opting out restores the exact baseline.
+## Compacted instance IDs can change shader tint/wind phase in the preview.
+func _refresh_foliage() -> void:
+	_visible_foliage.clear()
+	for kind in FoliageGen.KIND_COUNT:
+		var instance := get_node_or_null("Foliage_%d" % kind) as MultiMeshInstance3D
+		if instance == null:
+			continue
+		var poses: Array[Transform3D] = []
+		var original_index := 0
+		for placement: Dictionary in _foliage:
+			if int(placement["kind"]) != kind:
+				continue
+			var pose: Transform3D = _foliage_poses[kind][original_index]
+			original_index += 1
+			if ground_plate_at(pose.origin.x, pose.origin.z) >= 0:
+				continue
+			poses.append(pose)
+			_visible_foliage.append(placement.duplicate(true))
+		instance.multimesh = CosmeticInstances.batch(instance.multimesh.mesh, poses)
+
+
+## Every generated cosmetic prop, in baseline render order — a copy, so a caller can
 ## never disturb the generated world. Each entry is a [FoliageGen] placement
 ## (`kind`, `pos`, `yaw`, `scale`), with `pos.y` the height the prop was lifted
-## to so it rests on the surface.
+## to so it rests on the surface. Slab previews retain this deterministic scatter;
+## [member visible_foliage_placements] reports the subset currently drawn.
 func foliage_placements() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for placement: Dictionary in _foliage:
@@ -1355,23 +1388,13 @@ func _build_foliage_batch(kind: int, items: Array) -> void:
 	if items.is_empty():
 		return
 	var mesh := _foliage_mesh(kind)
-	# Props are modelled centred on their own origin, so lift each one to rest ON
-	# the sampled ground — slightly sunk, so nothing appears to hover.
-	var lift := mesh.get_aabb().size.y * 0.4
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = mesh
-	mm.instance_count = items.size()
+	var poses := CosmeticInstances.transforms(mesh, items)
+	_foliage_poses[kind] = poses
+	var mm := CosmeticInstances.batch(mesh, poses)
 	for i in items.size():
-		var placement: Dictionary = items[i]
-		var pos: Vector3 = placement["pos"]
-		var prop_scale := float(placement["scale"])
-		var basis := Basis(Vector3.UP, float(placement["yaw"])).scaled(Vector3.ONE * prop_scale)
-		var rendered := Vector3(pos.x, pos.y + lift * prop_scale, pos.z)
-		mm.set_instance_transform(i, Transform3D(basis, rendered))
-		# Keep the record in step with what was actually rendered — the MultiMesh
-		# itself cannot be read back headlessly (see _foliage).
-		placement["pos"] = rendered
+		# Keep the record in step with rendered placement; headless MultiMesh
+		# readback cannot supply these positions.
+		items[i]["pos"] = poses[i].origin
 	var mmi := MultiMeshInstance3D.new()
 	mmi.name = "Foliage_%d" % kind
 	mmi.multimesh = mm

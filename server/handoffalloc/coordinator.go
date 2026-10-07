@@ -169,6 +169,8 @@ func (c *Coordinator) Allocate(
 	current, err := c.leases.Load(ctx, request.UserID, request.ReservationID)
 	hasCurrent := err == nil
 	switch {
+	case err == nil && current.Lease.ReaderOnly():
+		return handoff.Allocation{}, handoff.RetainAllocationOutcome(nakamalease.ErrReaderOnly)
 	case err == nil &&
 		current.Lease.AttemptID == request.AttemptID &&
 		current.Lease.Releasing:
@@ -293,16 +295,8 @@ func (c *Coordinator) Allocate(
 				return handoff.Allocation{}, settleErr
 			}
 		}
-		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
-			progressCtx,
-			request,
-		); progressed {
-			if winnerErr != nil {
-				return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
-			}
+		if winner, settled, winnerErr := c.progressedAllocationOutcome(progressCtx, request); settled {
 			return winner, winnerErr
-		} else if winnerErr != nil {
-			return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 		}
 		return handoff.Allocation{}, handoff.RetainAllocationOutcome(
 			sanitizedResourceError(err, resourceOperation),
@@ -330,16 +324,8 @@ func (c *Coordinator) Allocate(
 			StagedCleanupTimeout,
 		)
 		defer cancel()
-		if winner, progressed, winnerErr := c.resolveProgressedAttempt(
-			progressCtx,
-			request,
-		); progressed {
-			if winnerErr != nil {
-				return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
-			}
+		if winner, settled, winnerErr := c.progressedAllocationOutcome(progressCtx, request); settled {
 			return winner, winnerErr
-		} else if winnerErr != nil {
-			return handoff.Allocation{}, handoff.RetainAllocationOutcome(winnerErr)
 		}
 		if releaseErr := c.reconcileAttempt(progressCtx, request, &next); releaseErr != nil {
 			return handoff.Allocation{}, ErrReconciliation
@@ -415,7 +401,7 @@ func (c *Coordinator) reloadUnallocatedDispatch(
 			return nakamalease.Record{}, false
 		case err != nil:
 			continue
-		case current.Lease.AttemptID != request.AttemptID ||
+		case current.Lease.ReaderOnly() || current.Lease.AttemptID != request.AttemptID ||
 			!current.Lease.Staging ||
 			!current.Lease.Dispatched:
 			return nakamalease.Record{}, false
@@ -434,6 +420,8 @@ func (c *Coordinator) resolveProgressedAttempt(
 		return handoff.Allocation{}, false, nil
 	case err != nil:
 		return handoff.Allocation{}, false, err
+	case current.Lease.ReaderOnly():
+		return handoff.Allocation{}, false, nakamalease.ErrReaderOnly
 	case current.Lease.AttemptID != request.AttemptID,
 		current.Lease.Staging,
 		current.Lease.Releasing:
@@ -448,6 +436,9 @@ func (c *Coordinator) resolveDurable(
 	ctx context.Context,
 	lease nakamalease.Lease,
 ) (handoff.Allocation, error) {
+	if lease.ReaderOnly() {
+		return handoff.Allocation{}, handoff.RetainAllocationOutcome(nakamalease.ErrReaderOnly)
+	}
 	allocation, err := c.resources.Resolve(ctx, lease)
 	if err != nil {
 		return handoff.Allocation{}, sanitizedResourceError(
@@ -521,6 +512,9 @@ func (c *Coordinator) releaseResource(
 	ctx context.Context,
 	lease nakamalease.Lease,
 ) error {
+	if lease.ReaderOnly() {
+		return nakamalease.ErrReaderOnly
+	}
 	cleanupCtx, cancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
 		StagedCleanupTimeout,
@@ -551,6 +545,9 @@ func (c *Coordinator) reconcileAttempt(
 	}
 	if err != nil {
 		return err
+	}
+	if current.Lease.ReaderOnly() {
+		return nakamalease.ErrReaderOnly
 	}
 	if current.Lease.AttemptID != request.AttemptID {
 		if resource != nil {
@@ -625,4 +622,14 @@ func (c *Coordinator) Release(
 		return ErrReconciliation
 	}
 	return nil
+}
+
+// progressedAllocationOutcome retains ownership whenever resolving a durable
+// winner is ambiguous, and distinguishes that from an attempt still staging.
+func (c *Coordinator) progressedAllocationOutcome(ctx context.Context, request handoff.AllocationRequest) (handoff.Allocation, bool, error) {
+	winner, progressed, err := c.resolveProgressedAttempt(ctx, request)
+	if err != nil {
+		return handoff.Allocation{}, true, handoff.RetainAllocationOutcome(err)
+	}
+	return winner, progressed, nil
 }

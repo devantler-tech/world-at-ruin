@@ -66,14 +66,9 @@ func _ready() -> void:
 func _check_name_is_private() -> void:
 	var first := BootRecovery._write_tmp_path(_probe)
 	var second := BootRecovery._write_tmp_path(_probe)
-	if first == _probe + ".tmp":
-		_fail("staging name is the derivable <path>.tmp")
-	if first == second:
-		_fail("two staging attempts share one name (%s)" % first)
-	if not first.begins_with(_probe + BootRecovery.WRITE_TMP_SUFFIX):
-		_fail("staging name does not carry the sweepable prefix (%s)" % first)
-	if not first.contains(str(OS.get_process_id())):
-		_fail("staging name does not carry this process id (%s)" % first)
+	for problem in PersistenceTestSupport.private_name_errors(
+		first, second, _probe, BootRecovery.WRITE_TMP_SUFFIX):
+		_fail(problem)
 
 
 ## 2. A foreign writer's derivable stage survives a save untouched.
@@ -85,32 +80,36 @@ func _check_name_is_private() -> void:
 func _check_foreign_stage_survives() -> void:
 	var foreign := _probe + ".tmp"
 	var foreign_bytes := "a second client's half-written recovery document"
-	_write_text(foreign, foreign_bytes)
+	var observation := PersistenceTestSupport.foreign_stage(_probe, foreign_bytes,
+		func() -> Dictionary: return BootRecovery.save_state(_probe, _state()))
+	if not observation["seeded"]:
+		_fail("could not seed a foreign stage")
+		return
 
-	var saved := BootRecovery.save_state(_probe, _state())
+	var saved: Dictionary = observation["result"]
 	if not (saved["ok"] as bool):
 		_fail("save failed while a foreign stage was present: %s" % str(saved["reason"]))
-		_remove(foreign)
 		return
-	if not FileAccess.file_exists(foreign):
+	if not observation["exists"]:
 		_fail("the save consumed a foreign writer's %s" % foreign)
-	elif _read_text(foreign) != foreign_bytes:
+	elif observation["bytes"] != foreign_bytes:
 		_fail("the save overwrote a foreign writer's staged bytes")
 	if not (BootRecovery.load_state(_probe)["ok"] as bool):
 		_fail("the recovery state did not land while a foreign stage was present")
 
-	_remove(foreign)
 	_remove(_probe)
 
 
 ## 3. A completed save leaves no staging file — matched BY PREFIX, never by the
 ## fixed name (the vacuity trap #424 measured).
 func _check_no_stage_left_behind() -> void:
-	var saved := BootRecovery.save_state(_probe, _state())
+	var observation := PersistenceTestSupport.completed_write(_probe, BootRecovery.WRITE_TMP_SUFFIX,
+		func() -> Dictionary: return BootRecovery.save_state(_probe, _state()))
+	var saved: Dictionary = observation["result"]
 	if not (saved["ok"] as bool):
 		_fail("save failed on a clean path: %s" % str(saved["reason"]))
 		return
-	var leftovers := _stages()
+	var leftovers: Array[String] = observation["stages"]
 	if not leftovers.is_empty():
 		_fail("save left staging files behind: %s" % ", ".join(leftovers))
 	_remove(_probe)
@@ -178,36 +177,20 @@ func _state() -> Dictionary:
 
 ## Every staging file for the probe, matched by prefix.
 func _stages() -> Array[String]:
-	var found: Array[String] = []
-	var parent := _probe.get_base_dir()
-	var prefix := _probe.get_file() + BootRecovery.WRITE_TMP_SUFFIX
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(entry)
-	return found
+	return PersistenceTestSupport.staging_names(_probe, BootRecovery.WRITE_TMP_SUFFIX)
 
 
 func _write_text(path: String, text: String) -> void:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
+	if not PersistenceTestSupport.write_text(path, text):
 		_fail("could not seed %s" % path)
-		return
-	file.store_string(text)
-	file.close()
 
 
 func _read_text(path: String) -> String:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return ""
-	var text := file.get_as_text()
-	file.close()
-	return text
+	return PersistenceTestSupport.read_text(path, false)
 
 
 func _remove(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	PersistenceTestSupport.remove_file(path)
 
 
 func _fail(message: String) -> void:

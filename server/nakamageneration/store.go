@@ -27,14 +27,14 @@ var (
 	ErrNotFound = errors.New("nakama generation: not found")
 	// ErrStorage reports unreadable or invalid durable state without exposing it.
 	ErrStorage = errors.New("nakama generation: storage unavailable or invalid")
-	// ErrConflict reports generation-ID reuse with different durable membership.
+	// ErrConflict reports membership reuse or a record outside the writer schema.
 	ErrConflict = errors.New("nakama generation: conflicting membership")
 	// ErrIndeterminate means a dispatched create could not be resolved; retry
 	// the same generation ID and membership, never substitute a new identity.
 	ErrIndeterminate = errors.New("nakama generation: create outcome indeterminate")
 )
 
-// Record contains the complete schema-1 generation and its exact storage version.
+// Record contains a complete readable generation and its exact storage version.
 // MemberPodUIDs is owned by the caller; mutating it cannot change durable state.
 type Record struct {
 	GenerationID    string
@@ -42,7 +42,12 @@ type Record struct {
 	MemberSetDigest string
 	State           string
 	Version         string
+	readerOnly      bool
 }
+
+// ReaderOnly reports an expanded observation that current writers cannot adopt.
+// It does not establish fencing authority or authenticate any allocator actor.
+func (r Record) ReaderOnly() bool { return r.readerOnly }
 
 // Store creates and reads generation membership; it has no overwrite/delete API.
 type Store struct{ storage nakamastorage.Client }
@@ -123,7 +128,7 @@ func (s *Store) Load(ctx context.Context, generationID string) (Record, error) {
 
 // adopt distinguishes an immutable replay from reuse of a generation identity.
 func adopt(existing Record, want document) (Record, error) {
-	if existing.GenerationID != want.GenerationID || existing.State != want.State ||
+	if existing.ReaderOnly() || existing.GenerationID != want.GenerationID || existing.State != want.State ||
 		existing.MemberSetDigest != want.MemberSetDigest || !slices.Equal(existing.MemberPodUIDs, want.MemberPodUIDs) {
 		return Record{}, ErrConflict
 	}
@@ -132,8 +137,7 @@ func adopt(existing Record, want document) (Record, error) {
 
 // validAcknowledgement requires the exact private write identity and a usable version.
 func validAcknowledgement(acks []*api.StorageObjectAck, generationID string) bool {
-	return len(acks) == 1 && acks[0] != nil && acks[0].GetCollection() == Collection &&
-		acks[0].GetKey() == generationID && acks[0].GetUserId() == nakamastorage.SystemOwnerID &&
+	return len(acks) == 1 && nakamastorage.ValidAcknowledgement(acks[0], Collection, generationID, nakamastorage.SystemOwnerID) &&
 		validVersion(acks[0].GetVersion())
 }
 

@@ -100,12 +100,7 @@ func (s *Store) Load(ctx context.Context, subjectID string) (Record, error) {
 		return Record{}, err
 	}
 	object, err := nakamastorage.ReadSystemOwned(ctx, s.storage, Collection, recordKey(subjectID))
-	switch {
-	case errors.Is(err, nakamastorage.ErrObjectMissing):
-		return Record{}, ErrNotFound
-	case errors.Is(err, nakamastorage.ErrObjectInvalid):
-		return Record{}, ErrStorage
-	case err != nil:
+	if err := nakamastorage.ReadError(err, ErrNotFound, ErrStorage); err != nil {
 		return Record{}, err
 	}
 	inventory, err := decodeDocument(object.GetValue())
@@ -126,10 +121,8 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) error {
 	if request.ExpectedVersion == "" {
 		return errors.New("nakama inventory: observed version is required")
 	}
-	if request.ExpectedVersion != "*" {
-		if _, err := s.Load(ctx, subjectID); err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
+	if err := nakamastorage.LoadBeforeReplace(ctx, subjectID, request.ExpectedVersion, ErrNotFound, s.Load); err != nil {
+		return err
 	}
 	value, err := encodeDocument(request.Inventory)
 	if err != nil {

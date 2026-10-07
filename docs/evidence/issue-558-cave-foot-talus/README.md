@@ -28,7 +28,7 @@ The abstract brief is the repository's
 [structures, caves and blending target](../../art-direction/README.md#structures-caves-and-blending-225):
 broken material should leave scree and cave walls should carry debris skirts
 instead of ending in a bare mesh-to-ground line. Its named influences are
-[Elden Ring's official world presentation](https://en.bandainamcoent.eu/elden-ring/elden-ring)
+[Elden Ring's official world presentation](https://www.bandainamcoent.com/games/elden-ring)
 and Blizzard's official
 [Fractured Peaks guide](https://news.blizzard.com/en-us/article/23916442/your-guide-to-the-diablo-iv-open-beta).
 They are link-only references; no third-party media entered this repository or

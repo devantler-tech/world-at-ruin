@@ -3,7 +3,6 @@ package nakamalease
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,20 +27,35 @@ func (s *claimedReplayStorage) StorageWrite(context.Context, []*runtime.StorageW
 	return nil, errors.New("unexpected write")
 }
 
-// An already-claimed observation is an idempotent local replay. It preserves
-// the caller's record and does not turn a backend outage into a second claim.
-func TestClaimedReplayReturnsObservedRecordWithoutStorage(t *testing.T) {
+// Claimed replays must rebind to durable state before returning ownership.
+// An unavailable backend cannot establish that the stored schema is writable.
+func TestClaimedReplayRefusesUnavailableDurableObservation(t *testing.T) {
 	storage := &claimedReplayStorage{}
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lease := validLease()
-	lease.UserID = strings.ToUpper(testCanonicalID)
 	lease.ClaimedAt = lease.ExpiresAt.Add(-time.Second)
 	observed := Record{Lease: lease, Version: "observed-version"}
 	got, err := store.Claim(context.Background(), observed, lease.AttemptID, lease.ClaimedAt.Add(time.Second))
-	if err != nil || got != observed || storage.calls != 0 {
-		t.Fatalf("claimed replay changed record or used storage: got=%+v err=%v calls=%d", got, err, storage.calls)
+	if !errors.Is(err, ErrStorage) || got != (Record{}) || storage.calls != 1 {
+		t.Fatalf("claimed replay bypassed durable state: got=%+v err=%v calls=%d", got, err, storage.calls)
+	}
+}
+
+// A claimed legacy row replays idempotently only after its exact durable observation matches.
+func TestClaimedReplayReturnsExactDurableRecordWithoutWriting(t *testing.T) {
+	storage, store := newLeaseStoreFixture(t)
+	lease := validLease()
+	current := mustCreateLease(t, store, lease)
+	claimed, err := store.Claim(t.Context(), current, lease.AttemptID, lease.ExpiresAt.Add(-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := len(storage.writes)
+	got, err := store.Claim(t.Context(), claimed, lease.AttemptID, lease.ExpiresAt)
+	if err != nil || got != claimed || len(storage.writes) != writes {
+		t.Fatalf("claimed replay = %+v, %v; writes=%d, want exact durable record without a write", got, err, len(storage.writes)-writes)
 	}
 }

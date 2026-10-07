@@ -19,7 +19,10 @@ candidate_root="$(cd "$2" 2>/dev/null && pwd -P)" || {
 	exit 2
 }
 trusted_tests="${trusted_root}/client/tests"
-trusted_runner="${trusted_root}/tools/run-client-test.sh"
+# Host helpers belong to this reviewed controller snapshot; the base owns data.
+control_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+trusted_runner="${control_dir}/run-client-test.sh"
+trusted_project="${trusted_root}/client/project.godot"
 
 if [ ! -d "${trusted_tests}" ] || [ -L "${trusted_tests}" ]; then
 	echo "::error::trusted regression directory is missing or symlinked: ${trusted_tests}" >&2
@@ -29,6 +32,11 @@ if [ ! -x "${trusted_runner}" ] || [ -L "${trusted_runner}" ]; then
 	echo "::error::trusted client-test runner is missing, non-executable, or symlinked" >&2
 	exit 2
 fi
+if [ ! -d "${trusted_root}/client" ] || [ -L "${trusted_root}/client" ] ||
+	[ ! -f "${trusted_project}" ] || [ ! -r "${trusted_project}" ] || [ -L "${trusted_project}" ]; then
+	echo '::error::trusted project configuration is missing, unreadable, or symlinked' >&2
+	exit 2
+fi
 if [ ! -d "${candidate_root}/client" ] || [ -L "${candidate_root}/client" ]; then
 	echo "::error::candidate client project is missing or symlinked" >&2
 	exit 2
@@ -36,6 +44,14 @@ fi
 if [ ! -f "${candidate_root}/client/project.godot" ]; then
 	echo "::error::candidate client/project.godot is missing" >&2
 	exit 2
+fi
+# Tests run as explicit scenes; candidate startup hooks cannot select that surface.
+if [ -L "${candidate_root}/client/project.godot" ] ||
+  [ -e "${candidate_root}/client/override.cfg" ] || [ -L "${candidate_root}/client/override.cfg" ] ||
+  [ -e "${candidate_root}/client/project.binary" ] || [ -L "${candidate_root}/client/project.binary" ] ||
+  grep -Eq '^[[:space:]]*\[(autoload|editor_plugins)\][[:space:]]*(;.*)?$' "${candidate_root}/client/project.godot"; then
+  echo '::error::unsupported candidate startup configuration for explicit trusted scenes' >&2
+  exit 1
 fi
 if ! command -v godot >/dev/null 2>&1; then
 	echo "::error::trusted regressions could not execute: godot was not found in PATH" >&2
@@ -53,12 +69,14 @@ fi
 
 scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
 evaluation_root="${scratch_root}/candidate"
-# Remove this invocation's private evaluation tree and reconstructed ledger on exit.
+host_logs="${scratch_root}/logs"
+# Remove only this invocation's private evaluation tree and reconstructed ledger.
 cleanup() {
 	rm -rf "${scratch_root}"
 }
 trap cleanup EXIT
-mkdir "${evaluation_root}"
+# Host output never follows a path supplied by the copied candidate.
+mkdir "${evaluation_root}" "${host_logs}"
 
 # Accept only the already shipped declaration or the one planned mastery
 # activation. Construct the permitted bytes ourselves: candidate comments,
@@ -122,18 +140,21 @@ fi
 
 rm -rf -- "${evaluation_root}/client/tests"
 cp -R "${trusted_tests}" "${evaluation_root}/client/tests"
+# Frozen scenes also require base-owned engine settings. Candidate startup
+# settings remain covered by ordinary CI, not this protected baseline suite.
+cp "${trusted_project}" "${evaluation_root}/client/project.godot"
 cp "${validated_ledger}" "${evaluation_root}/${ledger_path}"
 rm "${validated_ledger}"
 
 if ! (
 	cd "${evaluation_root}"
 	set -o pipefail
-	godot --headless --editor --quit --path client 2>&1 | tee trusted-import.log
+	godot --headless --editor --quit --path client 2>&1 | tee "${host_logs}/import.log"
 ); then
 	echo "::error::candidate client failed the trusted headless import" >&2
 	exit 1
 fi
-if grep -qE 'SCRIPT ERROR|^ERROR' "${evaluation_root}/trusted-import.log"; then
+if grep -qE 'SCRIPT ERROR|^ERROR' "${host_logs}/import.log"; then
 	echo "::error::candidate client reported errors during the trusted headless import" >&2
 	exit 1
 fi
@@ -143,7 +164,7 @@ for scene in "${trusted_scenes[@]}"; do
 	name="$(basename "${scene}" .tscn)"
 	(
 		cd "${evaluation_root}"
-		"${trusted_runner}" "${name}" "trusted required regression failed"
+		RUN_CLIENT_TEST_LOG_DIR="${host_logs}" "${trusted_runner}" "${name}" "trusted required regression failed"
 	)
 	ran=$((ran + 1))
 done

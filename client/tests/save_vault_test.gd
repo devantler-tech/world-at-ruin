@@ -779,12 +779,9 @@ func _vault_doc_of_written_size(size: int) -> Dictionary:
 
 
 func _write_probe_source(source: String) -> bool:
-	var file := FileAccess.open(PROBE, FileAccess.WRITE)
-	if file == null:
+	if not PersistenceTestSupport.write_text(PROBE, source):
 		_fail("could not create the vault resource-bound probe")
 		return false
-	file.store_string(source)
-	file.close()
 	return true
 
 
@@ -832,10 +829,4 @@ func _cleanup_probe() -> void:
 ## Every staging file beside the probe. Staging paths carry a per-attempt stamp,
 ## so they cannot be reconstructed by name — scan the directory for the prefix.
 func _staging_leftovers() -> Array:
-	var parent := PROBE.get_base_dir()
-	var prefix := PROBE.get_file() + SaveVault.WRITE_TMP_SUFFIX
-	var found: Array = []
-	for entry: String in DirAccess.get_files_at(parent):
-		if entry.begins_with(prefix):
-			found.append(parent.path_join(entry))
-	return found
+	return PersistenceTestSupport.staging_paths(PROBE, SaveVault.WRITE_TMP_SUFFIX)

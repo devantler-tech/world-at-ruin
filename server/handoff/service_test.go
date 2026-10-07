@@ -4,25 +4,18 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/nakamaaccounttest"
 	"github.com/devantler-tech/world-at-ruin/server/nakamaauth"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
 	"github.com/heroiclabs/nakama-common/api"
-	"github.com/heroiclabs/nakama/v3/apigrpc"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -31,59 +24,12 @@ const (
 	testAttemptID     = "attempt-7"
 )
 
-type accountServer struct {
-	apigrpc.UnimplementedNakamaServer
+type accountServer = nakamaaccounttest.Server
 
-	mu         sync.Mutex
-	auth       []string
-	account    *api.Account
-	accountErr error
-}
-
-func (s *accountServer) GetAccount(ctx context.Context, _ *emptypb.Empty) (*api.Account, error) {
-	md, _ := metadata.FromIncomingContext(ctx)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.auth = append([]string(nil), md.Get("authorization")...)
-	return s.account, s.accountErr
-}
-
-func (s *accountServer) observedAuthorization() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.auth...)
-}
-
+// verifierAgainst connects the real session verifier to the in-memory Nakama account RPC transport.
 func verifierAgainst(t *testing.T, server *accountServer) *nakamaauth.Verifier {
 	t.Helper()
-
-	listener := bufconn.Listen(1024 * 1024)
-	grpcServer := grpc.NewServer()
-	apigrpc.RegisterNakamaServer(grpcServer, server)
-	go func() {
-		_ = grpcServer.Serve(listener)
-	}()
-	t.Cleanup(grpcServer.Stop)
-	t.Cleanup(func() {
-		_ = listener.Close()
-	})
-
-	conn, err := grpc.NewClient(
-		"passthrough:///nakama-handoff-test",
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return listener.DialContext(ctx)
-		}),
-	)
-	if err != nil {
-		t.Fatalf("create Nakama test client: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = conn.Close()
-	})
-
-	return nakamaauth.NewVerifier(apigrpc.NewNakamaClient(conn))
+	return nakamaauth.NewVerifier(nakamaaccounttest.Client(t, server))
 }
 
 type recordingAllocator struct {
@@ -151,13 +97,13 @@ func validAllocationRequest() AllocationRequest {
 	}
 }
 
+// TestServiceCreatesAllocationScopedHandoffThroughRealNakama checks verified account identity,
+// allocation ownership and the scoped token through a real RPC transport.
 func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocator := &recordingAllocator{allocation: validAllocation()}
 	now := time.Now().UTC().Truncate(time.Second)
-	service, err := NewService(
+	service := mustService(t,
 		verifierAgainst(t, nakama),
 		allocator,
 		Config{
@@ -167,14 +113,8 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 			NewAttemptID: func() (string, error) { return testAttemptID, nil },
 		},
 	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
 
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err != nil {
-		t.Fatalf("CreateHandoff returned an error: %v", err)
-	}
+	got := mustHandoff(t, service)
 	if len(allocator.requests) != 1 ||
 		allocator.requests[0] != validAllocationRequest() {
 		t.Fatalf(
@@ -185,7 +125,7 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	if len(allocator.releases) != 0 {
 		t.Fatalf("released successful allocations = %+v, want none", allocator.releases)
 	}
-	if auth := nakama.observedAuthorization(); len(auth) != 1 || auth[0] != "Bearer "+testSession {
+	if auth := nakama.ObservedAuthorization(); len(auth) != 1 || auth[0] != "Bearer "+testSession {
 		t.Fatalf("Nakama authorization metadata = %q, want one supplied bearer session", auth)
 	}
 	if got.ServerName != "zone-17.edge.example" || got.Port != 8443 {
@@ -217,6 +157,8 @@ func TestServiceCreatesAllocationScopedHandoffThroughRealNakama(t *testing.T) {
 	}
 }
 
+// TestKubernetesDNSSubdomainAllocationCreatesHandoff keeps valid Kubernetes DNS subdomain names
+// usable as allocation identities.
 func TestKubernetesDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -227,20 +169,11 @@ func TestKubernetesDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			nakama := &accountServer{
-				account: &api.Account{User: &api.User{Id: "player-42"}},
-			}
+			nakama := validAccountServer()
 			allocation := validAllocation()
 			allocation.ID = test.allocationID
 			allocator := &recordingAllocator{allocation: allocation}
-			service, err := NewService(
-				verifierAgainst(t, nakama),
-				allocator,
-				validConfig(),
-			)
-			if err != nil {
-				t.Fatalf("NewService returned an error: %v", err)
-			}
+			service := serviceAgainst(t, nakama, allocator, validConfig())
 
 			handoff, err := service.CreateHandoff(context.Background(), validRequest())
 			if err != nil {
@@ -257,19 +190,16 @@ func TestKubernetesDNSSubdomainAllocationCreatesHandoff(t *testing.T) {
 	}
 }
 
+// TestRetriesUseDistinctAttemptOwnership prevents repeated handoff requests from sharing one
+// allocation attempt identity.
 func TestRetriesUseDistinctAttemptOwnership(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocator := &recordingAllocator{allocation: validAllocation()}
-	service, err := NewService(
+	service := mustService(t,
 		verifierAgainst(t, nakama),
 		allocator,
 		Config{ZoneDomain: "edge.example"},
 	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
 
 	for range 2 {
 		if _, err := service.CreateHandoff(context.Background(), validRequest()); err != nil {
@@ -292,12 +222,12 @@ func TestRetriesUseDistinctAttemptOwnership(t *testing.T) {
 	}
 }
 
+// TestAttemptIDFailureNeverAllocates requires attempt identity failure to stop before an external
+// allocation is requested.
 func TestAttemptIDFailureNeverAllocates(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocator := &recordingAllocator{allocation: validAllocation()}
-	service, err := NewService(
+	service := mustService(t,
 		verifierAgainst(t, nakama),
 		allocator,
 		Config{
@@ -307,17 +237,9 @@ func TestAttemptIDFailureNeverAllocates(t *testing.T) {
 			},
 		},
 	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
 
 	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err == nil {
-		t.Fatal("CreateHandoff returned nil error")
-	}
-	if got != (Handoff{}) {
-		t.Fatalf("failed handoff = %+v, want zero value", got)
-	}
+	requireFailedHandoff(t, got, err)
 	if len(allocator.requests) != 0 || len(allocator.releases) != 0 {
 		t.Fatalf(
 			"allocator requests/releases = %+v/%+v, want none",
@@ -330,27 +252,17 @@ func TestAttemptIDFailureNeverAllocates(t *testing.T) {
 	}
 }
 
+// TestAuthenticationFailureNeverAllocates keeps rejected sessions from creating GameServer
+// resources.
 func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 	nakama := &accountServer{
-		accountErr: status.Error(codes.Unauthenticated, "rejected "+testSession),
+		AccountErr: status.Error(codes.Unauthenticated, "rejected "+testSession),
 	}
 	allocator := &recordingAllocator{allocation: validAllocation()}
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		validConfig(),
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := serviceAgainst(t, nakama, allocator, validConfig())
 
 	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err == nil {
-		t.Fatal("CreateHandoff returned nil error")
-	}
-	if got != (Handoff{}) {
-		t.Fatalf("failed handoff = %+v, want zero value", got)
-	}
+	requireFailedHandoff(t, got, err)
 	if len(allocator.requests) != 0 {
 		t.Fatalf(
 			"allocator requests = %+v, want no allocation after auth failure",
@@ -365,6 +277,8 @@ func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 	}
 }
 
+// TestInvalidReservationNeverAuthenticates requires malformed reservation input to fail before
+// account verification.
 func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -376,30 +290,16 @@ func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			nakama := &accountServer{
-				account: &api.Account{User: &api.User{Id: "player-42"}},
-			}
+			nakama := validAccountServer()
 			allocator := &recordingAllocator{allocation: validAllocation()}
-			service, err := NewService(
-				verifierAgainst(t, nakama),
-				allocator,
-				validConfig(),
-			)
-			if err != nil {
-				t.Fatalf("NewService returned an error: %v", err)
-			}
+			service := serviceAgainst(t, nakama, allocator, validConfig())
 
 			got, err := service.CreateHandoff(context.Background(), Request{
 				Session:       testSession,
 				ReservationID: test.reservationID,
 			})
-			if err == nil {
-				t.Fatal("CreateHandoff returned nil error")
-			}
-			if got != (Handoff{}) {
-				t.Fatalf("failed handoff = %+v, want zero value", got)
-			}
-			if auth := nakama.observedAuthorization(); len(auth) != 0 {
+			requireFailedHandoff(t, got, err)
+			if auth := nakama.ObservedAuthorization(); len(auth) != 0 {
 				t.Fatalf("Nakama authorization metadata = %q, want no authentication", auth)
 			}
 			if len(allocator.requests) != 0 || len(allocator.releases) != 0 {
@@ -413,29 +313,13 @@ func TestInvalidReservationNeverAuthenticates(t *testing.T) {
 	}
 }
 
+// TestReportedExpiryMatchesTokenNanosecondPrecision keeps the returned expiry equal to the token's
+// encoded expiry.
 func TestReportedExpiryMatchesTokenNanosecondPrecision(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
-	allocator := &recordingAllocator{allocation: validAllocation()}
 	now := time.Unix(2_000_000_000, 900_000_000)
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		Config{
-			ZoneDomain: "edge.example",
-			TokenTTL:   45 * time.Second,
-			Now:        func() time.Time { return now },
-		},
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := timedService(t, now, 45*time.Second)
 
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err != nil {
-		t.Fatalf("CreateHandoff returned an error: %v", err)
-	}
+	got := mustHandoff(t, service)
 	parts := strings.Split(got.Token, ".")
 	if len(parts) < 5 {
 		t.Fatalf("token has %d fields, want at least 5", len(parts))
@@ -453,43 +337,27 @@ func TestReportedExpiryMatchesTokenNanosecondPrecision(t *testing.T) {
 	}
 }
 
+// TestMinimumTokenLifetimeSurvivesSecondPrecision preserves a usable token at the minimum supported
+// lifetime.
 func TestMinimumTokenLifetimeSurvivesSecondPrecision(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
-	allocator := &recordingAllocator{allocation: validAllocation()}
 	now := time.Unix(2_000_000_000, 900_000_000)
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		Config{
-			ZoneDomain: "edge.example",
-			TokenTTL:   time.Second,
-			Now:        func() time.Time { return now },
-		},
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := timedService(t, now, time.Second)
 
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err != nil {
-		t.Fatalf("CreateHandoff returned an error: %v", err)
-	}
+	got := mustHandoff(t, service)
 	if lifetime := got.ExpiresAt.Sub(now); lifetime != time.Second {
 		t.Fatalf("signed token lifetime = %s, want exactly one second", lifetime)
 	}
 }
 
+// TestTokenNeverOutlivesUnclaimedAllocationLease caps token validity at the allocation's unclaimed
+// ownership lease.
 func TestTokenNeverOutlivesUnclaimedAllocationLease(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	now := time.Unix(2_000_000_000, 123_456_789)
 	allocation := validAllocation()
 	allocation.LeaseExpiresAt = now.Add(5 * time.Second)
 	allocator := &recordingAllocator{allocation: allocation}
-	service, err := NewService(
+	service := mustService(t,
 		verifierAgainst(t, nakama),
 		allocator,
 		Config{
@@ -499,14 +367,8 @@ func TestTokenNeverOutlivesUnclaimedAllocationLease(t *testing.T) {
 			NewAttemptID: func() (string, error) { return testAttemptID, nil },
 		},
 	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
 
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err != nil {
-		t.Fatalf("CreateHandoff returned an error: %v", err)
-	}
+	got := mustHandoff(t, service)
 	if !got.ExpiresAt.Equal(allocation.LeaseExpiresAt) {
 		t.Fatalf(
 			"token expiry = %s, want lease expiry %s",
@@ -516,50 +378,29 @@ func TestTokenNeverOutlivesUnclaimedAllocationLease(t *testing.T) {
 	}
 }
 
+// TestCancellationAfterAllocationReleasesReservation requires cancellation after provisioning to
+// release the exact reservation.
 func TestCancellationAfterAllocationReleasesReservation(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	ctx, cancel := context.WithCancel(context.Background())
 	allocator := &recordingAllocator{
 		allocation: validAllocation(),
 		afterAlloc: cancel,
 	}
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		validConfig(),
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := serviceAgainst(t, nakama, allocator, validConfig())
 
-	got, err := service.CreateHandoff(ctx, validRequest())
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("CreateHandoff error = %v, want context canceled", err)
-	}
-	if got != (Handoff{}) {
-		t.Fatalf("cancelled handoff = %+v, want zero value", got)
-	}
-	if len(allocator.releases) != 1 ||
-		allocator.releases[0] != validAllocationRequest() {
-		t.Fatalf(
-			"released reservations = %+v, want exactly %+v",
-			allocator.releases,
-			validAllocationRequest(),
-		)
-	}
+	requireCancelledHandoff(t, service, ctx, allocator)
 }
 
+// TestCancellationDuringTokenMintReleasesReservation requires cancellation while minting
+// credentials to release the exact reservation.
 func TestCancellationDuringTokenMintReleasesReservation(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	ctx, cancel := context.WithCancel(context.Background())
 	armed := false
 	now := time.Now().UTC()
 	allocator := &recordingAllocator{allocation: validAllocation()}
-	service, err := NewService(
+	service := mustService(t,
 		verifierAgainst(t, nakama),
 		allocator,
 		Config{
@@ -573,48 +414,21 @@ func TestCancellationDuringTokenMintReleasesReservation(t *testing.T) {
 			NewAttemptID: func() (string, error) { return testAttemptID, nil },
 		},
 	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
 	armed = true
 
-	got, err := service.CreateHandoff(ctx, validRequest())
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("CreateHandoff error = %v, want context canceled", err)
-	}
-	if got != (Handoff{}) {
-		t.Fatalf("cancelled handoff = %+v, want zero value", got)
-	}
-	if len(allocator.releases) != 1 ||
-		allocator.releases[0] != validAllocationRequest() {
-		t.Fatalf(
-			"released reservations = %+v, want exactly %+v",
-			allocator.releases,
-			validAllocationRequest(),
-		)
-	}
+	requireCancelledHandoff(t, service, ctx, allocator)
 }
 
+// TestEachAllocationUsesItsOwnAdmissionSecret prevents a token issued for one allocation from
+// authorizing another allocation.
 func TestEachAllocationUsesItsOwnAdmissionSecret(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocation := validAllocation()
 	allocation.AdmissionSecret = bytes.Repeat([]byte{0x24}, 32)
 	allocator := &recordingAllocator{allocation: allocation}
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		validConfig(),
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := serviceAgainst(t, nakama, allocator, validConfig())
 
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err != nil {
-		t.Fatalf("CreateHandoff returned an error: %v", err)
-	}
+	got := mustHandoff(t, service)
 	zoneVerifier, err := zonesock.NewHMACVerifier(
 		allocation.AdmissionSecret,
 		allocation.ID,
@@ -634,26 +448,16 @@ func TestEachAllocationUsesItsOwnAdmissionSecret(t *testing.T) {
 	}
 }
 
+// TestAbsoluteGameServerDNSNameIsNormalized accepts an absolute GameServer DNS name without
+// duplicating its trailing separator.
 func TestAbsoluteGameServerDNSNameIsNormalized(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocation := validAllocation()
 	allocation.ServerName += "."
 	allocator := &recordingAllocator{allocation: allocation}
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		validConfig(),
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := serviceAgainst(t, nakama, allocator, validConfig())
 
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err != nil {
-		t.Fatalf("CreateHandoff returned an error: %v", err)
-	}
+	got := mustHandoff(t, service)
 	if got.ServerName != "zone-17.edge.example" {
 		t.Fatalf("normalized server name = %q, want zone-17.edge.example", got.ServerName)
 	}
@@ -662,29 +466,17 @@ func TestAbsoluteGameServerDNSNameIsNormalized(t *testing.T) {
 	}
 }
 
+// TestAllocationFailureReturnsNoHandoff keeps allocator failures from exposing partial connection
+// material.
 func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocator := &recordingAllocator{
 		err: status.Error(codes.ResourceExhausted, "allocator unavailable for "+testSession),
 	}
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		validConfig(),
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := serviceAgainst(t, nakama, allocator, validConfig())
 
 	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err == nil {
-		t.Fatal("CreateHandoff returned nil error")
-	}
-	if got != (Handoff{}) {
-		t.Fatalf("failed handoff = %+v, want zero value", got)
-	}
+	requireFailedHandoff(t, got, err)
 	if len(allocator.requests) != 1 ||
 		allocator.requests[0].UserID != "player-42" ||
 		allocator.requests[0].ReservationID != testReservationID {
@@ -710,6 +502,8 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	}
 }
 
+// TestRetainedAllocationFailureSkipsOuterRelease preserves ambiguous durable ownership for
+// reconciliation instead of releasing it twice.
 func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
 	tests := []struct {
 		name string
@@ -730,20 +524,11 @@ func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			nakama := &accountServer{
-				account: &api.Account{User: &api.User{Id: "player-42"}},
-			}
+			nakama := validAccountServer()
 			allocator := &recordingAllocator{
 				err: RetainAllocationOutcome(test.err),
 			}
-			service, err := NewService(
-				verifierAgainst(t, nakama),
-				allocator,
-				validConfig(),
-			)
-			if err != nil {
-				t.Fatalf("NewService returned an error: %v", err)
-			}
+			service := serviceAgainst(t, nakama, allocator, validConfig())
 
 			got, err := service.CreateHandoff(context.Background(), validRequest())
 			if status.Code(err) != test.code {
@@ -759,6 +544,8 @@ func TestRetainedAllocationFailureSkipsOuterRelease(t *testing.T) {
 	}
 }
 
+// TestMalformedAllocationReturnsNoHandoff rejects unusable allocation responses and checks
+// ownership-sensitive cleanup.
 func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -812,74 +599,34 @@ func TestMalformedAllocationReturnsNoHandoff(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			nakama := &accountServer{
-				account: &api.Account{User: &api.User{Id: "player-42"}},
-			}
+			nakama := validAccountServer()
 			allocation := validAllocation()
 			test.mutate(&allocation)
 			allocator := &recordingAllocator{allocation: allocation}
-			service, err := NewService(
-				verifierAgainst(t, nakama),
-				allocator,
-				validConfig(),
-			)
-			if err != nil {
-				t.Fatalf("NewService returned an error: %v", err)
-			}
+			service := serviceAgainst(t, nakama, allocator, validConfig())
 
 			got, err := service.CreateHandoff(context.Background(), validRequest())
-			if err == nil {
-				t.Fatal("CreateHandoff returned nil error")
-			}
-			if got != (Handoff{}) {
-				t.Fatalf("failed handoff = %+v, want zero value", got)
-			}
-			if len(allocator.releases) != 1 ||
-				allocator.releases[0] != validAllocationRequest() {
-				t.Fatalf(
-					"released reservations = %+v, want exactly %+v",
-					allocator.releases,
-					validAllocationRequest(),
-				)
-			}
+			requireFailedHandoff(t, got, err)
+			requireReleasedAllocation(t, allocator)
 		})
 	}
 }
 
+// TestReleaseFailureRemainsClosedAndSanitized preserves the release error code while withholding
+// credentials and backend details.
 func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
-	nakama := &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	}
+	nakama := validAccountServer()
 	allocation := validAllocation()
 	allocation.Port = 0
 	allocator := &recordingAllocator{
 		allocation: allocation,
 		releaseErr: status.Error(codes.Unavailable, "release failed for "+testSession),
 	}
-	service, err := NewService(
-		verifierAgainst(t, nakama),
-		allocator,
-		validConfig(),
-	)
-	if err != nil {
-		t.Fatalf("NewService returned an error: %v", err)
-	}
+	service := serviceAgainst(t, nakama, allocator, validConfig())
 
 	got, err := service.CreateHandoff(context.Background(), validRequest())
-	if err == nil {
-		t.Fatal("CreateHandoff returned nil error")
-	}
-	if got != (Handoff{}) {
-		t.Fatalf("failed handoff = %+v, want zero value", got)
-	}
-	if len(allocator.releases) != 1 ||
-		allocator.releases[0] != validAllocationRequest() {
-		t.Fatalf(
-			"released reservations = %+v, want exactly %+v",
-			allocator.releases,
-			validAllocationRequest(),
-		)
-	}
+	requireFailedHandoff(t, got, err)
+	requireReleasedAllocation(t, allocator)
 	if strings.Contains(err.Error(), testSession) {
 		t.Fatalf("handoff error leaked a credential: %q", err)
 	}
@@ -888,10 +635,10 @@ func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
 	}
 }
 
+// TestNewServiceRejectsUnsafeConfiguration checks service construction rejects missing dependencies
+// and unsafe token or domain settings.
 func TestNewServiceRejectsUnsafeConfiguration(t *testing.T) {
-	verifier := verifierAgainst(t, &accountServer{
-		account: &api.Account{User: &api.User{Id: "player-42"}},
-	})
+	verifier := verifierAgainst(t, validAccountServer())
 	allocator := &recordingAllocator{allocation: validAllocation()}
 
 	tests := []struct {
@@ -964,4 +711,82 @@ func TestNewServiceRejectsUnsafeConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustService constructs the real handoff service and fails the caller when configuration is
+// invalid.
+func mustService(t *testing.T, verifier SessionVerifier, allocator Allocator, cfg Config) *Service {
+	t.Helper()
+	service, err := NewService(verifier, allocator, cfg)
+	if err != nil {
+		t.Fatalf("NewService returned an error: %v", err)
+	}
+	return service
+}
+
+// validAccountServer returns a fresh configured account fixture for the authenticated test player.
+func validAccountServer() *accountServer {
+	return &accountServer{Account: &api.Account{User: &api.User{Id: "player-42"}}}
+}
+
+// requireFailedHandoff requires an error and an empty handoff so failure cannot expose partial
+// credentials.
+func requireFailedHandoff(t *testing.T, got Handoff, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("CreateHandoff returned nil error")
+	}
+	if got != (Handoff{}) {
+		t.Fatalf("failed handoff = %+v, want zero value", got)
+	}
+}
+
+// serviceAgainst composes the real handoff service with the fixture account transport and the
+// requested allocator.
+func serviceAgainst(t *testing.T, account *accountServer, allocator Allocator, cfg Config) *Service {
+	t.Helper()
+	return mustService(t, verifierAgainst(t, account), allocator, cfg)
+}
+
+// mustHandoff creates the canonical handoff and fails the caller on any unexpected service error.
+func mustHandoff(t *testing.T, service *Service) Handoff {
+	t.Helper()
+	got, err := service.CreateHandoff(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("CreateHandoff returned an error: %v", err)
+	}
+	return got
+}
+
+// requireReleasedAllocation requires exactly one release for the canonical reservation and attempt.
+func requireReleasedAllocation(t *testing.T, allocator *recordingAllocator) {
+	t.Helper()
+	if len(allocator.releases) != 1 || allocator.releases[0] != validAllocationRequest() {
+		t.Fatalf("released reservations = %+v, want exactly %+v", allocator.releases, validAllocationRequest())
+	}
+}
+
+// timedService uses a fixed clock and token lifetime while retaining the real verification and
+// allocation path.
+func timedService(t *testing.T, now time.Time, ttl time.Duration) *Service {
+	t.Helper()
+	return serviceAgainst(t, validAccountServer(), &recordingAllocator{allocation: validAllocation()}, Config{
+		ZoneDomain: "edge.example",
+		TokenTTL:   ttl,
+		Now:        func() time.Time { return now },
+	})
+}
+
+// requireCancelledHandoff requires cancellation, an empty handoff and release of the exact
+// reservation.
+func requireCancelledHandoff(t *testing.T, service *Service, ctx context.Context, allocator *recordingAllocator) {
+	t.Helper()
+	got, err := service.CreateHandoff(ctx, validRequest())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CreateHandoff error = %v, want context canceled", err)
+	}
+	if got != (Handoff{}) {
+		t.Fatalf("cancelled handoff = %+v, want zero value", got)
+	}
+	requireReleasedAllocation(t, allocator)
 }

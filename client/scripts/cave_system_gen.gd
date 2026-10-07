@@ -1057,19 +1057,8 @@ func _build_cave_foot_talus(contact_mesh: ArrayMesh, terrain_h: Callable,
 		return
 
 	var rubble_mesh := FoliageArt.mesh_for(FoliageGen.Kind.RUBBLE)
-	var lift := rubble_mesh.get_aabb().size.y * 0.4
-	var multimesh := MultiMesh.new()
-	multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	multimesh.mesh = rubble_mesh
-	multimesh.instance_count = items.size()
-	for i: int in items.size():
-		var placement: Dictionary = items[i]
-		var pos: Vector3 = placement["pos"]
-		var prop_scale := float(placement["scale"])
-		var basis := Basis(
-			Vector3.UP, float(placement["yaw"])).scaled(Vector3.ONE * prop_scale)
-		var rendered := Vector3(pos.x, pos.y + lift * prop_scale, pos.z)
-		multimesh.set_instance_transform(i, Transform3D(basis, rendered))
+	var poses := CosmeticInstances.transforms(rubble_mesh, items)
+	var multimesh := CosmeticInstances.batch(rubble_mesh, poses)
 
 	var batch := MultiMeshInstance3D.new()
 	batch.name = "CaveFootTalus"

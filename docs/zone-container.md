@@ -26,9 +26,36 @@ real running service and released client; image tests alone do not prove a
 platform trial is reachable.
 
 The signed `zone-manifests` artifact contains the private trial's restricted
-Deployment, service and tenant-owned admission-secret seed/readback. The trial
-restarts its scripted process hourly to reload mounted TLS material. Token
-minting remains short-lived, and a restart never affects player saves.
+Deployment, service and tenant-owned admission-secret seed/readback. The listener
+validates its certificate before startup and loads current mounted TLS material
+for each new handshake. Missing, mismatched or out-of-window certificates fail
+closed without falling back to an old pair; session resumption cannot bypass
+that check. The trial runs until normal pod termination instead of interrupting
+connections on an hourly certificate-refresh timer. Explicit `-duration` still
+bounds command-line exercises. Token minting remains short-lived, and normal
+deployment restarts never affect player saves.
+
+The host must install a namespace-wide default-deny policy for both ingress and
+egress before enabling the trial. Standard Kubernetes NetworkPolicy resources
+are host-owned and must not be included in the tenant bundle; the tenant's
+reconciliation identity has read access only. The trial needs no application
+network allowance: access uses the authenticated operator tunnel. Removing a
+tenant policy does not remove the host's isolation requirement.
+
+Readiness and liveness complete a verified TLS handshake using the public trust
+roots bundled in the image. They derive the expected DNS identity from the
+mounted leaf certificate, without treating that certificate as a trust root.
+The 1.5 second internal deadline includes clean TLS shutdown and stays within
+the two second kubelet timeout. These token-free checks assess the listener;
+the authenticated stream probe separately proves advancing simulation state.
+
+Validate the complete rendered bundle, including nested Kustomizations, with
+`go -C server run ../tools/deploy-manifests/main.go ../deploy` (requires Go and
+`kubectl`). CI checks the shipped bundle and exercises injected nested policies,
+List expansion, and malformed or empty output through the same validator.
+This checks the host-owned network boundary and both TLS-only health commands
+with their deadline ordering; the hosting platform separately
+verifies the full set of permissions needed to reconcile every rendered kind.
 
 The server publisher is independent of the client asset release. A failed server
 publication is a delivery failure requiring repair; it does not silently change

@@ -47,7 +47,8 @@ fi
 
 name="$1"
 context="${2:-}"
-log="${name}.log"
+# Protected evaluations capture outside candidate content; ordinary runs keep their logs.
+log="${RUN_CLIENT_TEST_LOG_DIR:-.}/${name}.log"
 # Test-only override for the watchdog regression. Production and CI use 180s.
 timeout_seconds="${RUN_CLIENT_TEST_TIMEOUT_SECONDS:-180}"
 
@@ -169,26 +170,42 @@ if [ "${tee_status}" -ne 0 ]; then
 	exit 2
 fi
 
+# The sandbox has restored workflow commands by the time failures are displayed.
+# Preserve captured bytes; trailing spaces keep adjacent escaped pairs apart.
+# Render both command syntaxes as ordinary data.
+display_log_excerpt() {
+	tail -40 "${log}" | sed -e 's/::/: : /g' -e 's/##\[/# #[/g'
+}
+
 if [ "${timed_out}" = true ]; then
 	echo "::error::${name} timed out (${timeout_seconds}s)${context:+ — ${context}}"
-	tail -40 "${log}"
+	display_log_excerpt
 	exit 1
 fi
 
 if [ "${test_status}" -ne 0 ]; then
 	echo "::error::${name} failed (exit ${test_status})${context:+ — ${context}}"
-	tail -40 "${log}"
+	display_log_excerpt
+	exit 1
+fi
+
+# Godot can abort one script call, resume its caller and exit zero after PASS.
+# A script exception means the regression did not complete reliably, whatever
+# markers the remaining code prints. Warnings remain valid test output.
+if grep -q 'SCRIPT ERROR:' "${log}"; then
+	echo "::error::${name} reported SCRIPT ERROR${context:+ — ${context}}"
+	display_log_excerpt
 	exit 1
 fi
 
 if grep -q "TEST FAIL" "${log}"; then
 	echo "::error::${name} reported TEST FAIL${context:+ — ${context}}"
-	tail -40 "${log}"
+	display_log_excerpt
 	exit 1
 fi
 
 if ! grep -q "TEST PASS" "${log}"; then
 	echo "::error::${name} exited 0 without reporting PASS${context:+ — ${context}}"
-	tail -40 "${log}"
+	display_log_excerpt
 	exit 1
 fi

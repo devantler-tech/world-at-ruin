@@ -68,23 +68,17 @@ const SETTLE_DELTA := 0.02
 ## at the tie where float dust decides.
 const MAX_RUN_PHASE_SHARE := 0.85
 
-var _had_flag := false
-var _original_flag := ""
-var _had_run_flag := false
-var _original_run_flag := ""
+var _flag_state: Dictionary = {}
 var _recipe: Dictionary = {}
 
 
 func _ready() -> void:
-	_had_flag = OS.has_environment(FLAG)
-	_original_flag = OS.get_environment(FLAG)
-	_had_run_flag = OS.has_environment(RUN_FLAG)
-	_original_run_flag = OS.get_environment(RUN_FLAG)
-	var loaded = CharacterFactory.load_recipe(RECIPE_PATH)
-	if not (loaded is Dictionary):
-		_fail("could not load %s" % RECIPE_PATH)
+	_flag_state = TestEnvironment.snapshot([FLAG, RUN_FLAG])
+	var fixture := LocomotionTestSupport.recipe_fixture(RECIPE_PATH)
+	if not fixture["problem"].is_empty():
+		_fail(fixture["problem"])
 		return
-	_recipe = loaded
+	_recipe = fixture["recipe"]
 
 	if not _check_default_off():
 		return
@@ -556,41 +550,15 @@ func _player_with_flags(walk_value: String, run_value: String) -> Dictionary:
 			OS.unset_environment(pair[0] as String)
 		else:
 			OS.set_environment(pair[0] as String, pair[1] as String)
-	var player := Player.new()
-	add_child(player)
-	# Direct gait laws drive the animator explicitly. The one runtime-hook test
-	# opts physics back in; leaving every helper body live would let background
-	# gravity/reset calls race the literal phase comparisons below.
-	player.set_physics_process(false)
-	player.set_character(_recipe)
-	var skeleton := CharacterFactory.find_skeleton(player.get_node("Visual"))
-	if skeleton == null:
-		player.free()
-		_fail("real Player path built no recipe skeleton")
+	var subject := LocomotionTestSupport.build_subject(self, _recipe, DRIVEN_BONES, "walk")
+	if not String(subject["problem"]).is_empty():
+		_fail(subject["problem"])
 		return {}
-	for bone_name: String in DRIVEN_BONES:
-		if skeleton.find_bone(bone_name) < 0:
-			player.free()
-			_fail("the shipped rig has no required walk bone %s" % bone_name)
-			return {}
-	var animator := player.get_node_or_null("WalkLocomotion")
-	if animator == null:
-		player.free()
-		_fail("real Player path has no WalkLocomotion driver")
-		return {}
-	return { "player": player, "skeleton": skeleton, "animator": animator }
+	return subject
 
 
 func _snapshot(skeleton: Skeleton3D) -> Dictionary:
-	var result := {}
-	for bone_name: String in DRIVEN_BONES:
-		var bone := skeleton.find_bone(bone_name)
-		var rest := skeleton.get_bone_rest(bone).basis.get_rotation_quaternion()
-		var pose := skeleton.get_bone_pose_rotation(bone)
-		# Compare the animation contribution, not two separately-instantiated
-		# imported rests whose equivalent quaternions may differ by float dust.
-		result[bone_name] = rest.inverse() * pose
-	return result
+	return LocomotionTestSupport.snapshot(skeleton, DRIVEN_BONES)
 
 
 ## Signed local-X offsets from the authored rest, in degrees.
@@ -607,14 +575,7 @@ func _same_pose(
 		b: Dictionary,
 		message: String,
 		epsilon: float = POSE_EPSILON) -> bool:
-	for bone_name: String in DRIVEN_BONES:
-		var qa: Quaternion = a[bone_name]
-		var qb: Quaternion = b[bone_name]
-		var apart := _angle_between(qa, qb)
-		if apart > epsilon:
-			return _fail("%s (%s differs by %.6f rad)" %
-				[message, bone_name, apart]) if not message.is_empty() else false
-	return true
+	return LocomotionTestSupport.same_pose(a, b, DRIVEN_BONES, epsilon, _angle_between, message, _fail)
 
 
 ## The angle between two rotations, exact near zero. `Quaternion.angle_to` works
@@ -624,8 +585,7 @@ func _same_pose(
 ## [constant POSE_EPSILON], so a comparison built on it can fail for a pose that
 ## is bit-for-bit identical.
 func _angle_between(a: Quaternion, b: Quaternion) -> float:
-	var delta := a.inverse() * b
-	return 2.0 * atan2(Vector3(delta.x, delta.y, delta.z).length(), absf(delta.w))
+	return LocomotionTestSupport.rotation_distance(a, b)
 
 
 func _max_pose_delta_deg(a: Dictionary, b: Dictionary) -> float:
@@ -643,14 +603,7 @@ func _free_subject(subject: Dictionary) -> void:
 
 
 func _restore_flag() -> void:
-	if _had_flag:
-		OS.set_environment(FLAG, _original_flag)
-	else:
-		OS.unset_environment(FLAG)
-	if _had_run_flag:
-		OS.set_environment(RUN_FLAG, _original_run_flag)
-	else:
-		OS.unset_environment(RUN_FLAG)
+	TestEnvironment.restore(_flag_state)
 func _fail(message: String) -> bool:
 	Input.action_release("move_forward")
 	Input.action_release("sprint")

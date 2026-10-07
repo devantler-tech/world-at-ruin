@@ -17,6 +17,34 @@ var (
 	ErrObjectInvalid = errors.New("nakama storage: object invalid")
 )
 
+// ReadError projects the system-owned reader's sentinels into a store's domain.
+// Context and other errors retain their identity; missing wins over invalid,
+// matching the stores' ordered classification of wrapped or joined errors.
+func ReadError(err, missing, invalid error) error {
+	switch {
+	case errors.Is(err, ErrObjectMissing):
+		return missing
+	case errors.Is(err, ErrObjectInvalid):
+		return invalid
+	default:
+		return err
+	}
+}
+
+// LoadBeforeReplace observes an existing record before encoding a replacement.
+// A create-only version skips the read; absence remains the mutation boundary's
+// responsibility. The caller validates its required version before this step.
+func LoadBeforeReplace[T any](ctx context.Context, subjectID, version string, missing error, load func(context.Context, string) (T, error)) error {
+	if version == "*" {
+		return nil
+	}
+	_, err := load(ctx, subjectID)
+	if errors.Is(err, missing) {
+		return nil
+	}
+	return err
+}
+
 // ReadSystemOwned reads the one private object at collection/key under the
 // system owner and validates its identity, ownership, version and permissions
 // before returning it. A client-owned object at the same key is never returned:

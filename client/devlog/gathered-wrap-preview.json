@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-10-02",
+  "title": "Gathered cloth preview",
+  "notes": [
+    "The optional cloth-detail preview now catches light across broad, uneven gathers and rounded folded waist edges, alongside its woven fibres and worn stitches.",
+    "The separate drape preview meets the fixed waist more softly while keeping the opaque ragged base and saved characters intact.",
+    "Both previews still require opt-in. The angular cut, thick waist silhouette, fraying and cloth motion remain below the agreed art bar."
+  ]
+}

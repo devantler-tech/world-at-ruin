@@ -8,9 +8,8 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -230,7 +229,7 @@ func validIdentity(identity Identity) bool {
 
 // token bounds opaque API identifiers without assuming a numeric encoding.
 func token(value string, maximum int) bool {
-	return value != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+	return handoffidentity.OpaqueUTF8(value, maximum)
 }
 
 // observationError preserves cancellation while withholding private backend text.

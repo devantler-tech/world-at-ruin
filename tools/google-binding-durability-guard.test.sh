@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GUARD="$ROOT/tools/google-binding-durability-guard.sh"
 WORKFLOW="$ROOT/.github/workflows/ci.yaml"
 failures=0
+bash "$ROOT/tools/file-inspection.test.sh"
 
 # The standalone helper has no module or dependencies; explicit files keep its
 # lexical and I/O regressions on the same Go toolchain as this CI guard suite.

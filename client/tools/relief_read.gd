@@ -365,35 +365,14 @@ func _is_refused(values: PackedFloat32Array) -> bool:
 ## show for it: evidence that cannot depict what it asserts, which is the failure
 ## this file's own dump exists to prevent.
 func _crop_bounds(w: int, h: int) -> Rect2i:
-	var x0 := int(CROP.position.x * float(w))
-	var y0 := int(CROP.position.y * float(h))
-	var x1 := mini(int((CROP.position.x + CROP.size.x) * float(w)), w)
-	var y1 := mini(int((CROP.position.y + CROP.size.y) * float(h)), h)
-	return Rect2i(x0, y0, maxi(x1 - x0, 0), maxi(y1 - y0, 0))
+	return FrameMetrics.crop_bounds(Vector2i(w, h), CROP)
 
 
 ## Luma of every pixel in the crop, row-major. Read out of the raw buffer rather
 ## than through get_pixel(): the crop is tens of thousands of pixels and this
 ## runs twice per distance.
 func _crop_luma() -> PackedFloat32Array:
-	var img := get_viewport().get_texture().get_image()
-	img.convert(Image.FORMAT_RGB8)
-	var w := img.get_width()
-	var bounds := _crop_bounds(w, img.get_height())
-	var out := PackedFloat32Array()
-	if bounds.size.x <= 0 or bounds.size.y <= 0:
-		return out
-	var data := img.get_data()
-	out.resize(bounds.size.x * bounds.size.y)
-	var n := 0
-	for y in range(bounds.position.y, bounds.position.y + bounds.size.y):
-		var row := y * w
-		for x in range(bounds.position.x, bounds.position.x + bounds.size.x):
-			var o := (row + x) * 3
-			out[n] = (float(data[o]) * 0.2126 + float(data[o + 1]) * 0.7152
-				+ float(data[o + 2]) * 0.0722) / 255.0
-			n += 1
-	return out
+	return FrameMetrics.crop_luma(get_viewport().get_texture().get_image(), CROP)
 
 
 ## What fraction of the crop the relief term touches at all — how much SEAM is
@@ -507,36 +486,8 @@ func _row(values: PackedFloat32Array) -> String:
 ## far more than a normal perturbation ever could, and it would all be attributed
 ## to the relief term.
 func _quiet_the_world() -> void:
-	var hidden: Array[String] = []
-	for node_name in ["Wanderer", "Npcs", "Creatures", "Hud", "Replicas", "HollowFog"]:
-		var node := _main.get_node_or_null(NodePath(node_name))
-		if node != null and "visible" in node:
-			node.set("visible", false)
-			hidden.append(node_name)
-
-	# Every 2D surface main has opened over the frame, matched by TYPE rather than
-	# by name. On a first run that is the character creator, a panel across the
-	# left third — and it is added with `add_child` without a name, so it appears
-	# as `@CharacterCreator@nnn` and a name list silently misses it (this list did,
-	# and the panel sat in three runs' worth of readings). It cannot carry relief
-	# and never changes between the two halves of a pair, so it is dead weight in
-	# the denominator: every covered fraction divided by a third more crop than
-	# the ground actually occupies.
-	for child in _main.get_children():
-		if (child is CanvasLayer or child is Control) and not child.name in hidden:
-			child.set("visible", false)
-			hidden.append(String(child.name))
-
-	# Everything in the world except the ground itself. A boulder or a scrub bush
-	# is an opaque silhouette over the crop, and at 3 m one can cover most of it —
-	# whereupon the pair differs by nothing, the mean reads 0.00000, and the
-	# vacuity guard below would blame the shader for the bush.
-	var world := _main.get_node_or_null("World")
-	if world != null:
-		for child in world.get_children():
-			if child.name != "Terrain" and "visible" in child:
-				child.set("visible", false)
-				hidden.append(String(child.name))
+	var hidden := FrameMetrics.quiet_terrain(_main,
+		["Wanderer", "Npcs", "Creatures", "Hud", "Replicas", "HollowFog"])
 	print("  quieted: %s" % ", ".join(hidden))
 
 
@@ -582,10 +533,7 @@ func _steepest_ground() -> Variant:
 
 
 func _terrain_material() -> ShaderMaterial:
-	var terrain := _main.get_node_or_null("World/Terrain") as MeshInstance3D
-	if terrain == null or terrain.mesh == null:
-		return null
-	return terrain.mesh.surface_get_material(0) as ShaderMaterial
+	return FrameMetrics.terrain_material(_main)
 
 
 func _fail(message: String) -> void:

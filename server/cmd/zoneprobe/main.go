@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/devantler-tech/world-at-ruin/server/dnsname"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 	"github.com/devantler-tech/world-at-ruin/server/zonesock"
@@ -32,10 +34,12 @@ const (
 	maxFrameBytes = wire.MaxEntities*(2*(8+3*8+8)+8) + wire.MaxCasts*((8+1+3*8+3*8+4*8+2*8)+8) + 96
 )
 
+// main exposes the probe verdict as a process exit code.
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }
 
+// run selects listener or authenticated-stream verification with sanitized output.
 func run(parent context.Context, args []string, getenv func(string) string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet("zoneprobe", flag.ContinueOnError)
 	// flag errors include supplied values. None may reach shared CI logs.
@@ -43,10 +47,12 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 	target := flags.String("url", "", "verified wss zone endpoint")
 	caFile := flags.String("ca-file", "", "optional PEM trust roots")
 	serverName := flags.String("tls-server-name", "", "certificate DNS identity for a loopback tunnel")
+	tlsOnly := flags.Bool("tls-only", false, "verify TLS listener health without admission or HTTP")
+	identityFile := flags.String("tls-server-name-file", "", "TLS-only loopback identity from the configured leaf certificate")
 	timeout := flags.Duration("timeout", 10*time.Second, "total probe deadline, at most one minute")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return outputResult(out, "zoneprobe -url <wss endpoint> [-ca-file <PEM>] [-tls-server-name <DNS name>] [-timeout 10s]")
+			return outputResult(out, "zoneprobe -url <wss endpoint> [-tls-only] [-ca-file <PEM>] [-tls-server-name <DNS name> | -tls-server-name-file <PEM>] [-timeout 10s]")
 		}
 		return failure(errOut, "invalid arguments", 2)
 	}
@@ -57,23 +63,43 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 	if *serverName != "" && (!loopbackHost(parsed.Hostname()) || !validDNSName(*serverName)) {
 		return failure(errOut, "invalid TLS identity override", 2)
 	}
-	token := getenv("WAR_ZONE_TOKEN")
-	if token == "" || len(token) > 8192 || strings.ContainsAny(token, "\r\n\x00") {
-		return failure(errOut, "WAR_ZONE_TOKEN is missing or invalid", 2)
+	if *identityFile != "" {
+		if !*tlsOnly || *serverName != "" || !loopbackHost(parsed.Hostname()) {
+			return failure(errOut, "invalid TLS identity override", 2)
+		}
+		name, err := certificateDNSName(*identityFile)
+		if err != nil {
+			return failure(errOut, "invalid TLS identity material", 2)
+		}
+		*serverName = name
+	}
+	var token string
+	if !*tlsOnly {
+		token = getenv("WAR_ZONE_TOKEN")
+		if token == "" || len(token) > 8192 || strings.ContainsAny(token, "\r\n\x00") {
+			return failure(errOut, "WAR_ZONE_TOKEN is missing or invalid", 2)
+		}
 	}
 	trust, err := roots(*caFile)
 	if err != nil {
 		return failure(errOut, "invalid CA material", 2)
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{
+	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12, RootCAs: trust, ServerName: *serverName,
-	}}
+	}
+	ctx, cancel := context.WithTimeout(parent, *timeout)
+	defer cancel()
+	if *tlsOnly {
+		if err := verifyTLSHealth(ctx, parsed, tlsConfig); err != nil {
+			return failure(errOut, "TLS health verification failed", 1)
+		}
+		return outputResult(out, "ZONEPROBE TLS PASS")
+	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	ctx, cancel := context.WithTimeout(parent, *timeout)
-	defer cancel()
 	for _, rejected := range []string{"", wrongToken(token)} {
 		if err := denied(ctx, client, *target, rejected); err != nil {
 			return failure(errOut, "TLS or admission refusal verification failed", 1)
@@ -101,11 +127,49 @@ func run(parent context.Context, args []string, getenv func(string) string, out,
 	return outputResult(out, fmt.Sprintf("ZONEPROBE PASS denied=2 protocols=%d,%d frames=%d state=advancing", wire.LegacyVersion, wire.Version, frames))
 }
 
+// verifyTLSHealth connects directly to the target and verifies its configured identity.
+func verifyTLSHealth(ctx context.Context, target *url.URL, config *tls.Config) error {
+	port := target.Port()
+	if port == "" {
+		port = "443"
+	}
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(target.Hostname(), port))
+	if err != nil {
+		return err
+	}
+	if config.ServerName == "" {
+		config = config.Clone()
+		config.ServerName = target.Hostname()
+	}
+	return completeTLSHealth(ctx, raw, config)
+}
+
+// completeTLSHealth owns handshake and clean shutdown within the same deadline.
+func completeTLSHealth(ctx context.Context, raw net.Conn, config *tls.Config) error {
+	// On success TLS Close checks socket cleanup; failed handshakes already
+	// fail the proof and still need their underlying connection released.
+	defer func() { _ = raw.Close() }()
+	// TLS Close uses its own write deadline. Close the underlying socket on
+	// cancellation so close_notify cannot outlive the total probe deadline.
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	defer stop()
+	conn := tls.Client(raw, config)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return err
+	}
+	if err := conn.Close(); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+// validTarget limits probes to the zone endpoint without embedded credentials.
 func validTarget(target *url.URL) bool {
 	return target != nil && target.Scheme == "wss" && target.Hostname() != "" && target.Path == "/zone" &&
 		target.User == nil && target.RawQuery == "" && !target.ForceQuery && target.Fragment == "" && target.Opaque == ""
 }
 
+// loopbackHost permits identity overrides only for local tunnel destinations.
 func loopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
@@ -114,28 +178,41 @@ func loopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// validDNSName rejects ambiguous wildcard, IP and malformed DNS overrides.
 func validDNSName(name string) bool {
-	if len(name) > 253 || !strings.Contains(name, ".") || net.ParseIP(name) != nil {
-		return false
-	}
-	for _, label := range strings.Split(name, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, char := range label {
-			valid := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-'
-			if !valid {
-				return false
-			}
-		}
-	}
-	return true
+	return strings.Contains(name, ".") && net.ParseIP(name) == nil && dnsname.Valid(name)
 }
 
+// roots retains system trust unless the operator explicitly supplies fixture roots.
 func roots(path string) (*x509.CertPool, error) {
 	if path == "" {
 		return nil, nil // net/http uses the system trust roots.
 	}
+	certs, err := certificates(path)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	for _, cert := range certs {
+		pool.AddCert(cert)
+	}
+	return pool, nil
+}
+
+// certificateDNSName selects one DNS identity from the configured leaf, without adding trust.
+func certificateDNSName(path string) (string, error) {
+	certs, err := certificates(path)
+	if err != nil {
+		return "", err
+	}
+	if len(certs[0].DNSNames) != 1 || !validDNSName(certs[0].DNSNames[0]) {
+		return "", errors.New("ambiguous certificate identity")
+	}
+	return certs[0].DNSNames[0], nil
+}
+
+// certificates parses bounded PEM blocks in order and refuses all malformed material.
+func certificates(path string) ([]*x509.Certificate, error) {
 	cleanPath := filepath.Clean(path)
 	file, err := os.DirFS(filepath.Dir(cleanPath)).Open(filepath.Base(cleanPath))
 	if err != nil {
@@ -146,27 +223,55 @@ func roots(path string) (*x509.CertPool, error) {
 	if readErr != nil || closeErr != nil || len(data) > maxCABytes {
 		return nil, errors.New("CA read refused")
 	}
-	pool := x509.NewCertPool()
-	count := 0
-	for len(strings.TrimSpace(string(data))) > 0 {
-		block, rest := pem.Decode(data)
-		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+	var certs []*x509.Certificate
+	for len(bytes.TrimSpace(data)) > 0 {
+		data = bytes.TrimSpace(data)
+		if !bytes.HasPrefix(data, []byte("-----BEGIN CERTIFICATE-----")) {
+			return nil, errors.New("CA PEM refused")
+		}
+		const endMarker = "-----END CERTIFICATE-----"
+		end := bytes.Index(data, []byte(endMarker))
+		if end < 0 {
+			return nil, errors.New("CA PEM refused")
+		}
+		end += len(endMarker)
+		if end < len(data) {
+			lineEnd := bytes.IndexByte(data[end:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(data) - end
+			}
+			if len(bytes.TrimSpace(data[end:end+lineEnd])) != 0 {
+				return nil, errors.New("CA PEM refused")
+			}
+			end += lineEnd
+			if end < len(data) {
+				end++
+			}
+		}
+		encoded := data[:end]
+		// pem.Decode scans past malformed blocks. Isolate the first block and
+		// reject nested BEGIN markers so it cannot select a later certificate.
+		if bytes.Count(encoded, []byte("-----BEGIN")) != 1 {
+			return nil, errors.New("CA PEM refused")
+		}
+		block, rest := pem.Decode(encoded)
+		if block == nil || len(rest) != 0 || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
 			return nil, errors.New("CA PEM refused")
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			return nil, errors.New("CA certificate refused")
 		}
-		pool.AddCert(cert)
-		count++
-		data = rest
+		certs = append(certs, cert)
+		data = data[end:]
 	}
-	if count == 0 {
+	if len(certs) == 0 {
 		return nil, errors.New("CA is empty")
 	}
-	return pool, nil
+	return certs, nil
 }
 
+// wrongToken supplies a fixed admission negative control distinct from the real token.
 func wrongToken(token string) string {
 	const rejected = "zoneprobe-invalid-bearer"
 	if token == rejected {
@@ -175,6 +280,7 @@ func wrongToken(token string) string {
 	return rejected
 }
 
+// dial requests one wire protocol through the verified HTTP transport.
 func dial(ctx context.Context, client *http.Client, target, token string, version uint16) (*websocket.Conn, *http.Response, error) {
 	headers := http.Header{}
 	if token != "" {
@@ -186,6 +292,7 @@ func dial(ctx context.Context, client *http.Client, target, token string, versio
 	return websocket.Dial(ctx, target, &websocket.DialOptions{HTTPClient: client, HTTPHeader: headers})
 }
 
+// closeResponse releases any HTTP response retained by a WebSocket attempt.
 func closeResponse(response *http.Response) error {
 	if response != nil && response.Body != nil {
 		return response.Body.Close()
@@ -193,6 +300,7 @@ func closeResponse(response *http.Response) error {
 	return nil
 }
 
+// denied requires HTTP refusal and releases any unexpectedly admitted socket.
 func denied(ctx context.Context, client *http.Client, target, token string) error {
 	conn, response, err := dial(ctx, client, target, token, wire.LegacyVersion)
 	closeErr := closeResponse(response)
@@ -206,6 +314,7 @@ func denied(ctx context.Context, client *http.Client, target, token string) erro
 	return nil
 }
 
+// verifyStream proves advancing replicated state without gameplay writes or observer eviction.
 func verifyStream(ctx context.Context, client *http.Client, target, token string, version uint16) (frames int, result error) {
 	conn, response, err := dial(ctx, client, target, token, version)
 	if closeErr := closeResponse(response); closeErr != nil || err != nil {
@@ -275,6 +384,7 @@ func verifyStream(ctx context.Context, client *http.Client, target, token string
 	}
 }
 
+// applyCasts folds a bounded delta only when caster and lifecycle references remain valid.
 func applyCasts(casts map[sim.EntityID]sim.ActiveCast, entities map[sim.EntityID]sim.EntityState, delta sim.SnapshotDelta) error {
 	ended := make(map[sim.EntityID]bool, len(delta.EndedCasts))
 	for _, id := range delta.EndedCasts {
@@ -307,6 +417,7 @@ func applyCasts(casts map[sim.EntityID]sim.ActiveCast, entities map[sim.EntityID
 	return nil
 }
 
+// applyEntities rejects inconsistent replication and reports observable movement.
 func applyEntities(entities map[sim.EntityID]sim.EntityState, observer sim.EntityID, delta sim.SnapshotDelta) (bool, error) {
 	changed := false
 	for _, entity := range delta.Entered {
@@ -336,6 +447,7 @@ func applyEntities(entities map[sim.EntityID]sim.EntityState, observer sim.Entit
 	return changed, nil
 }
 
+// failure emits only a fixed category and treats failed output as a failed proof.
 func failure(out io.Writer, reason string, code int) int {
 	if _, err := fmt.Fprintln(out, "zoneprobe: "+reason); err != nil {
 		return 1
@@ -343,6 +455,7 @@ func failure(out io.Writer, reason string, code int) int {
 	return code
 }
 
+// outputResult reports success only after its affirmative verdict is written.
 func outputResult(out io.Writer, message string) int {
 	if _, err := fmt.Fprintln(out, message); err != nil {
 		return 1

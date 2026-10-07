@@ -8,11 +8,13 @@ extends RefCounted
 ## connection lifecycle, drains whatever the transport delivers, and drives
 ## every frame through `WireCodec.decode` then `ReplicaStore.apply`.
 ##
-## It adds no payload or fold semantics of its own. It does select wire v2 in
+## It selects wire v2 in
 ## the authenticated WebSocket handshake; servers retain omitted headers as
 ## v1, so old clients remain serviceable during protocol expansion. Payload
 ## semantics stay pinned by cross-tier goldens; this class only decides WHEN
 ## to feed them and WHAT to do when they refuse.
+## With WAR_ZONE_MOVEMENT=1 it instead negotiates v3 and owns the nonvisual
+## ZoneMovement sender/ACK state. Player control and prediction are separate.
 ##
 ## ## The transport seam
 ##
@@ -131,6 +133,7 @@ const ERR_OPEN := "open"            # transport refused to open the url
 const ERR_HANDSHAKE := "handshake"  # peer closed before the socket ever opened
 const ERR_TEXT := "text"            # a TEXT message; the ADR settles binary
 const ERR_TLS := "tls"              # invalid explicit loopback TLS identity
+const ERR_MOVEMENT_TRANSPORT := "movement_transport"
 
 ## Worst-case size of one frame the decoder would ACCEPT, derived from the
 ## codec's own caps so the two cannot drift apart. A delta carries three
@@ -161,6 +164,9 @@ const REQUIRED_TRANSPORT_METHODS: Array[String] = [
 	"close",
 	"set_handshake_headers",
 ]
+const MOVEMENT_TRANSPORT_METHODS: Array[String] = [
+	"put_packet", "set_outbound_buffer_size", "get_current_outbound_buffered_amount",
+]
 
 var _transport: Object = null
 var _store: ReplicaStore = null
@@ -173,6 +179,8 @@ var _frames_applied := 0
 ## the two are orthogonal: a FAILED connection's socket is still closing, and
 ## it still has to be polled for that to finish.
 var _transport_closing := false
+var _wire_version := WireCodec.VERSION
+var _movement: ZoneMovement = null
 
 
 ## Whether a zone was named, i.e. whether the client should connect at all.
@@ -260,6 +268,15 @@ func connect_to(url: String) -> bool:
 	if token.is_empty():
 		_enter_failed(ERR_TOKEN, "no allocation token — set %s (zone admission answers 401 without it)" % ZONE_TOKEN_ENV)
 		return false
+	_wire_version = WireCodec.MOVEMENT_VERSION if OS.get_environment("WAR_ZONE_MOVEMENT") == "1" else WireCodec.VERSION
+	_movement = null
+	if _wire_version == WireCodec.MOVEMENT_VERSION:
+		for method: String in MOVEMENT_TRANSPORT_METHODS:
+			if not _transport.has_method(method):
+				_enter_failed(ERR_MOVEMENT_TRANSPORT, "movement transport is missing %s" % method)
+				return false
+		_movement = ZoneMovement.new()
+		_transport.call("set_outbound_buffer_size", ZoneMovement.MAX_OUTBOUND_BYTES)
 
 	_store = ReplicaStore.new()
 	_error = ""
@@ -270,7 +287,7 @@ func connect_to(url: String) -> bool:
 	# with the handshake itself; there is no post-connect place to present it.
 	_transport.call("set_handshake_headers", PackedStringArray([
 		"Authorization: Bearer %s" % token,
-		"%s: %d" % [WIRE_VERSION_HEADER, WireCodec.VERSION],
+		"%s: %d" % [WIRE_VERSION_HEADER, _wire_version],
 	]))
 
 	# Both of these have to be set BEFORE the connection is opened: they size
@@ -366,7 +383,7 @@ static func _valid_tls_server_name(name: String) -> bool:
 ## Advance the connection: pump the transport, track its ready state, and fold
 ## every frame it has delivered. Safe and cheap to call every frame; a no-op
 ## unless the connection is CONNECTING, LIVE or pumping a close handshake.
-func poll() -> void:
+func poll(now_usec: int = -1) -> void:
 	# A transport we have closed still owes us a close handshake, and it only
 	# makes progress while it is polled. This runs whatever the wrapper state
 	# is — a FAILED connection's socket has to finish closing too — and never
@@ -389,10 +406,15 @@ func poll() -> void:
 		WebSocketPeer.STATE_OPEN:
 			_state = State.LIVE
 			_drain()
+			if _state == State.LIVE and _movement != null and _store.has_base():
+				var refused := _movement.pump(_transport, Time.get_ticks_usec() if now_usec < 0 else now_usec)
+				if not refused.is_empty():
+					_fail_stream(refused, "movement")
 		WebSocketPeer.STATE_CLOSING:
 			# Draining here would fold frames sent after the peer began
 			# closing; the close handshake is not a delivery guarantee.
 			if _state == State.LIVE:
+				_movement = null
 				_state = State.CLOSING
 				_transport_closing = true
 		_:
@@ -406,6 +428,7 @@ func poll() -> void:
 			if _state == State.CONNECTING:
 				_enter_failed(ERR_HANDSHAKE, "the zone closed the connection during the handshake — admission refused, or the zone could not be reached")
 			else:
+				_movement = null
 				_state = State.CLOSED
 
 
@@ -463,6 +486,22 @@ func store() -> ReplicaStore:
 	return _store
 
 
+## A producer submits finite planar direction when it has fresh input. No
+## producer is wired to player controls yet; silence lets the server stop.
+func queue_movement(direction: Vector2, sprint: bool = false) -> bool:
+	if _state != State.LIVE or _movement == null or not _store.has_base():
+		return false
+	return _movement.queue(direction, sprint)
+
+
+func movement_state() -> Dictionary:
+	return {} if _movement == null else _movement.own_state()
+
+
+func pending_movement_count() -> int:
+	return 0 if _movement == null else _movement.pending_count()
+
+
 ## Fold every frame the transport has already delivered, stopping at the first
 ## refusal. Draining the whole queue keeps a slow frame from accumulating
 ## latency across polls.
@@ -480,10 +519,19 @@ func _drain() -> void:
 		if _transport.call("was_string_packet"):
 			_fail_stream({"error": ERR_TEXT, "detail": "TEXT message; the wire contract is binary-only"}, "transport")
 			return
-		var decoded: Dictionary = WireCodec.decode(bytes)
+		var decoded: Dictionary = WireCodec.decode_movement_frame(bytes) if _wire_version == WireCodec.MOVEMENT_VERSION else WireCodec.decode(bytes)
 		if decoded.get("ok") != true:
 			_fail_stream(decoded, "decode")
 			return
+		if _movement != null and decoded["kind"] == WireCodec.KIND_MOVEMENT_ACK:
+			if not _store.has_base():
+				_fail_stream({"error": "movement_join", "detail": "own ACK preceded join snapshot"}, "movement")
+				return
+			var refused := _movement.acknowledge(decoded["ack"])
+			if not refused.is_empty():
+				_fail_stream(refused, "movement")
+				return
+			continue
 		var applied: Dictionary = _store.apply(decoded)
 		if applied.get("ok") != true:
 			_fail_stream(applied, "fold")
@@ -504,6 +552,7 @@ func _fail_stream(refusal: Dictionary, stage: String) -> void:
 ## Every path that closes the socket goes through here, so none of them can
 ## forget to keep polling it.
 func _close_transport() -> void:
+	_movement = null
 	_transport.call("close")
 	_transport_closing = int(_transport.call("get_ready_state")) != WebSocketPeer.STATE_CLOSED
 
@@ -520,6 +569,7 @@ func _refuse_busy(detail: String) -> void:
 
 
 func _enter_failed(error_class: String, detail: String) -> void:
+	_movement = null
 	_state = State.FAILED
 	_error = error_class
 	_error_detail = detail

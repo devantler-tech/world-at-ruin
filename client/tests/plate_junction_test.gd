@@ -747,13 +747,13 @@ func _junction_score(uv: Vector2, isolated: bool) -> float:
 
 ## Walk a circle around the junction and return the largest step between
 ## adjacent samples of the blended signature.
-func _max_adjacent_step(centre: Vector2, samples: int, use_third: bool) -> float:
+func _max_vector_arc_step(centre: Vector2, samples: int, value: Callable) -> float:
 	var worst := 0.0
 	var prev := PackedFloat64Array()
 	for i in range(0, samples + 1):
 		var a := TAU * float(i) / float(samples)
 		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
-		var cur := _blend(uv, use_third)
+		var cur: PackedFloat64Array = value.call(uv)
 		if not prev.is_empty():
 			var d := 0.0
 			for k in range(0, cur.size()):
@@ -763,34 +763,31 @@ func _max_adjacent_step(centre: Vector2, samples: int, use_third: bool) -> float
 	return worst
 
 
-func _max_adjacent_window_step(centre: Vector2, samples: int) -> float:
-	var worst := 0.0
-	var prev := PackedFloat64Array()
-	for i in range(0, samples + 1):
-		var a := TAU * float(i) / float(samples)
-		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
-		var cur := _window_blend(uv)
-		if not prev.is_empty():
-			var d := 0.0
-			for k in range(0, cur.size()):
-				d = maxf(d, absf(cur[k] - prev[k]))
-			worst = maxf(worst, d)
-		prev = cur
-	return worst
-
-
-func _max_adjacent_window_cavity_amp_step(
-		centre: Vector2, samples: int) -> float:
+func _max_scalar_arc_step(centre: Vector2, samples: int, value: Callable) -> float:
 	var worst := 0.0
 	var prev := INF
 	for i in range(0, samples + 1):
 		var a := TAU * float(i) / float(samples)
 		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
-		var cur := _window_cavity_amps(uv)
+		var cur: float = value.call(uv)
 		if prev != INF:
 			worst = maxf(worst, absf(cur - prev))
 		prev = cur
 	return worst
+
+func _max_adjacent_step(centre: Vector2, samples: int, use_third: bool) -> float:
+	var value := func(uv: Vector2) -> PackedFloat64Array: return _blend(uv, use_third)
+	return _max_vector_arc_step(centre, samples, value)
+
+
+func _max_adjacent_window_step(centre: Vector2, samples: int) -> float:
+	var value := func(uv: Vector2) -> PackedFloat64Array: return _window_blend(uv)
+	return _max_vector_arc_step(centre, samples, value)
+
+
+func _max_adjacent_window_cavity_amp_step(centre: Vector2, samples: int) -> float:
+	var value := func(uv: Vector2) -> float: return _window_cavity_amps(uv)
+	return _max_scalar_arc_step(centre, samples, value)
 
 
 ## Confirms the arc actually sits inside the averaging band and actually crosses
@@ -874,43 +871,19 @@ func _check_junction_continuity(centre: Vector2) -> void:
 
 func _max_step_of(centre: Vector2, samples: int, use_third: bool,
 		key: String) -> float:
-	var worst := 0.0
-	var prev := INF
-	for i in range(0, samples + 1):
-		var a := TAU * float(i) / float(samples)
-		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
-		var cur: float = _cavity_parts(uv, use_third)[key]
-		if prev != INF:
-			worst = maxf(worst, absf(cur - prev))
-		prev = cur
-	return worst
+	var value := func(uv: Vector2) -> float: return _cavity_parts(uv, use_third)[key]
+	return _max_scalar_arc_step(centre, samples, value)
 
 
 func _max_legacy_spread_step(centre: Vector2, samples: int) -> float:
-	var worst := 0.0
-	var prev := INF
-	for i in range(0, samples + 1):
-		var a := TAU * float(i) / float(samples)
-		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
-		var cur := _legacy_cavity_spread(uv)
-		if prev != INF:
-			worst = maxf(worst, absf(cur - prev))
-		prev = cur
-	return worst
+	var value := func(uv: Vector2) -> float: return _legacy_cavity_spread(uv)
+	return _max_scalar_arc_step(centre, samples, value)
 
 
 func _max_adjacent_cavity_step(centre: Vector2, samples: int,
 		use_third: bool) -> float:
-	var worst := 0.0
-	var prev := INF
-	for i in range(0, samples + 1):
-		var a := TAU * float(i) / float(samples)
-		var uv := centre + Vector2(cos(a), sin(a)) * ARC_RADIUS
-		var cur := _cavity(uv, use_third)
-		if prev != INF:
-			worst = maxf(worst, absf(cur - prev))
-		prev = cur
-	return worst
+	var value := func(uv: Vector2) -> float: return _cavity(uv, use_third)
+	return _max_scalar_arc_step(centre, samples, value)
 
 
 ## The largest cavity value anywhere on the arc. A vacuity guard: if the cavity

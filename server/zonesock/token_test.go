@@ -54,6 +54,15 @@ func TestTokenPreservesExpiryNanoseconds(t *testing.T) {
 	if got != expiry.UnixNano() {
 		t.Fatalf("encoded expiry = %d, want %d", got, expiry.UnixNano())
 	}
+	verifier, err := NewHMACVerifier(secret, "allocation-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier.now = func() time.Time { return expiry.Add(-time.Second) }
+	observer, verifiedExpiry, err := verifier.VerifyWithExpiry(token)
+	if err != nil || observer != 7 || !verifiedExpiry.Equal(expiry) {
+		t.Fatalf("authenticated token fields = %d, %s, %v", observer, verifiedExpiry, err)
+	}
 }
 
 func TestLegacySecondPrecisionTokenStillVerifies(t *testing.T) {
@@ -137,6 +146,10 @@ func TestTokenRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if _, err := v.Verify(c.token); !errors.Is(err, c.want) {
 				t.Fatalf("Verify(%q) = %v, want %v", c.token, err, c.want)
+			}
+			observer, expiry, err := v.VerifyWithExpiry(c.token)
+			if !errors.Is(err, c.want) || observer != 0 || !expiry.IsZero() {
+				t.Fatalf("failed verification exposed token fields: %d, %s, %v", observer, expiry, err)
 			}
 		})
 	}

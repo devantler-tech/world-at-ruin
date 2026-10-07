@@ -7,6 +7,30 @@ mastery or handoff state. It is not a multiplayer readiness verdict.
 Build with `go build -o zoneprobe ./cmd/zoneprobe` from `server/`. The zone image
 also contains `/zoneprobe`.
 
+For Kubernetes listener health, use the explicit TLS-only mode:
+
+`zoneprobe -tls-only -url 'wss://127.0.0.1:8443/zone' -tls-server-name-file /credentials/tls.crt -timeout 1500ms`
+
+This completes a verified TLS handshake and closes the connection cleanly. It
+does not read `WAR_ZONE_TOKEN`, send HTTP or WebSocket requests, reserve an
+observer, or prove that the simulation is advancing. Successful stdout is
+exactly `ZONEPROBE TLS PASS`. Use the authenticated stream check below when
+checking simulation progress.
+
+The identity file is available only in TLS-only mode against a loopback target,
+and cannot be combined with `-tls-server-name`. Its first certificate must have
+exactly one valid DNS name; additional chain certificates are parsed but do not
+choose the identity. It declares the expected server name without adding any
+trust: normal system roots still verify the peer, including its identity and
+expiry. Use a separate `-ca-file` only for an explicit fixture trust bundle.
+Both PEM inputs are bounded to 1 MiB and reject malformed material.
+
+The total TLS health deadline covers connection establishment, handshake and
+shutdown, including a peer that refuses to read the TLS close notification.
+The published readiness and liveness probes allow 1.5 seconds inside a two
+second kubelet timeout. Their five and ten second polling periods do not read
+the admission token or compete with an operator's active observer.
+
 Provide an unexpired trial admission token through `WAR_ZONE_TOKEN` in the
 operator's process environment, then run:
 
@@ -68,4 +92,5 @@ and token renewal.
 Run `go test -race ./cmd/zoneprobe` for verified TLS, retained/newest streams,
 admission refusal, hostile/stalled frames, tunnel identity, and real-hub observer
 ownership coverage. The container smoke additionally invokes this same CLI
-against the built zone process.
+against the built zone process, including repeated TLS-only checks without
+an admission token and without handshake-error logs.
