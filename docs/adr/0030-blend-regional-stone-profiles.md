@@ -43,7 +43,8 @@ field and foliage inventory. No save or protocol format changes.
 Tests hold decided interiors, two- and three-way blends, duplicate-site
 invariance, stable slab identity, materially different normalized real-world
 coverage, fresh/live convergence, cave rebuilds and both opt-out paths. Existing
-palette, terrain and plate goldens remain unchanged. A native six-point shader
+palette and terrain goldens remain unchanged, and the existing plate regressions
+pass without fixture changes. A native six-point shader
 probe checks CPU/GPU profile transport within one RGB8 quantum; it does not
 certify complete exposure cutline parity or a GPU frame-time budget.
 
