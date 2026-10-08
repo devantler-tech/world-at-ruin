@@ -257,7 +257,7 @@ go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build
   -experimental -source . -output /tmp/new-war-native-bundle
 ```
 
-The output must be absent. The builder selects the exact Go 1.27.1 toolchain,
+The output must be absent. The builder selects the exact Go 1.27.2 toolchain,
 native CGO and compatible flags for both the Nakama binary and WAR plugin; its
 `bundle.json` records actual graph and artifact hashes. This command builds a
 trial artifact and does not publish or deploy it.
