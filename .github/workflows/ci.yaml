@@ -1169,7 +1169,7 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/.github/.github/workflows/lint.yaml@2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
+    uses: devantler-tech/.github/.github/workflows/lint.yaml@c252e112ef55d1aef3f048e75ac65f566edac583 # v7.4.0
     permissions:
       contents: read
     with:
