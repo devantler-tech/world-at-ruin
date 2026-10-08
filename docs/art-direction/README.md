@@ -325,10 +325,21 @@ cluster instances in one generated opaque batch, each reusing a mesh of four sto
 The whole scaled footprint stays clear of intact tops and protected approaches; an apron
 that loses every larger lip chip is rejected. This improves the transition without changing the
 base terrain, solid tops or original foliage records. Repeated cluster silhouettes and the
-missing contact shadows still require visual judgment, and regional exposure and the raised
-stone's performance activation gate remain open.
+missing contact shadows still require visual judgment, and the raised
+stone's performance activation gate remains open.
 The [close walking and grazing evidence](../evidence/issue-549-slab-rubble/README.md)
 isolates this cosmetic batch and retains repeat, restore and opt-out controls.
+
+A separate default-off WAR_REGION_STONE=1 preview, requiring WAR_GROUND_PLATES=1,
+now lets each region declare how much stone stays exposed and how strongly
+slopes remain scoured. Smooth shared regional weights reach the raised geometry,
+edge ash samples, terrain and cave contact while preserving each slab's identity.
+The [fixed Bonepale and Cinderreach comparisons](../evidence/issue-550-regional-stone/README.md)
+show broader exposed patches in Bonepale and sparser stone in Cinderreach, with
+same-build repeat, restore and plates-off controls. This covers #550's source
+experiment, not the material target: tiled shapes, weak wear, absent contact
+shadows and haze-flattened material separation remain visible. #1287 owns its
+activation or rejection and flag retirement; hardware and taste gates remain open.
 
 What is arithmetic-only is **the ground, the cave rock and the masonry** — `terrain.gdshader`,
 `cave_rock.gdshader` and `masonry.gdshader` compute colour from noise with no texture at all. That

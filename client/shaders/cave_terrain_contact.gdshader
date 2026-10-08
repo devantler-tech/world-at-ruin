@@ -29,6 +29,7 @@ uniform vec3 plate_basalt: source_color = vec3(0.22, 0.21, 0.22);
 uniform vec3 plate_ferric: source_color = vec3(0.42, 0.26, 0.18);
 uniform vec3 plate_pale: source_color = vec3(0.54, 0.51, 0.45);
 uniform bool plates_enabled = false;
+#include "res://shaders/ground_stone_regions.gdshaderinc"
 uniform float plate_scale = 0.85;
 uniform float crack_width: hint_range(0.001, 0.3) = 0.032;
 uniform float crack_darkness: hint_range(0.0, 1.0) = 0.09;
@@ -176,6 +177,11 @@ void fragment() {
 	}
 
 	float ash_edge = slope + (drift - 0.5) * 0.22 - rock_slope;
+	vec2 stone_thresholds = vec2(0.47, rock_slope);
+	if (plates_enabled && region_stone_enabled) {
+		stone_thresholds = regional_stone_thresholds(terrain_world_pos.xz);
+		ash_edge = slope + (drift - 0.5) * 0.22 - stone_thresholds.y;
+	}
 	float aw = clamp(
 		max(ash_contact, fwidth(ash_edge) * 1.2),
 		ash_contact,
@@ -188,6 +194,9 @@ void fragment() {
 			slope + (drift - 0.5) * 0.22);
 
 	float exposed_edge = drift - 0.47;
+	if (plates_enabled && region_stone_enabled) {
+		exposed_edge = drift - stone_thresholds.x;
+	}
 	float ew = clamp(
 		max(ash_contact, fwidth(exposed_edge) * 1.2),
 		ash_contact,

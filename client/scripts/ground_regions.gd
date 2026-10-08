@@ -112,6 +112,9 @@ const REGIONS: Array[Dictionary] = [
 		# ground, and gives the other regions an honest reference.
 		&"foliage_density": 1.0,
 		&"foliage_kinds": [1.0, 1.0, 1.0, 1.0],
+		# Loose ash buries most stone, including moderately sloped faces.
+		&"stone_density": 0.35,
+		&"stone_scour": 0.58,
 	},
 	{
 		# Where the burn sat longest: much darker, and warm rather than neutral.
@@ -139,6 +142,9 @@ const REGIONS: Array[Dictionary] = [
 		# survived, while exposed debris remains legible at a distance.
 		&"foliage_density": 0.55,
 		&"foliage_kinds": [0.35, 0.45, 0.85, 1.45],
+		# The burnt high ground retains more bare, fire-fused stone.
+		&"stone_density": 0.50,
+		&"stone_scour": 0.72,
 	},
 	{
 		# Ash scoured off down to the pale stone beneath: much lighter, and the
@@ -161,6 +167,9 @@ const REGIONS: Array[Dictionary] = [
 		# generic grass, with enough bare ground for the pale rock to read.
 		&"foliage_density": 0.70,
 		&"foliage_kinds": [0.45, 0.30, 1.65, 1.25],
+		# Wind strips the pale ground, exposing broad stone patches.
+		&"stone_density": 0.72,
+		&"stone_scour": 0.80,
 	},
 	{
 		# Ground stained by the inherited machines rusting into it — ochre, the
@@ -185,6 +194,9 @@ const REGIONS: Array[Dictionary] = [
 		# rubble still punctuates the hollows.
 		&"foliage_density": 1.25,
 		&"foliage_kinds": [1.25, 0.75, 0.55, 1.15],
+		# Sheltered hollows retain cover even where their crust is broken.
+		&"stone_density": 0.42,
+		&"stone_scour": 0.61,
 	},
 ]
 
@@ -467,6 +479,31 @@ static func foliage_for(region_sites: Array[Site], x: float, z: float) -> Dictio
 		for kind in kinds.size():
 			kinds[kind] += float(region_kinds[kind]) * w
 	return {&"density": _scalar_profile(at, &"foliage_density"), &"kinds": kinds}
+
+
+## Exposure and slope thresholds, blended before the shared slab field is sampled.
+## Density controls the ash-sheet noise threshold, not a promised area percentage.
+## Scour controls how steep a face must be before ash stops covering it.
+static func stone_for(region_sites: Array[Site], x: float, z: float) -> Vector2:
+	var at := region_for(region_sites, x, z)
+	return Vector2(1.0 - _scalar_profile(at, &"stone_density"),
+		1.0 - _scalar_profile(at, &"stone_scour"))
+
+
+## Both ground shaders consume the same data and all-region weighting.
+static func configure_stone(material: ShaderMaterial, region_sites: Array[Site],
+		enabled: bool) -> void:
+	var positions := PackedVector3Array()
+	for site in region_sites:
+		positions.append(Vector3(site.x, site.z, site.region))
+	var profiles := PackedVector2Array()
+	for region: Dictionary in REGIONS:
+		profiles.append(Vector2(1.0 - float(region[&"stone_density"]),
+			1.0 - float(region[&"stone_scour"])))
+	material.set_shader_parameter("stone_region_sites", positions)
+	material.set_shader_parameter("stone_region_profiles", profiles)
+	material.set_shader_parameter("stone_region_blend_band", BLEND_BAND)
+	material.set_shader_parameter("region_stone_enabled", enabled)
 
 
 ## The landform at a place: `{ amp, ridged }`, cross-faded across every region

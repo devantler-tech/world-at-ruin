@@ -64,7 +64,8 @@ func sample(world_seed: int, world_xz: Vector2, region_context: Dictionary) -> D
 		EXPOSURE_WIDTH_MAX))
 	var sheet := _f32(clampf(_f32(
 		_smoothstep_f32(
-			-exposure_width, exposure_width, _f32(drift - EXPOSED_THRESHOLD))
+			-exposure_width, exposure_width, _f32(drift
+				- _f32(float(region_context.get(&"exposed_threshold", EXPOSED_THRESHOLD)))))
 		+ rock_mix), 0.0, 1.0))
 	var is_slab := is_slab_identity(Vector3i(world_seed, id.x, id.y))
 	return {

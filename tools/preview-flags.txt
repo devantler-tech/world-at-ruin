@@ -26,3 +26,6 @@ WAR_CAVE_FOOT_TALUS
 # capture photographs the single shipped cover law, so regional cover needs an
 # opt-in artifact until the art gate in #613 retires this preview.
 WAR_REGION_FOLIAGE
+
+# #550 — region-authored stone exposure and scouring, still dependent on plates.
+WAR_REGION_STONE

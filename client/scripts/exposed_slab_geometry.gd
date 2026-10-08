@@ -92,7 +92,8 @@ const MIN_TRIANGLE_AREA := 0.00000001
 ## geometry was made of (#548).
 ## `vertices` counts the indexed mesh's distinct vertices, `triangles` its faces.
 func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: int,
-		height: Callable, normal: Callable, color: Callable, keep_out: Callable) -> Dictionary:
+		height: Callable, normal: Callable, color: Callable, keep_out: Callable,
+		stone_profile: Callable = Callable()) -> Dictionary:
 	var stats := {
 		&"candidates": 0,
 		&"slabs": 0,
@@ -126,7 +127,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 		var site := field.site_for(identity)
 		if absf(site.x) > half - WORLD_INSET or absf(site.y) > half - WORLD_INSET:
 			continue
-		if not _exposed_at(field, world_seed, site, normal):
+		if not _exposed_at(field, world_seed, site, normal, stone_profile):
 			continue
 		var polygon := field.polygon_for(identity)
 		if polygon.size() < 3:
@@ -143,7 +144,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 				break
 			var corner := polygon[index]
 			var probe := Vector2(clampf(corner.x, -half, half), clampf(corner.y, -half, half))
-			if _exposed_at(field, world_seed, probe, normal):
+			if _exposed_at(field, world_seed, probe, normal, stone_profile):
 				exposed_corners += 1
 		if exposed_corners < needed:
 			stats[&"partial"] += 1
@@ -164,7 +165,7 @@ func build(field: ExposedSlabField, world_seed: int, world_size: float, quads: i
 			&"polygon": polygon,
 			&"thickness": thickness,
 			&"identity": identity,
-			&"edge_ash": _edge_ash_cover(field, polygon, normal),
+			&"edge_ash": _edge_ash_cover(field, polygon, normal, stone_profile),
 		})
 		stats[&"built"] += 1
 		triangles += slab_triangles
@@ -304,13 +305,15 @@ static func centroid(polygon: PackedVector2Array) -> Vector2:
 ## triangle and the broad drift, computed once and handed in so `sample()` does
 ## not pay for the drift a second time.
 static func _exposed_at(field: ExposedSlabField, world_seed: int, at: Vector2,
-		normal: Callable) -> bool:
+		normal: Callable, stone_profile: Callable) -> bool:
 	var n: Vector3 = normal.call(at.x, at.y)
 	var slope := clampf(1.0 - n.y, 0.0, 1.0)
 	var drift := field.ground_drift(at)
+	var profile := _stone_thresholds(at, stone_profile)
 	var verdict := field.sample(world_seed, at, {
-		&"rock_mix": field.rock_mix_for(slope, drift),
+		&"rock_mix": field.rock_mix_for(slope, drift, ExposedSlabField.ASH_CONTACT, profile.y),
 		&"drift": drift,
+		&"exposed_threshold": profile.x,
 	})
 	return bool(verdict.get(&"exposed", false))
 
@@ -321,7 +324,7 @@ static func _exposed_at(field: ExposedSlabField, world_seed: int, at: Vector2,
 ## independent scatter field. The ash sheet is the same drift/slope expression
 ## used by the terrain shader and _exposed_at, without the discrete slab pick.
 static func _edge_ash_cover(field: ExposedSlabField, polygon: PackedVector2Array,
-		normal: Callable) -> PackedFloat32Array:
+		normal: Callable, stone_profile: Callable) -> PackedFloat32Array:
 	var cover := PackedFloat32Array()
 	for index in polygon.size():
 		var a := polygon[index]
@@ -336,13 +339,21 @@ static func _edge_ash_cover(field: ExposedSlabField, polygon: PackedVector2Array
 			var probe := a.lerp(b, along) + outward * 0.18
 			var n: Vector3 = normal.call(probe.x, probe.y)
 			var drift := field.ground_drift(probe)
-			var rock := field.rock_mix_for(clampf(1.0 - n.y, 0.0, 1.0), drift)
+			var profile := _stone_thresholds(probe, stone_profile)
+			var rock := field.rock_mix_for(clampf(1.0 - n.y, 0.0, 1.0), drift,
+				ExposedSlabField.ASH_CONTACT, profile.y)
 			var sheet := clampf(smoothstep(-ExposedSlabField.ASH_CONTACT,
-				ExposedSlabField.ASH_CONTACT, drift - ExposedSlabField.EXPOSED_THRESHOLD)
+				ExposedSlabField.ASH_CONTACT, drift - profile.x)
 				+ rock, 0.0, 1.0)
 			ash += 1.0 - sheet
 		cover.append(ash / 3.0)
 	return cover
+
+
+static func _stone_thresholds(at: Vector2, stone_profile: Callable) -> Vector2:
+	if stone_profile.is_valid():
+		return stone_profile.call(at.x, at.y) as Vector2
+	return Vector2(ExposedSlabField.EXPOSED_THRESHOLD, ExposedSlabField.ROCK_SLOPE)
 
 
 static func _emit_slab(st: SurfaceTool, polygon: PackedVector2Array, thickness: float,

@@ -1,0 +1,33 @@
+{
+	"neutral_built": {
+		"ashflats": 1494,
+		"bonepale": 611,
+		"cinderreach": 527,
+		"rustmoor": 806
+	},
+	"pixel_step": 0.02,
+	"plates_off_changed_fraction": 0.0,
+	"regional_built": {
+		"ashflats": 228,
+		"bonepale": 1321,
+		"cinderreach": 387,
+		"rustmoor": 270
+	},
+	"seed": 1409,
+	"views": [
+		{
+			"changed_fraction": 0.438876953125,
+			"control_fraction": 0.0,
+			"eye": "(-68.0, 0.589682, -2.0)",
+			"name": "bonepale",
+			"target": "(-72.0, -4.0)"
+		},
+		{
+			"changed_fraction": 0.0864572482638889,
+			"control_fraction": 0.0,
+			"eye": "(-86.0, 5.175829, -69.0)",
+			"name": "cinderreach",
+			"target": "(-92.0, -74.0)"
+		}
+	]
+}

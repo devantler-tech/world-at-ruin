@@ -74,6 +74,9 @@ var _built: Array[Node] = []
 ## The terrain-contact ring's material, kept so `set_plates_enabled()` can follow the
 ## ground's plate uniform at runtime; null until the contact mesh is built.
 var _contact_material: ShaderMaterial
+var _plates_enabled := OS.get_environment("WAR_GROUND_PLATES") == "1"
+var _stone_region_sites: Array[GroundRegions.Site] = []
+var _region_stone_enabled := false
 var _torch_lights: Array[OmniLight3D] = []
 var _torch_flames: Array[MeshInstance3D] = []
 var _torch_phases := PackedFloat32Array()
@@ -145,8 +148,16 @@ func _apply_flicker() -> void:
 ## the same `WAR_GROUND_PLATES` flag the world does, so the two agree from the
 ## first frame.
 func set_plates_enabled(on: bool) -> void:
+	_plates_enabled = on
 	if _contact_material != null:
 		_contact_material.set_shader_parameter("plates_enabled", on)
+
+
+func configure_region_stone(sites: Array[GroundRegions.Site], on: bool) -> void:
+	_stone_region_sites = sites.duplicate()
+	_region_stone_enabled = on
+	if _contact_material != null:
+		GroundRegions.configure_stone(_contact_material, _stone_region_sites, on)
 
 
 func freeze_flicker(at_time: float = FLICKER_CAPTURE_TIME) -> void:
@@ -1020,8 +1031,9 @@ func rebuild(terrain_h: Callable = func(_x: float, _z: float) -> float: return 0
 	if contact_mesh != null:
 		var contact_mat := ShaderMaterial.new()
 		contact_mat.shader = load("res://shaders/cave_terrain_contact.gdshader")
-		contact_mat.set_shader_parameter(
-			"plates_enabled", OS.get_environment("WAR_GROUND_PLATES") == "1")
+		contact_mat.set_shader_parameter("plates_enabled", _plates_enabled)
+		if not _stone_region_sites.is_empty():
+			GroundRegions.configure_stone(contact_mat, _stone_region_sites, _region_stone_enabled)
 		contact_mat.render_priority = 1
 		contact_mesh.surface_set_material(0, contact_mat)
 		_contact_material = contact_mat

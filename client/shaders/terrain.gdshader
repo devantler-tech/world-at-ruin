@@ -78,6 +78,7 @@ uniform vec3 plate_pale: source_color = vec3(0.54, 0.51, 0.45);
 // WAR_GROUND_PLATES=1; this flips to true, and the uniform is retired, once the
 // treatment clears the bar.
 uniform bool plates_enabled = false;
+#include "res://shaders/ground_stone_regions.gdshaderinc"
 uniform float plate_scale = 0.85;
 // Crack half-width in plate units (so a crack stays the same fraction of a
 // slab at any plate_scale): 0.032 * 1.2 m is a seam a couple of centimetres
@@ -377,6 +378,11 @@ void fragment() {
 	// so the boundary wanders instead of following a clean contour line — but
 	// the boundary is now a CONTACT, not a ramp: wind leaves an edge.
 	float ash_edge = slope + (drift - 0.5) * 0.22 - rock_slope;
+	vec2 stone_thresholds = vec2(0.47, rock_slope);
+	if (plates_enabled && region_stone_enabled) {
+		stone_thresholds = regional_stone_thresholds(world_pos.xz);
+		ash_edge = slope + (drift - 0.5) * 0.22 - stone_thresholds.y;
+	}
 	// Clamped so a faceted normal (slope is per-face) cannot spike the width.
 	// The ceiling must never fall below the floor: ash_contact ranges to 0.3,
 	// and clamp() with minVal > maxVal is UNDEFINED in GLSL, not merely odd.
@@ -415,6 +421,9 @@ void fragment() {
 	// before the change; 0.47 puts a slab field in most views while keeping
 	// ash the dominant surface, which is what the fiction asks for.
 	float exposed_edge = drift - 0.47;
+	if (plates_enabled && region_stone_enabled) {
+		exposed_edge = drift - stone_thresholds.x;
+	}
 	// Same undefined-clamp guard as the ash contact above.
 	float ew = clamp(max(ash_contact, fwidth(exposed_edge) * 1.2),
 		ash_contact, max(ash_contact, 0.25));
