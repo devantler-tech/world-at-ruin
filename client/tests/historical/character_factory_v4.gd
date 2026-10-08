@@ -1,0 +1,901 @@
+extends RefCounted
+const HISTORICAL_KIT := preload("res://tests/historical/kit_assembly_v4.gd")
+## Runtime composition layer of the character system (issue #24, stages 2+3):
+## builds a character from a RECIPE — a versioned, name-keyed parameter
+## dictionary — on top of the baked humanoid kit, and dresses it from the
+## baked equipment registry (skinned pieces on the one canonical skeleton).
+##
+## Recipes are the persistence format for every humanoid (players, NPCs,
+## humanoid enemies), so they obey the no-resets product law:
+##  - keyed by stable STRING names (blend shapes, bones, slots, pieces) —
+##    never indices;
+##  - forward-only: a name that ever shipped keeps working forever (the kit
+##    may only ADD shapes/pieces; the golden-recipe and shipped-equipment
+##    regression tests enforce it);
+##  - versioned: `version` <= RECIPE_VERSION is accepted forever, a NEWER
+##    version is rejected loudly (an old client must never half-apply a
+##    recipe it does not fully understand).
+##
+## Bone edits follow the laws first proven during the Phase 0 art-pipeline
+## work and now guarded by character_factory_test's pose==rest check (that
+## scaffolding itself is gone — this is where the laws live now):
+## rests must stay TRS-representable — only UNIFORM bone
+## scales (with exact child compensation: basis x 1/g, origin / g), origin
+## scaling for joint pushes, and no engine global reads between rest edits
+## (Godot 4.7 desyncs its rest/pose caches).
+
+const RECIPE_VERSION := 4
+const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
+const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
+const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
+const SKINS_DIR := "res://assets/characters/humanoid_kit/skins/"
+const SKINS_REGISTRY_PATH := SKINS_DIR + "skins.json"
+## Equipment mesh nodes get this name prefix so the body's skinned mesh stays
+## unambiguous (find_skinned_mesh skips them).
+const EQUIP_PREFIX := "Equip_"
+## Blend shapes with this prefix are composition plumbing (skin tucked under a
+## worn piece), never a body slider.
+const HIDE_SHAPE_PREFIX := "equip_hide_"
+## The standing pose: degrees the arms hang from the baked T-pose, with a
+## slight elbow and wrist curl so it reads relaxed, not scarecrow (angles
+## proven during the Phase 0 art-pipeline work).
+const ARM_HANG_DEG := 62.0
+const FOREARM_RELAX_DEG := 10.0
+const HAND_RELAX_DEG := 8.0
+
+## New deformation WRITES stay inside these bounds. The v1..v4 reader shipped
+## without range limits, so it must keep accepting every finite numeric value;
+## narrowing those versions would strand existing characters. The bounds still
+## contain the creator's authored ranges (shapes -0.5..1.2, bones 0.9..1.35)
+## with migration headroom.
+const SHAPE_WEIGHT_MIN := -1.0
+const SHAPE_WEIGHT_MAX := 2.0
+const BONE_FACTOR_MIN := 0.5
+const BONE_FACTOR_MAX := 2.0
+
+## Contrapposto — the rest stance (#237, first slice of #224).
+##
+## Arms hanging from a T-pose fixed the arms and left the rest symmetric, and
+## perfect bilateral symmetry is what reads as "a rig at rest" rather than a
+## person standing: real weight goes onto ONE leg. The classical answer is
+## contrapposto — the weight-bearing hip rides HIGH while the shoulder above it
+## drops, so hip and shoulder lines tilt in OPPOSITE directions and the spine
+## takes a gentle S between them.
+##
+## Weight sits on the character's LEFT leg, so `_l` is the engaged side and
+## `_r` is the free one throughout. All angles are small: the goal is a stance
+## that reads as deliberate, not a contortion, and every one of these is a
+## rotation-only rest edit (the TRS law — a non-TRS rest is silently dropped at
+## reset_bone_poses() and the skin then lies about where the body is).
+##
+## The pose is the still half. `BreathingIdle` supplies the motion on top of it
+## as bone POSES, leaving every rest edit here untouched — so the stance is what
+## the body IS and the idle is what it is DOING. `WalkLocomotion` can decorate
+## grounded travel with a walk behind `WAR_WALK_CYCLE` and a run behind
+## `WAR_RUN_CYCLE`; the controller's airborne arc is the ordinary jump. Landing
+## impact, turn motion and state blending remain absent and stay with the
+## parent #224.
+##
+## This shipped opt-in (`WAR_REST_STANCE`) while the pose stood still, because a
+## motionless stance was only half of what the art direction asks for. #243
+## added the idle and retired the flag: the stance is now simply how a body
+## stands, which is the point the gate existed to defer.
+
+
+## 🔑 RIG FACT, measured on the shipped kit rather than assumed: `thigh_l`
+## sits at +X and `thigh_r` at -X, and a POSITIVE rotation about
+## Vector3.FORWARD (-Z) LOWERS the left side. Every sign below is written
+## against that measurement — an earlier version reasoned about these axes
+## instead of probing them and produced a stance whose free leg carried the
+## raised hip and crossed inward over the midline. Directions are now pinned
+## by rest_stance_test, which names the engaged side rather than checking
+## magnitudes.
+##
+## Positive STANCE_ROLL_SIGN * degrees raises the LEFT (engaged) side.
+const STANCE_ROLL_SIGN := -1.0
+
+## Pelvis roll that lifts the engaged (left) hip.
+const HIP_HIKE_DEG := 6.0
+## Counter-roll applied to BOTH thighs, cancelling the pelvis roll so the legs
+## hang plumb instead of splaying with the hips. Without it the whole lower
+## body leans and the feet leave the ground.
+const THIGH_PLUMB_DEG := -6.0
+## The free (right) leg takes no weight: it swings very slightly outward, AWAY
+## from the midline, and bends at the knee — which is what stops the two legs
+## reading as a pair of identical columns.
+const FREE_LEG_ABDUCT_DEG := 3.0
+const FREE_KNEE_BEND_DEG := 13.0
+## Spine counter-roll, applied per spine bone. Larger in total than the hip
+## hike so the shoulder line ends up tilted the OTHER way rather than merely
+## level — that opposition IS contrapposto; a torso that only returns to
+## vertical just undoes the hips.
+const SPINE_COUNTER_DEG := -4.5
+## The free-side arm hangs a touch further from the body than the engaged one,
+## because the ribcage on that side is no longer lifted into it.
+const FREE_ARM_EXTRA_HANG_DEG := 4.0
+
+## The recipe format, exhaustively: any other top-level field is REJECTED —
+## a recipe carrying data this client cannot render must fail loudly, never
+## render a half-truth (no-resets law). New fields ship with a version bump:
+## `equipment` (slot -> piece name) exists from version 2, `skin` (a skins
+## registry name) from version 3 — an older recipe carrying either stays
+## invalid forever, exactly as the older clients ruled.
+##
+## Version 4 (#246) lets a slot's value be a LIST of piece names — one per
+## layer, so a region can carry clothing with armour over it.
+##
+## It is a version bump even though it adds no new field and no new persisted
+## vocabulary, because the SHAPE of an existing value widened: `String` became
+## `String | Array`. A version-3 client reads that array through
+## `String(recipe["equipment"][slot])`, gets `["shoes_cloth", "boots_worn"]`,
+## and rejects the whole recipe as an unknown piece — so an unversioned array
+## would strand the character on exactly the rollback the distribution design
+## covers. Stamped as 4 ONLY when a list is actually present, so single-piece
+## recipes stay at their own version and are never churned upward, and a
+## recipe below 4 carrying a list is refused: a save must never claim an older
+## version than the shape it uses.
+const RECIPE_FIELDS := ["version", "comment", "shapes", "bone_girth", "bone_scale", "joint_push"]
+const RECIPE_FIELDS_V2 := ["equipment"]
+const RECIPE_FIELDS_V3 := ["skin"]
+## The version at which a slot's value may be a LIST of pieces. Named rather
+## than written as a bare 4, so the gate below and the creator's stamping can
+## never drift apart.
+const LAYERED_EQUIPMENT_VERSION := 4
+
+## The wearable layers, innermost first — this array IS the render order
+## (#246, first slice of #222).
+##
+## A registry `slot` is a body REGION; a `layer` is what sits over what within
+## it. Before this split a region held exactly one piece, so the kit's own data
+## contradicted itself: `shoes_cloth` and `boots_worn` both claim `feet`, and
+## putting boots on a character silently took their shoes off. The specified
+## wardrobe — socks/underpants/pants/shirt/eyewear, with boots/leg/chest/head
+## armour, belt, gloves and jewellery over it — needs both worn at once.
+##
+## Closed set, on purpose (the same law shape as Armor.SLOTS): a piece whose
+## layer is not one of these cannot be placed at all, so "a third layer" is a
+## deliberate, reviewed act rather than a typo in the manifest.
+##
+## LAYER IS NEVER PERSISTED. A recipe records piece NAMES against a region;
+## which layer each name belongs to is read from the kit. That keeps the
+## persisted vocabulary exactly as wide as it was before this change — one
+## already-ledgered promise (`<piece> <slot>`) instead of two.
+const LAYERS := ["base", "clothing", "armor"]
+
+## Regions that deliberately carry NO armour stats (#251).
+##
+## The wardrobe #222 specifies needs places to put underwear and jewellery, and
+## neither belongs on the armour axis: `Armor.SLOTS` is the bounded vertical the
+## product law caps, and every entry there owes `armor_axis_test` a
+## light/medium/heavy trade-off, so listing rings and underpants would have
+## meant inventing power the maintainer never asked for. #222 files jewellery
+## under "armor on top of it", but that is the render `layer`, not the stat set.
+##
+## Naming them here rather than just letting them be absent is what keeps the
+## vocabulary CLOSED: `armor_axis_test` requires every declared region to be in
+## `Armor.SLOTS` or in this set, so `trinket_l` or `neckk` lands in neither and
+## turns CI red instead of quietly becoming a legal region nothing can fill.
+##
+## A region leaves this set the day a piece with armour stats is baked for it —
+## that PR adds it to `Armor.SLOTS` with its seed pieces, which is a balance
+## decision made with the piece in hand rather than guessed at now.
+const ACCESSORY_REGIONS := ["pelvis", "neck", "ring_l", "ring_r", "trinket_1", "trinket_2"]
+
+static var _equipment_registry: Dictionary = {}
+static var _skins_registry: Dictionary = {}
+static var _skin_materials: Dictionary = {}
+## The GUARDED bone keys per field — exactly the set the golden recipe
+## exercises forever. Persisted recipes may only touch these; anything else
+## would dodge the forward-compat guarantee (a future rig rename could break
+## it silently). Extending this list means extending the golden recipe in the
+## same change.
+const GUARDED_BONE_KEYS := {
+	"bone_girth": ["neck_01", "spine_03", "upperarm", "lowerarm", "thigh", "calf"],
+	"bone_scale": ["head", "hand", "foot"],
+	"joint_push": ["upperarm", "hand"],
+}
+
+
+## Builds a character instance from a recipe, or returns null after
+## push_error when the recipe is invalid. The caller owns the instance.
+static func build(recipe: Dictionary) -> Node3D:
+	var packed: PackedScene = load(KIT_SCENE_PATH)
+	if packed == null:
+		push_error("CharacterFactory: kit missing: %s" % KIT_SCENE_PATH)
+		return null
+	var instance := packed.instantiate() as Node3D
+	var skeleton := find_skeleton(instance)
+	var mesh_instance := find_skinned_mesh(skeleton)
+	if skeleton == null or mesh_instance == null:
+		push_error("CharacterFactory: kit has no skeleton or skinned mesh")
+		instance.free()
+		return null
+
+	var problem := validate(recipe, skeleton, mesh_instance)
+	if problem != "":
+		push_error("CharacterFactory: invalid recipe: %s" % problem)
+		instance.free()
+		return null
+
+	# Bone ops first (rest edits, no engine global reads), then poses.
+	for key: String in recipe.get("bone_girth", {}):
+		for bone in _bones_for(skeleton, key):
+			_apply_girth(skeleton, bone, recipe["bone_girth"][key])
+	for key: String in recipe.get("bone_scale", {}):
+		for bone in _bones_for(skeleton, key):
+			HISTORICAL_KIT.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
+	for key: String in recipe.get("joint_push", {}):
+		for bone in _bones_for(skeleton, key):
+			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
+	# Arms down from the bake's T-pose — the standing pose every body wears
+	# until real animation arrives (rotation-only rest edits: TRS-safe).
+	for arm in ["upperarm_l", "upperarm_r"]:
+		_hang_toward_down(skeleton, skeleton.find_bone(arm), ARM_HANG_DEG)
+	for forearm in ["lowerarm_l", "lowerarm_r"]:
+		_hang_toward_down(skeleton, skeleton.find_bone(forearm), FOREARM_RELAX_DEG)
+	for hand in ["hand_l", "hand_r"]:
+		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
+	_apply_contrapposto(skeleton)
+	HISTORICAL_KIT.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
+
+	for piece_name in pieces_to_wear(recipe.get("equipment", {})):
+		_equip_piece(skeleton, mesh_instance, piece_name, recipe.get("shapes", {}))
+
+	if recipe.has("skin"):
+		mesh_instance.set_surface_override_material(0, _skin_material(String(recipe["skin"])))
+		instance.set_meta("skin", recipe["skin"])
+
+	# The body breathes. Attached here rather than by each caller so that every
+	# character is alive by construction — the player, the settlement, the
+	# drifters and the creator's preview — instead of the wanderer moving while
+	# a village of statues watches.
+	#
+	# The phase comes from the body recipe, so it is stable for a given
+	# character across runs and outfit changes (determinism, #58) while
+	# different bodies are still out of step with each other. A crowd inhaling
+	# in unison reads as a machine, but changing gloves must not jump the body
+	# to a different point in its idle.
+	var idle := BreathingIdle.new()
+	idle.name = "BreathingIdle"
+	idle.phase_offset = _idle_phase_for(recipe)
+	instance.add_child(idle)
+	return instance
+
+
+## A stable phase offset in [0, BREATH_PERIOD) for this body recipe.
+##
+## Equipment and the recipe schema version are deliberately excluded:
+## CharacterCreator rebuilds the body when an outfit picker changes, and that
+## edit can restamp the version as well as changing the outfit. Neither value
+## describes the body whose phase this seeds. Everything else stays serialised
+## rather than using a counter or the clock, so the same character breathes
+## identically on every boot while different bodies need not move in lockstep.
+static func _idle_phase_for(recipe: Dictionary) -> float:
+	var body_recipe := recipe.duplicate(true)
+	body_recipe.erase("equipment")
+	body_recipe.erase("version")
+	var key := JSON.stringify(body_recipe)
+	return float(key.hash() % 1000) / 1000.0 * BreathingIdle.BREATH_PERIOD
+
+
+## One shared material per skin: N villagers with the same skin are one
+## texture and one material, not N.
+static func _skin_material(skin_name: String) -> StandardMaterial3D:
+	if skin_name in _skin_materials:
+		return _skin_materials[skin_name]
+	var material := StandardMaterial3D.new()
+	material.albedo_texture = load(SKINS_DIR + String(skins_registry()["skins"][skin_name]["texture"]))
+	material.roughness = 0.75
+	_skin_materials[skin_name] = material
+	return material
+
+
+## The baked skins registry (skins/skins.json): names are forward-only,
+## exactly like blend shapes and equipment pieces.
+static func skins_registry() -> Dictionary:
+	if not _skins_registry.is_empty():
+		return _skins_registry
+	var file := FileAccess.open(SKINS_REGISTRY_PATH, FileAccess.READ)
+	if file == null:
+		push_error("CharacterFactory: skins registry missing: %s" % SKINS_REGISTRY_PATH)
+		return { "skins": {} }
+	var parsed = JSON.parse_string(file.get_as_text())
+	if parsed is not Dictionary:
+		push_error("CharacterFactory: skins registry is not a JSON object")
+		return { "skins": {} }
+	_skins_registry = parsed
+	return _skins_registry
+
+
+## Attaches one baked equipment piece to the kit skeleton: its skinned mesh
+## (bind-by-name onto the shared bones) plus the recipe's shape weights, so
+## the garment follows the body's morphs; the piece's equip_hide_* shape
+## tucks the covered skin inward. Validation has already vouched for the
+## piece name.
+## Resolves a recipe's `equipment` into what is worn where, or names the first
+## problem it finds. ONE function, called by both validate() and build(), so a
+## recipe can never be accepted by one and rendered differently by the other —
+## that divergence is exactly the "half-truth" the no-resets law forbids.
+##
+## A region's value is either a single piece name (the shape every shipped
+## recipe uses, and the only shape before #246) or a list of them, at most one
+## per layer. Both stay valid forever.
+##
+## Returns { "problem": String, "by_region": { region: { layer: piece_name } } }.
+static func _resolve_equipment(equipment: Dictionary, version: int = RECIPE_VERSION) -> Dictionary:
+	var out := { "problem": "", "by_region": {} }
+	var registry := equipment_registry()
+	var slots: Array = registry.get("slots", [])
+	var pieces: Dictionary = registry.get("pieces", {})
+	for region: String in equipment:
+		if region not in slots:
+			out["problem"] = "unknown equipment slot '%s' — shipped slots may never be removed" % region
+			return out
+		var value: Variant = equipment[region]
+		# The list form is version 4. A recipe claiming an older version must
+		# not use it: a version-3 client would read the array as one string and
+		# strand the character, so a save may never understate the shape it uses.
+		if value is Array and version < LAYERED_EQUIPMENT_VERSION:
+			out["problem"] = ("slot '%s' uses the layered list form, which is recipe version %d, "
+				+ "but this recipe claims version %d — a save may never understate its own shape"
+				) % [region, LAYERED_EQUIPMENT_VERSION, version]
+			return out
+		var names: Array = value if value is Array else [value]
+		if names.is_empty():
+			out["problem"] = "equipment slot '%s' lists no pieces — omit the slot to wear nothing there" % region
+			return out
+		var worn := {}
+		for entry: Variant in names:
+			if entry is not String:
+				out["problem"] = "equipment slot '%s' must hold a piece name, or a list of piece names" % region
+				return out
+			var piece_name := String(entry)
+			if piece_name not in pieces:
+				out["problem"] = "unknown equipment piece '%s' — shipped pieces may never be removed" % piece_name
+				return out
+			var piece: Dictionary = pieces[piece_name]
+			if String(piece.get("slot", "")) != region:
+				out["problem"] = "piece '%s' does not go in slot '%s'" % [piece_name, region]
+				return out
+			var layer := String(piece.get("layer", ""))
+			if layer == "base":
+				out["problem"] = ("piece '%s' is on the base layer, which the kit composes; "
+					+ "recipes cannot remove or override it") % piece_name
+				return out
+			if layer not in LAYERS:
+				out["problem"] = ("piece '%s' has layer '%s', which is outside the closed set %s — "
+					+ "the kit cannot place it") % [piece_name, layer, str(LAYERS)]
+				return out
+			if layer in worn:
+				out["problem"] = ("slot '%s' holds two '%s' pieces ('%s' and '%s') — a layer covers a "
+					+ "region once, so the second would silently win") % [region, layer, worn[layer], piece_name]
+				return out
+			worn[layer] = piece_name
+		out["by_region"][region] = worn
+	return out
+
+
+## The pieces to actually build, in render order: the kit's implicit base
+## garment first, then every recipe-selected clothing piece and the armour worn
+## over it, and within a layer the KIT's own slot order.
+## Order therefore depends on the kit, never on the order a save happened to
+## serialise its keys in — two saves of the same outfit build identically.
+##
+## Occluded pieces are dropped here rather than built and hidden: a piece that
+## is not visible must not tuck the body's skin inward under it either, or
+## taking the boots off would reveal a dent where the shoes were.
+static func pieces_to_wear(equipment: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	var resolved := _resolve_equipment(equipment)
+	if String(resolved["problem"]) != "":
+		return out
+	var by_region: Dictionary = resolved["by_region"]
+	var registry := equipment_registry()
+	var pieces: Dictionary = registry.get("pieces", {})
+	for piece_name: String in registry.get("base_pieces", []):
+		if piece_name in pieces:
+			out.append(piece_name)
+	for layer: String in LAYERS:
+		if layer == "base":
+			continue
+		for region: String in registry.get("slots", []):
+			if region not in by_region:
+				continue
+			var worn: Dictionary = by_region[region]
+			if layer not in worn:
+				continue
+			var piece_name := String(worn[layer])
+			if not _is_occluded(piece_name, worn, pieces):
+				out.append(piece_name)
+	return out
+
+
+## Is this piece hidden by something else worn in the SAME region? The rule is
+## kit DATA (`occluded_by` names layers), never a per-asset special case: cloth
+## shoes name the armour layer, so boots hide them — and eyewear will name it
+## the same way, so a helm hides it without a line of this code changing.
+static func _is_occluded(piece_name: String, worn_in_region: Dictionary, pieces: Dictionary) -> bool:
+	var piece: Dictionary = pieces[piece_name]
+	var occluders: Array = piece.get("occluded_by", [])
+	if occluders.is_empty():
+		return false
+	var own_layer := String(piece.get("layer", ""))
+	for other_layer: String in worn_in_region:
+		if other_layer != own_layer and other_layer in occluders:
+			return true
+	return false
+
+
+static func _equip_piece(skeleton: Skeleton3D, body_mesh: MeshInstance3D, piece_name: String, shapes: Dictionary) -> void:
+	var piece: Dictionary = equipment_registry()["pieces"][piece_name]
+	var packed: PackedScene = load(EQUIPMENT_DIR + String(piece["scene"]))
+	if packed == null:
+		push_error("CharacterFactory: equipment scene missing: %s" % piece["scene"])
+		return
+	var scene := packed.instantiate() as Node3D
+	var piece_mesh := find_skinned_mesh(find_skeleton(scene))
+	if piece_mesh == null:
+		push_error("CharacterFactory: no skinned mesh in equipment scene %s" % piece["scene"])
+		scene.free()
+		return
+	piece_mesh.get_parent().remove_child(piece_mesh)
+	piece_mesh.owner = null
+	piece_mesh.name = EQUIP_PREFIX + piece_name
+	if piece_name == "loincloth_ragged" and RaggedDrape.enabled():
+		piece_mesh.set_meta(RaggedDrape.SOURCE_META, piece_mesh.mesh)
+		if RaggedDrape.refinement_enabled():
+			body_mesh.set_meta(RaggedDrape.SKIN_SOURCE_META, body_mesh.mesh)
+			body_mesh.mesh = RaggedDrape.waist_skin(body_mesh.mesh as ArrayMesh)
+	if piece_name == "loincloth_ragged" and RaggedCloth.enabled():
+		var source := piece_mesh.get_active_material(0) as StandardMaterial3D
+		if source != null:
+			piece_mesh.set_surface_override_material(0, RaggedCloth.material(source))
+	skeleton.add_child(piece_mesh)
+	scene.free()
+	for shape_name: String in shapes:
+		var idx := piece_mesh.find_blend_shape_by_name(shape_name)
+		if idx >= 0:
+			piece_mesh.set_blend_shape_value(idx, shapes[shape_name])
+	if piece_mesh.has_meta(RaggedDrape.SOURCE_META):
+		RaggedDrape.sync_shape(piece_mesh)
+	if piece.has("hide_shape"):
+		var hide_idx := body_mesh.find_blend_shape_by_name(String(piece["hide_shape"]))
+		if hide_idx >= 0:
+			body_mesh.set_blend_shape_value(hide_idx, 1.0)
+
+
+## The baked equipment registry (equipment/equipment.json): slots and pieces
+## are stable forward-only names, exactly like blend shapes. Cached — the
+## registry only changes with the committed kit.
+static func equipment_registry() -> Dictionary:
+	if not _equipment_registry.is_empty():
+		return _equipment_registry
+	var file := FileAccess.open(EQUIPMENT_REGISTRY_PATH, FileAccess.READ)
+	if file == null:
+		push_error("CharacterFactory: equipment registry missing: %s" % EQUIPMENT_REGISTRY_PATH)
+		return { "slots": [], "pieces": {} }
+	var parsed = JSON.parse_string(file.get_as_text())
+	if parsed is not Dictionary:
+		push_error("CharacterFactory: equipment registry is not a JSON object")
+		return { "slots": [], "pieces": {} }
+	_equipment_registry = parsed
+	return _equipment_registry
+
+
+## Drives one blend shape across the body AND every equipped piece that
+## carries it — the character creator's live sliders go through here.
+static func set_shape_weight(instance: Node3D, shape_name: String, value: float) -> void:
+	var skeleton := find_skeleton(instance)
+	if skeleton == null:
+		return
+	for child in skeleton.get_children():
+		if child is not MeshInstance3D:
+			continue
+		var idx := (child as MeshInstance3D).find_blend_shape_by_name(shape_name)
+		if idx >= 0:
+			(child as MeshInstance3D).set_blend_shape_value(idx, value)
+			if child.has_meta(RaggedDrape.SOURCE_META) and RaggedDrape.refinement_enabled():
+				RaggedDrape.sync_shape(child as MeshInstance3D)
+
+
+## The weapon socket on a hand bone ("hand_l"/"hand_r"): a BoneAttachment3D
+## that follows the bone — weapons and tools parent under it. Created on
+## first use, stable and reusable after.
+static func weapon_socket(instance: Node3D, hand_bone: String) -> BoneAttachment3D:
+	var skeleton := find_skeleton(instance)
+	if skeleton == null or skeleton.find_bone(hand_bone) < 0:
+		push_error("CharacterFactory: no bone '%s' for a weapon socket" % hand_bone)
+		return null
+	var socket_name := "Socket_" + hand_bone
+	var existing := skeleton.get_node_or_null(NodePath(socket_name))
+	if existing is BoneAttachment3D:
+		return existing
+	var socket := BoneAttachment3D.new()
+	socket.name = socket_name
+	skeleton.add_child(socket)
+	socket.bone_name = hand_bone
+	return socket
+
+
+## Full validation against the kit: "" when the recipe is applicable, else a
+## human-readable reason. Rejecting future versions outright is deliberate —
+## silently skipping unknown fields would render a character that is not what
+## its recipe says (a forward-compat lie).
+static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: MeshInstance3D) -> String:
+	var version_problem := HISTORICAL_KIT.recipe_version_problem(recipe, RECIPE_VERSION)
+	if version_problem != "":
+		return version_problem
+	var version := int(recipe["version"])
+	for field: String in recipe:
+		if field in RECIPE_FIELDS:
+			continue
+		if field in RECIPE_FIELDS_V2 and version >= 2:
+			continue
+		if field in RECIPE_FIELDS_V3 and version >= 3:
+			continue
+		return "unknown recipe field '%s' — this client cannot render it, refusing a half-truth" % field
+	if recipe.has("shapes") and recipe["shapes"] is not Dictionary:
+		return "shapes must be a dictionary of shape name -> weight"
+	for shape_key: Variant in recipe.get("shapes", {}):
+		if shape_key is not String:
+			return "shapes keys must be shape names"
+		var shape_name := String(shape_key)
+		if mesh_instance.find_blend_shape_by_name(shape_name) < 0:
+			return "unknown blend shape '%s' — shipped kit shapes may never be removed" % shape_name
+		if shape_name.begins_with(HIDE_SHAPE_PREFIX):
+			return "shape '%s' is composition plumbing, not a recipe shape" % shape_name
+		var weight: Variant = recipe["shapes"][shape_name]
+		if not (weight is int or weight is float) or not is_finite(float(weight)):
+			return "blend shape '%s' weight must be a finite number" % shape_name
+	for field: String in GUARDED_BONE_KEYS:
+		if recipe.has(field) and recipe[field] is not Dictionary:
+			return "%s must be a dictionary of bone name -> factor" % field
+		for bone_key: Variant in recipe.get(field, {}):
+			if bone_key is not String:
+				return "%s keys must be bone names" % field
+			var key := String(bone_key)
+			if key not in (GUARDED_BONE_KEYS[field] as Array):
+				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
+			if _bones_for(skeleton, key).is_empty():
+				return "unknown bone '%s' in %s" % [key, field]
+			var factor: Variant = recipe[field][key]
+			if not (factor is int or factor is float) or not is_finite(float(factor)):
+				return "bone factor '%s' in %s must be a finite number" % [key, field]
+	if recipe.has("equipment"):
+		if recipe["equipment"] is not Dictionary:
+			return "equipment must be a dictionary of slot -> piece name"
+		var problem := String(_resolve_equipment(recipe["equipment"], version)["problem"])
+		if problem != "":
+			return problem
+	if recipe.has("skin"):
+		if recipe["skin"] is not String:
+			return "skin must be a skins-registry name"
+		if String(recipe["skin"]) not in (skins_registry()["skins"] as Dictionary):
+			return "unknown skin '%s' — shipped skins may never be removed" % recipe["skin"]
+	return ""
+
+
+## Why this build cannot accept `recipe`, or "" when it can.
+##
+## The same judgement [method build] makes, without building anything. It exists
+## because the decision is needed at the SAVE boundary, before any body is built:
+## the writable character creator opens on the strength of "is there a character
+## here?", and answering that without knowing whether the recipe is acceptable
+## opens a first-run creator over an existing save. [validate] needs the
+## kit's skeleton and skinned mesh, so the persistence layer cannot ask the
+## question without a kit — this instantiates one, asks, and frees it.
+##
+## Both paths run the same [validate] call, so they cannot disagree about a
+## recipe; [method build] keeps its own copy because it is already holding the
+## instance it is about to shape.
+##
+## Fails CLOSED. When the kit itself cannot be loaded there is no way to tell an
+## acceptable recipe from an unacceptable one, and answering "acceptable" would
+## let a build that can render nothing overwrite a character it never read.
+static func refusal_reason(recipe: Dictionary) -> String:
+	var packed: PackedScene = load(KIT_SCENE_PATH)
+	if packed == null:
+		return "kit missing: %s" % KIT_SCENE_PATH
+	var instance := packed.instantiate() as Node3D
+	var skeleton := find_skeleton(instance)
+	var mesh_instance := find_skinned_mesh(skeleton)
+	if skeleton == null or mesh_instance == null:
+		instance.free()
+		return "kit has no skeleton or skinned mesh"
+	var problem := validate(recipe, skeleton, mesh_instance)
+	instance.free()
+	return problem
+
+
+## Why this build must not WRITE `recipe`, or "" when it may.
+##
+## Reading and writing deliberately differ at the scalar range boundary. Every
+## v1..v4 client accepted arbitrary finite numeric deformation values, so those
+## documents remain readable forever under the no-resets law. A new writer has
+## no compatibility reason to originate singular or unbounded values, but an
+## ordinary edit must still preserve an exact legacy value already present in
+## the target document. `preserved` is that accepted base recipe; an empty base
+## makes the check strict for a first write or a standalone validation.
+##
+## Schema/type/name validation stays shared with the reader; only these
+## authored-value bounds and exact legacy preservation are write-specific.
+static func write_refusal_reason(
+		recipe: Dictionary, preserved: Dictionary = {}) -> String:
+	var problem := refusal_reason(recipe)
+	if problem != "":
+		return problem
+	for shape_name: String in recipe.get("shapes", {}):
+		var weight := float(recipe["shapes"][shape_name])
+		if (
+				(weight < SHAPE_WEIGHT_MIN or weight > SHAPE_WEIGHT_MAX)
+				and not _preserves_deformation_value(
+					preserved, "shapes", shape_name, weight)):
+			return "blend shape '%s' weight must be between %s and %s" % [
+				shape_name, SHAPE_WEIGHT_MIN, SHAPE_WEIGHT_MAX]
+	for field: String in GUARDED_BONE_KEYS:
+		for key: String in recipe.get(field, {}):
+			var factor := float(recipe[field][key])
+			if (
+					(factor < BONE_FACTOR_MIN or factor > BONE_FACTOR_MAX)
+					and not _preserves_deformation_value(
+						preserved, field, key, factor)):
+				return "bone factor '%s' in %s must be between %s and %s" % [
+					key, field, BONE_FACTOR_MIN, BONE_FACTOR_MAX]
+	return ""
+
+
+## Whether an out-of-range candidate value is the exact finite scalar this
+## accepted base already carried. Only exact preservation is grandfathered:
+## adding, changing, or worsening an out-of-range value remains a refused write.
+static func _preserves_deformation_value(
+		preserved: Dictionary, field: String, key: String, candidate: float) -> bool:
+	var values: Variant = preserved.get(field)
+	if values is not Dictionary or not (values as Dictionary).has(key):
+		return false
+	var existing: Variant = (values as Dictionary)[key]
+	return (
+		(existing is int or existing is float)
+		and is_finite(float(existing))
+		and float(existing) == candidate
+	)
+
+
+## Loads a recipe JSON from disk; null on parse failure (with an error).
+static func load_recipe(path: String) -> Variant:
+	return HISTORICAL_KIT.load_recipe_object(path, "CharacterFactory")
+
+
+## Order-stable fingerprint of a built character: skeleton global rests plus
+## the CPU-evaluated morph mix of EVERY skinned mesh under the skeleton (body
+## and equipped pieces, name-sorted). Headless CI has no GPU, so the mix
+## (base + sum of w * delta) is reproduced from the imported blend-shape
+## arrays; NORMALIZED mode stores absolute targets.
+static func fingerprint(instance: Node3D) -> String:
+	var skeleton := find_skeleton(instance)
+	if skeleton == null or find_skinned_mesh(skeleton) == null:
+		return "no-skeleton-or-mesh"
+	var ctx := HISTORICAL_KIT.rest_hash_context(skeleton)
+	var names := PackedStringArray()
+	var meshes := {}
+	for child in skeleton.get_children():
+		if child is MeshInstance3D and (child as MeshInstance3D).skin != null:
+			names.append(String(child.name))
+			meshes[String(child.name)] = child
+	names.sort()
+	var total_verts := 0
+	for mesh_name in names:
+		ctx.update(mesh_name.to_utf8_buffer())
+		var mixed := HISTORICAL_KIT.mixed_vertices(meshes[mesh_name])
+		total_verts += mixed.size()
+		if not mixed.is_empty():
+			ctx.update(mixed.to_byte_array())
+	# The skin changes no geometry but IS the character's identity too.
+	var skin_bytes := String(instance.get_meta("skin", "")).to_utf8_buffer()
+	if not skin_bytes.is_empty():
+		ctx.update(skin_bytes)
+	return "bones=%d meshes=%d verts=%d sha256=%s" % [
+		skeleton.get_bone_count(), names.size(), total_verts, ctx.finish().hex_encode()]
+
+## CPU linear-blend skinning of a MeshInstance3D against its skeleton's
+## current global poses. Returns the deformed vertex stream, surface-ordered.
+## `HISTORICAL_KIT.mixed_vertices` answers "what shape is this mesh in its own
+## space"; this answers "where does that shape actually land once the skeleton
+## moves" — which is what an equipment piece has to agree with to sit on the
+## body.
+static func cpu_skin(skel: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var skin := mi.skin
+	if skin == null:
+		return out
+	# Per-bind deform matrix: global pose composed with the original inverse
+	# bind (never regenerate the binds — that would cancel the rest edits).
+	var deform: Array[Transform3D] = []
+	for b in skin.get_bind_count():
+		var bone := skin.get_bind_bone(b)
+		if bone < 0:
+			bone = skel.find_bone(skin.get_bind_name(b))
+		deform.append(skel.get_bone_global_pose(bone) * skin.get_bind_pose(b))
+	for s in mi.mesh.get_surface_count():
+		var arrays := mi.mesh.surface_get_arrays(s)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+		var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+		if bones.is_empty() or weights.is_empty():
+			out.append_array(verts)
+			continue
+		var influences := bones.size() / verts.size()
+		for v in verts.size():
+			var p := Vector3.ZERO
+			for k in influences:
+				var wgt := weights[v * influences + k]
+				if wgt > 0.0:
+					p += deform[bones[v * influences + k]] * verts[v] * wgt
+			out.append(p)
+	return out
+
+
+static func find_skeleton(node: Node) -> Skeleton3D:
+	return HISTORICAL_KIT.find_skeleton(node)
+
+
+## The BODY mesh — equipment meshes (Equip_ prefix) are deliberately skipped.
+static func find_skinned_mesh(skeleton: Skeleton3D) -> MeshInstance3D:
+	return HISTORICAL_KIT.find_skinned_mesh(skeleton, EQUIP_PREFIX)
+
+
+## A recipe bone key is an exact bone name or a bare name with _l/_r variants.
+static func _bones_for(skeleton: Skeleton3D, key: String) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var exact := skeleton.find_bone(key)
+	if exact >= 0:
+		out.append(exact)
+		return out
+	for suffix in ["_l", "_r"]:
+		var i := skeleton.find_bone(key + suffix)
+		if i >= 0:
+			out.append(i)
+	return out
+
+
+## Uniform girth around one bone; immediate children exactly compensated
+## (basis x 1/g, origin / g) so joints stay put and descendants keep size.
+## Uniform-only keeps every rest TRS-representable (poses are TRS; shear in a
+## rest is silently dropped at reset_bone_poses and the skin lies).
+static func _apply_girth(skeleton: Skeleton3D, bone: int, girth: float) -> void:
+	var rest := skeleton.get_bone_rest(bone)
+	skeleton.set_bone_rest(bone, Transform3D(rest.basis * Basis.from_scale(Vector3.ONE * girth), rest.origin))
+	for child in skeleton.get_bone_children(bone):
+		var child_rest := skeleton.get_bone_rest(child)
+		skeleton.set_bone_rest(child, Transform3D(
+			child_rest.basis * Basis.from_scale(Vector3.ONE / girth), child_rest.origin / girth))
+
+
+## Moves a joint along its offset from the parent joint: pushing upperarm out
+## widens the shoulders; pushing hand out lengthens the forearm.
+static func _scale_joint_origin(skeleton: Skeleton3D, bone: int, factor: float) -> void:
+	var rest := skeleton.get_bone_rest(bone)
+	skeleton.set_bone_rest(bone, Transform3D(rest.basis, rest.origin * factor))
+
+
+## Rotates a bone's rest so its +Y (the bone direction) swings toward world
+##-Y by `deg` — a world-space rotation conjugated into bone space. Pure
+## rotation: no shear can enter the rest (the TRS law). The global rest is
+## composed manually — reading engine globals mid-edit desyncs the caches
+## (Godot 4.7, proven during the Phase 0 art-pipeline work).
+static func _hang_toward_down(skeleton: Skeleton3D, bone: int, deg: float) -> void:
+	if bone < 0:
+		push_error("CharacterFactory: arm bone not found")
+		return
+	var global_rest := _composed_global_rest(skeleton, bone)
+	var dir := global_rest.basis.y.normalized()
+	var axis := dir.cross(Vector3.DOWN)
+	if axis.length_squared() < 0.000001:
+		return
+	_rotate_rest(skeleton, bone, global_rest, axis, deg)
+
+
+## Shifts the body's weight onto one leg (#237). Runs AFTER the arm hang and
+## after every recipe bone edit, so it composes on top of whatever girth,
+## scale and joint push this particular body carries — each rotation is
+## applied relative to the bone's CURRENT rest, never as an absolute basis,
+## which is what keeps it correct across the extreme morph sliders.
+##
+## Bone order matters only in that every edit here is relative; the pelvis
+## roll is cancelled at the thighs rather than at the feet, so the legs stay
+## plumb while the hips tilt.
+static func _apply_contrapposto(skeleton: Skeleton3D) -> void:
+	var roll := func(bone_name: String, deg: float) -> void:
+		_rotate_rest_world(
+			skeleton, skeleton.find_bone(bone_name), Vector3.FORWARD, STANCE_ROLL_SIGN * deg
+		)
+	# Hips tilt (engaged hip UP), legs stay plumb.
+	roll.call("pelvis", HIP_HIKE_DEG)
+	for thigh in ["thigh_l", "thigh_r"]:
+		roll.call(thigh, THIGH_PLUMB_DEG)
+	# The free leg carries nothing: out AWAY from the midline, and bent.
+	#
+	# NOT via `roll`: that helper encodes "raise the engaged side", and swinging
+	# the right leg outward is a different intent that happens to need the
+	# opposite sign on the same axis. Bundling the two under one sign is exactly
+	# how the first version ended up adducting the free leg across the midline.
+	_rotate_rest_world(
+		skeleton, skeleton.find_bone("thigh_r"), Vector3.FORWARD, FREE_LEG_ABDUCT_DEG
+	)
+	_rotate_rest_world(
+		skeleton, skeleton.find_bone("calf_r"), Vector3.RIGHT, FREE_KNEE_BEND_DEG
+	)
+	# Torso counter-curves so the shoulder line opposes the hip line.
+	for spine in ["spine_01", "spine_02", "spine_03"]:
+		roll.call(spine, SPINE_COUNTER_DEG)
+	# Head back to level — MEASURED, not derived and certainly not hand-picked.
+	#
+	# Summing the pelvis and spine angles looks like it should work and does
+	# not: these are rotations about a world axis conjugated into each bone's
+	# own space, and rotations do not commute, so the accumulated roll at the
+	# head is not the sum of its parts (the arithmetic said 0, the rig said
+	# 2.7 degrees). Reading the head's actual orientation and cancelling it is
+	# correct whatever the chain above happens to do, including after a future
+	# spine change.
+	_level_head(skeleton)
+	# The unweighted side's arm hangs a little freer. _hang_toward_down rotates
+	# TOWARD vertical, so a negative angle is what moves this arm away from the
+	# torso rather than tighter into it.
+	_hang_toward_down(
+		skeleton, skeleton.find_bone("upperarm_r"), -FREE_ARM_EXTRA_HANG_DEG
+	)
+
+
+## Cancels whatever side-roll the stance chain left in the head, by rotating
+## the neck. Measures the head's real global rest orientation, so it stays
+## correct if the pelvis or spine angles ever change.
+static func _level_head(skeleton: Skeleton3D) -> void:
+	var neck := skeleton.find_bone("neck_01")
+	var head := skeleton.find_bone("head")
+	if neck < 0 or head < 0:
+		push_error("CharacterFactory: neck or head bone not found")
+		return
+	var up := _composed_global_rest(skeleton, head).basis.y.normalized()
+	# Roll is the head's lean within the frontal plane: how far its up-axis has
+	# swung toward +X off vertical. A positive rotation about FORWARD swings it
+	# further that way, so cancelling takes the negative.
+	var roll_rad := atan2(up.x, up.y)
+	_rotate_rest_world(skeleton, neck, Vector3.FORWARD, -rad_to_deg(roll_rad))
+
+
+## Rotates a bone's rest by `deg` about a WORLD axis of the caller's choosing —
+## the stance edits use it for the pelvis, spine and neck. Guards the bone and a
+## zero angle, composes the global rest, and hands the rotation itself to
+## [method _rotate_rest], which [method _hang_toward_down] shares.
+static func _rotate_rest_world(
+	skeleton: Skeleton3D, bone: int, world_axis: Vector3, deg: float
+) -> void:
+	if bone < 0:
+		push_error("CharacterFactory: stance bone not found")
+		return
+	if is_zero_approx(deg):
+		return
+	var global_rest := _composed_global_rest(skeleton, bone)
+	_rotate_rest(skeleton, bone, global_rest, world_axis, deg)
+
+
+## Rotates `bone`'s rest by `deg` about a WORLD axis, conjugated through the
+## bone's composed `global_rest` into bone space. Pure rotation, so no shear can
+## enter the rest (the TRS law); the caller composes `global_rest` manually
+## because reading engine globals mid-edit desyncs Godot 4.7's caches. Every rest
+## rotation in this factory ends here.
+static func _rotate_rest(
+	skeleton: Skeleton3D, bone: int, global_rest: Transform3D, world_axis: Vector3, deg: float
+) -> void:
+	var world_rot := Basis(world_axis.normalized(), deg_to_rad(deg))
+	var local_rot := global_rest.basis.inverse() * (world_rot * global_rest.basis)
+	var rest := skeleton.get_bone_rest(bone)
+	skeleton.set_bone_rest(bone, Transform3D(rest.basis * local_rot, rest.origin))
+
+
+static func _composed_global_rest(skeleton: Skeleton3D, bone: int) -> Transform3D:
+	var out := skeleton.get_bone_rest(bone)
+	var parent := skeleton.get_bone_parent(bone)
+	while parent >= 0:
+		out = skeleton.get_bone_rest(parent) * out
+		parent = skeleton.get_bone_parent(parent)
+	return out

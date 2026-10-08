@@ -1,0 +1,9 @@
+# Native historical character oracle
+
+The two GDScript references are frozen from reviewed main `6b878853b7b75745cb86bee01d6c04c9ee3fe3cf`: `client/scripts/character_factory.gd` and `client/scripts/kit_assembly.gd`. They are test resources, with no global class names. Factory calls point to the frozen KitAssembly. The only behavioral adaptation skips empty hashing buffers, which contribute no bytes and otherwise trigger an engine diagnostic. All rest, skin, equipment and fingerprint operations remain original.
+
+`data/stature_historical_inputs.json` pins the derived references, shared idle/cloth helpers, historical kit assets and import sidecars, registries, presets and goldens. The trusted stature scene pins that manifest and requires every input byte to match before constructing a reference. Ragged previews are temporarily disabled and restored. Recipe paths belong to the test.
+
+Before any candidate parsing or construction, the frozen factory parses all eight historical recipes and captures their independent original fingerprints on the same native runtime as the candidate. Candidate parsing must match the frozen recipe, and candidate construction receives a separate deep copy whose contents must remain unchanged. Its fingerprint function hashes both characters; the candidate production fingerprint must also equal that observation. Equality is exact, with no float quantization. This catches changed native historical identities without mistaking macOS/Linux floating-point differences for a reader regression. The captured macOS ARM64 Godot 4.7.1 hashes remain additional anchors. Root transforms are asserted separately because the raw fingerprint does not include them.
+
+A future historical input change requires another reviewed preparation; the candidate cannot redefine this baseline.

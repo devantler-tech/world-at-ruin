@@ -36,3 +36,7 @@ merged delivery, immutable published read metadata, retained whole-app readback 
 writer activation. A local test helper or an advertised ceiling never substitutes for the retained
 artifact's actual behavior. There is no new creator control, production vocabulary or persisted
 writer in this preparation.
+
+## Native historical identities
+
+Historical preservation uses an immutable, namespaced Factory/KitAssembly reference from reviewed base `6b878853`. Its input checksum manifest includes the shared idle/cloth helpers, kit assets and import settings, registries and all eight historical recipe inputs. The frozen implementation hashes both reference and candidate bodies on the same native runtime, and the production hash must agree. This preserves exact native identities without comparing Linux floats with macOS byte hashes; the captured macOS ARM64 Godot 4.7.1 hashes remain additional anchors. Preview flags are disabled only during this test and restored on finish.

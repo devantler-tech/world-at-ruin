@@ -4,6 +4,14 @@ extends Node
 
 const EQUIPMENT_ORACLE := preload("res://tests/equipment_visibility_test.gd")
 const PLANNED := "res://tests/data/planned_recipe_v5.json"
+const HISTORICAL := preload("res://tests/historical/character_factory_v4.gd")
+const HISTORICAL_INPUTS := "res://tests/data/stature_historical_inputs.json"
+const HISTORICAL_INPUTS_SHA256 := "889296c755569fc46905fd6c60fa751bb0ed97a620d7d7b02094c730e7042def"
+const PRESET_DIR := "res://recipes/"
+const HISTORICAL_FLAGS := ["WAR_RAGGED_CLOTH_DRAPE", "WAR_RAGGED_WRAP_REFINEMENT", "WAR_RAGGED_CLOTH_DETAIL"]
+var _art_flags := {}
+var _historical_recipes := {}
+var _historical_fingerprints := {}
 var _probe := "user://stature_reader_probe.process-%d.json" % OS.get_process_id()
 const FINGERPRINTS := {
 	"wanderer": "d135169b7c475ad79a63cb99acb7405e3828795ebc0f7a19e504f9d7276608c8",
@@ -23,6 +31,17 @@ var _save: SaveIsolation
 
 
 func _ready() -> void:
+	for flag: String in HISTORICAL_FLAGS:
+		_art_flags[flag] = OS.get_environment(flag)
+		OS.set_environment(flag, "")
+	_check_historical_inputs()
+	if _failed:
+		_finish()
+		return
+	_prepare_historical_references()
+	if _failed:
+		_finish()
+		return
 	var factory_script := load("res://scripts/character_factory.gd") as GDScript
 	var constants: Dictionary = factory_script.get_script_constant_map()
 	_check(constants.get("RECIPE_WRITE_VERSION", -1) == 4,
@@ -48,18 +67,24 @@ func _ready() -> void:
 	_check(manifest["save_schema"]["writes"] == 4, "manifest keeps recipe writes v4")
 	_check(manifest["save_schema"]["capability"] == UpdateManifest.SAVE_CAPABILITY_WRITES, "manifest exposes the accepted writer stage")
 	for name: String in FINGERPRINTS:
-		var recipe: Dictionary = CharacterFactory.load_recipe(CharacterCreator.PRESET_DIR + name + ".json")
-		var built := CharacterFactory.build(recipe)
+		var recipe: Dictionary = _historical_recipes[name]
+		_check(CharacterFactory.load_recipe(PRESET_DIR + name + ".json") == recipe, "historical preset parser preserves original input: %s" % name)
+		var candidate_input := recipe.duplicate(true)
+		var built := CharacterFactory.build(candidate_input)
+		_check(candidate_input == recipe, "building historical preset cannot mutate its recipe: %s" % name)
 		_check(built != null, "historical preset builds: %s" % name)
 		if built != null:
-			_check(CharacterFactory.fingerprint(built).ends_with(FINGERPRINTS[name]), "historical fingerprint stays exact: %s" % name)
+			_check_historical_fingerprint(built, name)
 			built.free()
 	for path: String in GOLDEN_FINGERPRINTS:
-		var golden: Dictionary = CharacterFactory.load_recipe(path)
-		var historical := CharacterFactory.build(golden)
+		var golden: Dictionary = _historical_recipes[path]
+		_check(CharacterFactory.load_recipe(path) == golden, "historical golden parser preserves original input: %s" % path)
+		var candidate_input := golden.duplicate(true)
+		var historical := CharacterFactory.build(candidate_input)
+		_check(candidate_input == golden, "building historical golden cannot mutate its recipe: %s" % path)
 		_check(historical != null, "historical golden builds: %s" % path)
 		if historical != null:
-			_check(CharacterFactory.fingerprint(historical).ends_with(GOLDEN_FINGERPRINTS[path]), "golden fingerprint stays exact: %s" % path)
+			_check_historical_fingerprint(historical, path)
 			historical.free()
 	var planned: Dictionary = CharacterFactory.load_recipe(PLANNED)
 	if CharacterFactory.RECIPE_VERSION == 4:
@@ -71,6 +96,44 @@ func _ready() -> void:
 	_finish()
 
 
+func _check_historical_inputs() -> void:
+	_check(FileAccess.get_sha256(HISTORICAL_INPUTS) == HISTORICAL_INPUTS_SHA256, "historical input manifest stays exact")
+	if _failed:
+		return
+	var document: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(HISTORICAL_INPUTS))
+	for path: String in document["sha256"]:
+		_check(FileAccess.get_sha256(path) == document["sha256"][path], "historical source/asset input stays exact: %s" % path)
+
+
+func _prepare_historical_references() -> void:
+	# Capture ALL original observations before any candidate parser/build can
+	# mutate shared imported resources. Expectations never come from the candidate.
+	var cases := {}
+	for name: String in FINGERPRINTS:
+		cases[name] = {"path": PRESET_DIR + name + ".json", "mac": FINGERPRINTS[name]}
+	for path: String in GOLDEN_FINGERPRINTS:
+		cases[path] = {"path": path, "mac": GOLDEN_FINGERPRINTS[path]}
+	for label: String in cases:
+		var recipe: Dictionary = HISTORICAL.load_recipe(cases[label]["path"])
+		var reference := HISTORICAL.build(recipe.duplicate(true))
+		_check(reference != null, "retained historical factory builds: %s" % label)
+		if reference == null:
+			continue
+		var native_reference := HISTORICAL.fingerprint(reference)
+		_check(reference.position == Vector3.ZERO, "retained historical visual root stays exact: %s" % label)
+		if OS.get_name() == "macOS" and OS.has_feature("arm64") and Engine.get_version_info()["hex"] == 0x040701:
+			_check(native_reference.ends_with(cases[label]["mac"]), "retained macOS fingerprint anchor stays exact: %s" % label)
+		_historical_recipes[label] = recipe
+		_historical_fingerprints[label] = native_reference
+		reference.free()
+
+
+func _check_historical_fingerprint(current: Node3D, label: String) -> void:
+	var observed := HISTORICAL.fingerprint(current)
+	_check(observed == _historical_fingerprints[label], "exact native historical fingerprint stays unchanged: %s" % label)
+	_check(CharacterFactory.fingerprint(current) == observed, "production fingerprint keeps its historical algorithm: %s" % label)
+	_check(current.position == Vector3.ZERO, "historical visual root stays exact: %s" % label)
+
 func _check_expanded_reader(planned: Dictionary) -> void:
 	_check(CharacterFactory.refusal_reason(planned) == "", "planned v5 fixture is readable")
 	if _failed:
@@ -80,7 +143,7 @@ func _check_expanded_reader(planned: Dictionary) -> void:
 			_check(CharacterFactory.refusal_reason({"version": version, "joint_push": {key: 1.1}}) != "", "new leg key cannot hide in old schema")
 	_check(CharacterFactory.refusal_reason({"version": 5, "joint_push": {"spine_01": 1.1}}) != "", "unguarded key stays refused")
 	_check(CharacterFactory.refusal_reason({"version": 6}) != "", "future recipe stays refused")
-	var ordinary: Dictionary = CharacterFactory.load_recipe(CharacterCreator.PRESET_DIR + "wanderer.json")
+	var ordinary: Dictionary = CharacterFactory.load_recipe(PRESET_DIR + "wanderer.json")
 	var absent := ordinary.duplicate(true)
 	absent["version"] = 5
 	var historical := CharacterFactory.build(ordinary)
@@ -267,7 +330,7 @@ func _check_ground_contact() -> void:
 	var labels: Array[String] = []
 	for preset: String in FINGERPRINTS:
 		for factors: Vector2 in [Vector2.ONE, Vector2(0.85, 0.85), Vector2(1.2, 1.2), Vector2(0.85, 1.2), Vector2(1.2, 0.85)]:
-			var recipe: Dictionary = CharacterFactory.load_recipe(CharacterCreator.PRESET_DIR + preset + ".json")
+			var recipe: Dictionary = CharacterFactory.load_recipe(PRESET_DIR + preset + ".json")
 			recipe["equipment"]["feet"] = "boots_worn"
 			if factors != Vector2.ONE:
 				recipe["version"] = 5
@@ -371,6 +434,8 @@ func _fail(message: String) -> void:
 
 
 func _finish() -> void:
+	for flag: String in _art_flags:
+		OS.set_environment(flag, _art_flags[flag])
 	if _failed:
 		_fail("stature reader stage")
 		return
