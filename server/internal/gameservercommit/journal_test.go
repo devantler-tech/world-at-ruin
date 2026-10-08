@@ -16,7 +16,7 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
-const journalFixtureKey = "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8"
+const journalFixtureAddress = "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8"
 
 // journalBinding supplies independently calculated fixture identities rather
 // than deriving expected data from the reader or its digest implementation.
@@ -58,7 +58,7 @@ func (s *journalReply) StorageRead(_ context.Context, reads []*runtime.StorageRe
 // journalRow retains all private Nakama object metadata for boundary controls.
 func journalRow(t *testing.T) *api.StorageObject {
 	t.Helper()
-	return &api.StorageObject{Collection: JournalCollection, Key: journalFixtureKey, UserId: nakamastorage.SystemOwnerID,
+	return &api.StorageObject{Collection: JournalCollection, Key: journalFixtureAddress, UserId: nakamastorage.SystemOwnerID,
 		Version: "journal-version-1", Value: journalJSON(t)}
 }
 
@@ -80,7 +80,7 @@ func TestJournalLoadKeepsEveryShippedSchemaReadable(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("lossy journal: %#v %v", got, err)
 	}
-	if len(storage.reads) != 1 || storage.reads[0].Collection != JournalCollection || storage.reads[0].Key != journalFixtureKey || storage.reads[0].UserID != "" {
+	if len(storage.reads) != 1 || storage.reads[0].Collection != JournalCollection || storage.reads[0].Key != journalFixtureAddress || storage.reads[0].UserID != "" {
 		t.Fatal("reader did not request the exact private system-owned key")
 	}
 	got.Binding.MemberPodUIDs[0], got.Grants[0].UID = "changed", "changed"
