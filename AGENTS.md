@@ -1022,6 +1022,16 @@ everything shipped afterwards is held to.
   guards. [ADR 0028](docs/adr/0028-fence-an-inactive-exact-version-gameserver-mutation.md)
   binds receipts to one frozen UID/version mutation and its process incarnation.
   Changed histories remain unknown; no receipt releases production quarantine.
+  `gameservercommit.Generation` privately owns the complete issued capability set
+  under one immutable open generation observation. It closes preparation and
+  commit admission before networking, and accepts a process-local receipt only
+  after every issued capability has an acknowledged exact storage barrier.
+  Partial proofs leave admission closed without a receipt; barriers are not
+  retried. The real-storage trial includes multiple held writes, canceled callers,
+  mixed allocation outcomes and incomplete-proof controls. Actor membership is
+  attribution, not authenticated exclusive allocator authority. See
+  [ADR 0031](docs/adr/0031-close-the-complete-issued-gameserver-capability-set.md)
+  for the durable journal, recovery and retained-reader activation gates.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
