@@ -3,7 +3,7 @@ extends Node
 ## advance; it must preserve historical characters and keep writers on v4/7.
 
 const PLANNED := "res://tests/data/planned_recipe_v5.json"
-const PROBE := "user://stature_reader_probe.json"
+var _probe := "user://stature_reader_probe.process-%d.json" % OS.get_process_id()
 const FINGERPRINTS := {
 	"wanderer": "d135169b7c475ad79a63cb99acb7405e3828795ebc0f7a19e504f9d7276608c8",
 	"villager": "ed8d7ff6c9b54e020e082fe7dcf20c47f3b50c23fdfacb2e115436cea6f0551c",
@@ -89,6 +89,7 @@ func _check_expanded_reader(planned: Dictionary) -> void:
 	_check_leg_geometry()
 	_check_equipment_fit()
 	_check_writer_preservation(planned, ordinary)
+	_check_reader_only_clear(planned, ordinary)
 	_check_update_metadata()
 	await _check_real_boot(planned, ordinary)
 
@@ -148,19 +149,19 @@ func _height(built: Node3D) -> float:
 
 
 func _check_writer_preservation(planned: Dictionary, ordinary: Dictionary) -> void:
-	PersistenceTestSupport.remove_file(PROBE)
+	PersistenceTestSupport.remove_file(_probe)
 	_check(CharacterCreator.writer_vocabulary_problem({}, planned) != "", "empty creator cannot originate v5 legs")
 	_check(CharacterCreator.writer_vocabulary_problem(ordinary, planned) != "", "ordinary creator cannot originate v5 legs")
-	_check(not CharacterStore.save_to(PROBE, planned), "first save cannot originate reader-only schema or leg keys")
-	_check(not FileAccess.file_exists(PROBE), "refused first write creates no save")
-	_check(CharacterStore.save_to(PROBE, ordinary), "ordinary save stays writable")
-	var before := FileAccess.get_file_as_bytes(PROBE)
-	_check(not CharacterStore.save_to(PROBE, planned), "old save cannot originate v5")
-	_check(FileAccess.get_file_as_bytes(PROBE) == before, "refused expansion leaves old bytes intact")
-	var file := FileAccess.open(PROBE, FileAccess.WRITE)
+	_check(not CharacterStore.save_to(_probe, planned), "first save cannot originate reader-only schema or leg keys")
+	_check(not FileAccess.file_exists(_probe), "refused first write creates no save")
+	_check(CharacterStore.save_to(_probe, ordinary), "ordinary save stays writable")
+	var before := FileAccess.get_file_as_bytes(_probe)
+	_check(not CharacterStore.save_to(_probe, planned), "old save cannot originate v5")
+	_check(FileAccess.get_file_as_bytes(_probe) == before, "refused expansion leaves old bytes intact")
+	var file := FileAccess.open(_probe, FileAccess.WRITE)
 	file.store_string(JSON.stringify(planned, "  ", true, true))
 	file.close()
-	var loaded: Dictionary = CharacterStore.load_from(PROBE)
+	var loaded: Dictionary = CharacterStore.load_from(_probe)
 	_check(loaded == planned, "reader loads planned state with zero loss")
 	var creator := CharacterCreator.new()
 	creator._recipe = loaded.duplicate(true)
@@ -170,41 +171,41 @@ func _check_writer_preservation(planned: Dictionary, ordinary: Dictionary) -> vo
 	creator.free()
 	_check(edited["version"] == 5 and edited["joint_push"] == planned["joint_push"], "ordinary real creator edit preserves v5 and exact new values")
 	_check(CharacterCreator.writer_vocabulary_problem(loaded, edited) == "", "creator allows exact future-value preservation")
-	_check(CharacterStore.save_to(PROBE, edited), "store permits ordinary edit of already-present v5")
-	_check(CharacterStore.load_from(PROBE) == edited, "ordinary edit round-trips every expanded field")
-	before = FileAccess.get_file_as_bytes(PROBE)
+	_check(CharacterStore.save_to(_probe, edited), "store permits ordinary edit of already-present v5")
+	_check(CharacterStore.load_from(_probe) == edited, "ordinary edit round-trips every expanded field")
+	before = FileAccess.get_file_as_bytes(_probe)
 	for key in ["thigh", "calf"]:
 		var changed := edited.duplicate(true)
 		changed["joint_push"][key] = 1.05
 		_check(CharacterCreator.writer_vocabulary_problem(edited, changed) != "", "creator refuses changing reader-only leg value")
-		_check(not CharacterStore.save_to(PROBE, changed), "store refuses changing reader-only leg value")
-		_check(FileAccess.get_file_as_bytes(PROBE) == before, "reader-only value refusal preserves bytes")
+		_check(not CharacterStore.save_to(_probe, changed), "store refuses changing reader-only leg value")
+		_check(FileAccess.get_file_as_bytes(_probe) == before, "reader-only value refusal preserves bytes")
 		var removed := edited.duplicate(true)
 		removed["joint_push"].erase(key)
 		_check(CharacterCreator.writer_vocabulary_problem(edited, removed) != "", "creator refuses removing reader-only leg data")
-		_check(not CharacterStore.save_to(PROBE, removed), "reader-only leg data cannot be removed")
-		_check(FileAccess.get_file_as_bytes(PROBE) == before, "refused removal preserves exact bytes")
+		_check(not CharacterStore.save_to(_probe, removed), "reader-only leg data cannot be removed")
+		_check(FileAccess.get_file_as_bytes(_probe) == before, "refused removal preserves exact bytes")
 	var partial := planned.duplicate(true)
 	partial["joint_push"].erase("calf")
-	file = FileAccess.open(PROBE, FileAccess.WRITE)
+	file = FileAccess.open(_probe, FileAccess.WRITE)
 	file.store_string(JSON.stringify(partial, "  ", true, true))
 	file.close()
-	before = FileAccess.get_file_as_bytes(PROBE)
+	before = FileAccess.get_file_as_bytes(_probe)
 	var partial_edit := partial.duplicate(true)
 	partial_edit["equipment"]["head"] = "relic_goggles"
 	_check(CharacterCreator.writer_vocabulary_problem(partial, partial_edit) == "", "creator preserves a single existing leg key")
-	_check(CharacterStore.save_to(PROBE, partial_edit), "ordinary edit preserves partial expanded state")
-	before = FileAccess.get_file_as_bytes(PROBE)
+	_check(CharacterStore.save_to(_probe, partial_edit), "ordinary edit preserves partial expanded state")
+	before = FileAccess.get_file_as_bytes(_probe)
 	partial_edit["joint_push"]["calf"] = 1.12
 	_check(CharacterCreator.writer_vocabulary_problem(partial, partial_edit) != "", "creator cannot add the missing second leg key")
-	_check(not CharacterStore.save_to(PROBE, partial_edit), "store cannot add the missing second leg key")
-	_check(FileAccess.get_file_as_bytes(PROBE) == before, "partial-state refusal preserves exact bytes")
+	_check(not CharacterStore.save_to(_probe, partial_edit), "store cannot add the missing second leg key")
+	_check(FileAccess.get_file_as_bytes(_probe) == before, "partial-state refusal preserves exact bytes")
 	var schema_only := ordinary.duplicate(true)
 	schema_only["version"] = 5
 	_check(CharacterFactory.write_refusal_reason(schema_only, ordinary) != "", "even an empty schema5 stamp cannot originate")
 	for spec: Array in CharacterCreator.writable_bone_sliders():
 		_check(not (spec[1] == "joint_push" and spec[2] in ["thigh", "calf"]), "new leg controls stay absent from writable UI")
-	PersistenceTestSupport.remove_file(PROBE)
+	PersistenceTestSupport.remove_file(_probe)
 
 
 ## Reuse the existing independent renderer-geometry oracle: morph mix, original
@@ -243,6 +244,29 @@ func _check_equipment_fit() -> void:
 		_check(buried < 0.1, "coincident-body ablation cannot pass the clearance oracle")
 		built.free()
 	oracle.free()
+
+
+func _check_reader_only_clear(planned: Dictionary, ordinary: Dictionary) -> void:
+	var isolation := SaveIsolation.new("user://stature_clear_probe.json")
+	if not isolation.begin():
+		_check(false, "delete probe must isolate every save seam")
+		return
+	var path := CharacterStore.save_path()
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(planned, "  ", true, true))
+	file.close()
+	var before := FileAccess.get_file_as_bytes(path)
+	_check(CharacterStore.load_saved() == planned, "clear probe uses accepted expanded state")
+	CharacterStore.clear()
+	_check(FileAccess.get_file_as_bytes(path) == before, "reader-only delete preserves expanded bytes")
+	_check(FileLock.acquire(path), "refused expanded delete releases its writer lock")
+	FileLock.release(path)
+	file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(ordinary, "  ", true, true))
+	file.close()
+	CharacterStore.clear()
+	_check(not FileAccess.file_exists(path), "ordinary supported deletion remains functional")
+	_check(isolation.real_save_untouched(), "delete probe never touches played state")
 
 
 func _check_update_metadata() -> void:
@@ -331,7 +355,7 @@ func _check_real_boot(planned: Dictionary, ordinary: Dictionary) -> void:
 
 
 func _exit_tree() -> void:
-	PersistenceTestSupport.remove_file(PROBE)
+	PersistenceTestSupport.remove_file(_probe)
 
 
 func _check(condition: bool, message: String) -> void:
