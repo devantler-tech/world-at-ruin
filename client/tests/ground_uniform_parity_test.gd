@@ -30,6 +30,8 @@ const SHARED: Array[String] = [
 	"plates_enabled", "plate_scale",
 	"crack_width", "crack_darkness", "crack_relief",
 	"seam_cavity", "ash_contact", "lip_lift",
+	"region_stone_enabled", "stone_region_sites", "stone_region_profiles",
+	"stone_region_blend_band",
 ]
 
 
@@ -93,7 +95,7 @@ func _declarations(path: String) -> Dictionary:
 		return {"error": "could not read %s, so there is nothing to compare and every check below would pass while checking nothing" % path}
 
 	var declaration := RegEx.new()
-	declaration.compile("^uniform\\s+(?:\\w+\\s+)+?(\\w+)\\s*(?::|=|;|$)")
+	declaration.compile("^uniform\\s+(?:\\w+\\s+)+?(\\w+)\\s*(?::|=|;|\\[|$)")
 	var decls := {}
 	for raw_line: String in shader.code.split("\n"):
 		var line: String = raw_line.strip_edges()
@@ -145,6 +147,7 @@ func _normaliser_self_check() -> String:
 		["uniform float x = 0.5", "uniform float x = .5"],
 		["uniform uint n = 3", "uniform uint n = 3u"],
 		["uniform vec2 v = vec2(0.5, 0.1)", "uniform vec2 v = vec2(.5f, 1e-1f)"],
+		["uniform vec3 sites [ 9 ]", "uniform vec3 sites[9]"],
 	]
 	for pair: Array in same:
 		if _normalise(pair[0]) != _normalise(pair[1]):
@@ -155,6 +158,7 @@ func _normaliser_self_check() -> String:
 		["uniform float x = 130.0", "uniform float x = 131.0"],
 		["uniform float x = 0.5f", "uniform float x = 0.6f"],
 		["uniform float x = .5", "uniform float x = .6"],
+		["uniform vec3 sites[9]", "uniform vec3 sites[8]"],
 	]
 	for pair: Array in different:
 		if _normalise(pair[0]) == _normalise(pair[1]):

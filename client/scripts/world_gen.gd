@@ -95,6 +95,7 @@ var _detail := FastNoiseLite.new()
 var _tint := FastNoiseLite.new()
 var _foliage_density := FastNoiseLite.new()
 var _region_foliage_enabled := false
+var _region_stone_enabled := false
 var _heights := PackedFloat32Array()
 var _terrain_material: ShaderMaterial
 var _ground_plates_enabled := false
@@ -153,6 +154,7 @@ func _ready() -> void:
 	# Default-off preview for #612. Keep the literal here: preview-flags.test.sh
 	# proves every registered capture flag has an executable client consumer.
 	_region_foliage_enabled = OS.get_environment("WAR_REGION_FOLIAGE") == "1"
+	_region_stone_enabled = OS.get_environment("WAR_REGION_STONE") == "1"
 	_noise.seed = WORLD_SEED
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_noise.frequency = 0.011
@@ -390,6 +392,7 @@ func _build_terrain() -> void:
 	# boot is unchanged.
 	_ground_plates_enabled = OS.get_environment("WAR_GROUND_PLATES") == "1"
 	mat.set_shader_parameter("plates_enabled", _ground_plates_enabled)
+	GroundRegions.configure_stone(mat, _region_sites, _region_stone_enabled)
 	_terrain_material = mat
 	mesh.surface_set_material(0, mat)
 
@@ -446,7 +449,8 @@ func _build_ground_plates() -> void:
 	var geometry := ExposedSlabGeometry.new()
 	var result := geometry.build(
 		ExposedSlabField.new(), WORLD_SEED, SIZE, QUADS,
-		surface_height_at, surface_normal_at, rendered_ground_color_at, cave_protects)
+		surface_height_at, surface_normal_at, rendered_ground_color_at, cave_protects,
+		_stone_profile if _region_stone_enabled else Callable())
 	_ground_plates_stats = result[&"stats"] as Dictionary
 	var mesh := result[&"mesh"] as ArrayMesh
 	if mesh == null:
@@ -522,8 +526,10 @@ func _build_ground_plate_rubble() -> void:
 ## The overlay is built on the first `true` if the world booted with the flag
 ## off; afterwards it is only shown or hidden. The ordinary game never calls
 ## this: it reads `WAR_GROUND_PLATES` once at generation.
-func set_ground_plates_enabled(on: bool) -> void:
+func set_ground_plates_enabled(on: bool, region_stone: Variant = null) -> void:
 	_ground_plates_enabled = on
+	if region_stone is bool:
+		_set_region_stone_enabled(bool(region_stone))
 	if _terrain_material != null:
 		_terrain_material.set_shader_parameter("plates_enabled", on)
 	# The cave's terrain-contact ring carries the same uniform and must not be
@@ -548,6 +554,34 @@ func set_ground_plates_enabled(on: bool) -> void:
 			if collider is CollisionShape3D:
 				(collider as CollisionShape3D).set_deferred(&"disabled", not on)
 	_refresh_foliage()
+
+
+## Regional opt-in rebuilds the one overlay and its collision from the same field.
+## The base terrain, regional palette and original foliage inventory never move.
+func _set_region_stone_enabled(on: bool) -> void:
+	if on == _region_stone_enabled:
+		return
+	_region_stone_enabled = on
+	GroundRegions.configure_stone(_terrain_material, _region_sites, on)
+	for cave in find_children("*", "CaveSystemGen", true, false):
+		(cave as CaveSystemGen).configure_region_stone(_region_sites, on)
+	for name: String in [GROUND_PLATES_NODE, GROUND_PLATES_BODY]:
+		var old := get_node_or_null(name)
+		if old != null:
+			remove_child(old)
+			old.free()
+	_ground_plate_tops.clear()
+	_ground_plate_index.clear()
+	_ground_plate_rubble.clear()
+	_ground_plate_aprons.clear()
+	_ground_plates_stats.clear()
+	if _ground_plates_enabled:
+		_build_ground_plates()
+	_refresh_foliage()
+
+
+func _stone_profile(x: float, z: float) -> Vector2:
+	return GroundRegions.stone_for(_region_sites, x, z)
 
 
 ## Height of the surface a body walks on at world (x, z): the top of a raised
@@ -814,6 +848,7 @@ func _build_starter_cave() -> void:
 	cave.seed_value = CAVE_SEED
 	cave.transform = _cave_transform
 	add_child(cave)
+	cave.configure_region_stone(_region_sites, _region_stone_enabled)
 	# The generator carves against LOCAL terrain heights so the mouth zone
 	# blends the cave into the real hillside.
 	var to_world := _cave_transform

@@ -835,8 +835,27 @@ everything shipped afterwards is held to.
   convergence and the unchanged base terrain, plate collision and foliage records.
   client/tools/plate_rubble_capture.tscn captures walking and grazing before/after/control
   arms of one real boot; use 1280×720, all three redirected save seams and
-  WAR_PLATE_RUBBLE_SHOT_DIR. The art, regional exposure and GPU activation gates remain open.
+  WAR_PLATE_RUBBLE_SHOT_DIR. The art and GPU activation gates remain open.
   Inspect the [same-build close frames and fresh-boot controls](docs/evidence/issue-549-slab-rubble/README.md).
+  **Regions decide exposure in a separate opt-in (#550, ADR 0030):** exact
+  WAR_REGION_STONE=1 together with WAR_GROUND_PLATES=1 uses authored density and
+  scouring tendencies from GroundRegions. The existing maximum-per-region blend
+  supplies continuous thresholds to the slab site, corners and outward ash
+  samples, plus the shared GPU include used by terrain and cave contact.
+  Stable identities, substance hashes and lip thickness do not depend on region
+  ownership. Changing the profile rebuilds the one overlay and collision; cave
+  rebuilds retain both live opt-ins. Regional-only and malformed opt-ins leave
+  the ordinary terrain path intact. region_stone_profile_test and
+  region_stone_world_test hold boundary blends, actual normalized coverage,
+  fresh/live equality, material readback and unchanged base terrain/foliage.
+  client/tools/region_stone_capture.tscn captures committed Bonepale/Cinderreach
+  vantages, repeat/restore floors and a numerically checked plates-off arm.
+  Use 1280×720, three redirected save seams and WAR_REGION_STONE_SHOT_DIR.
+  region_stone_shader_probe.tscn checks six CPU/GPU profile samples within one
+  RGB8 quantum; it does not certify full exposure parity or GPU frame time.
+  Inspect the [regional frames, controls and remaining art gap](docs/evidence/issue-550-regional-stone/README.md).
+  The experiment remains default-off; #1287 owns its decision and flag retirement
+  by 2026-11-07. Repeated tiled shapes, edge wear and contact shadows still need work.
   The overlay keeps out
   of `cave_protects`. `WorldGen.set_ground_plates_enabled()` flips the terrain uniform, the cave's terrain-contact
   uniform and the overlay together in a running world so a measurement tool can compare both

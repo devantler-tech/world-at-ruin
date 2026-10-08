@@ -1,0 +1,11 @@
+{
+  "version": "next",
+  "date": "2026-10-08",
+  "title": "Stone belongs to its region",
+  "notes": [
+    "An optional regional stone treatment lets loose ash bury more slabs while wind-scoured Bonepale exposes broader stone patches. Each place supplies its own coverage and slope tendency, blending smoothly at region boundaries.",
+    "Enable WAR_REGION_STONE=1 together with WAR_GROUND_PLATES=1 to inspect it. Ordinary launches and the existing plates preview remain unchanged; slab identities, the original terrain and saved characters stay intact.",
+    "Raised tops, their collision, edge chips and the cave's ground contact use the same regional decision. Fresh builds and live changes agree, including after a cave rebuild.",
+    "Fixed Bonepale and Cinderreach views show the coverage change, but tiled shapes, edge wear, contact shadows and the hardware performance acceptance still need work. This default-off experiment does not clear the stone or Phase 0 art gate."
+  ]
+}
