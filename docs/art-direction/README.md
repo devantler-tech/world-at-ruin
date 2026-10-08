@@ -326,7 +326,7 @@ The whole scaled footprint stays clear of intact tops and protected approaches; 
 that loses every larger lip chip is rejected. This improves the transition without changing the
 base terrain, solid tops or original foliage records. Repeated cluster silhouettes and the
 missing contact shadows still require visual judgment, and the raised
-stone's performance activation gate remain open.
+stone's performance activation gate remains open.
 The [close walking and grazing evidence](../evidence/issue-549-slab-rubble/README.md)
 isolates this cosmetic batch and retains repeat, restore and opt-out controls.
 
