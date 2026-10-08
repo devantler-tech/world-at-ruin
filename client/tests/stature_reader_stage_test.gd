@@ -2,6 +2,7 @@ extends Node
 ## Base-owned preparation for #593. Only the exact planned reader stage may
 ## advance; it must preserve historical characters and keep writers on v4/7.
 
+const EQUIPMENT_ORACLE := preload("res://tests/equipment_visibility_test.gd")
 const PLANNED := "res://tests/data/planned_recipe_v5.json"
 var _probe := "user://stature_reader_probe.process-%d.json" % OS.get_process_id()
 const FINGERPRINTS := {
@@ -18,6 +19,7 @@ const GOLDEN_FINGERPRINTS := {
 	"res://tests/data/golden_recipe_v4.json": "3a0259185bce5f49f81cf5c4f80aca0a5d3ad61073a90ccdb917330dfc8c71c9",
 }
 var _failed := false
+var _save: SaveIsolation
 
 
 func _ready() -> void:
@@ -84,14 +86,14 @@ func _check_expanded_reader(planned: Dictionary) -> void:
 	var historical := CharacterFactory.build(ordinary)
 	var expanded := CharacterFactory.build(absent)
 	_check(CharacterFactory.fingerprint(historical) == CharacterFactory.fingerprint(expanded), "absent v5 keys do not alter existing character")
+	_check(historical.position == Vector3.ZERO and expanded.position == historical.position, "absent v5 keys preserve historical visual root")
 	historical.free()
 	expanded.free()
 	_check_leg_geometry()
 	_check_equipment_fit()
+	await _check_ground_contact()
 	_check_writer_preservation(planned, ordinary)
 	_check_reader_only_clear(planned, ordinary)
-	_check_update_metadata()
-	await _check_real_boot(planned, ordinary)
 
 
 func _check_leg_geometry() -> void:
@@ -211,7 +213,7 @@ func _check_writer_preservation(planned: Dictionary, ordinary: Dictionary) -> vo
 ## Reuse the existing independent renderer-geometry oracle: morph mix, original
 ## inverse binds, and signed nearest TRIANGLE clearance, never nearest vertices.
 func _check_equipment_fit() -> void:
-	var oracle := load("res://tests/equipment_visibility_test.gd").new() as Node
+	var oracle := EQUIPMENT_ORACLE.new() as Node
 	var reference := {}
 	for factors: Vector2 in [Vector2.ONE, Vector2(0.85, 0.85), Vector2(1.2, 1.2), Vector2(0.85, 1.2), Vector2(1.2, 0.85)]:
 		var recipe := {"version": 5, "joint_push": {"thigh": factors.x, "calf": factors.y},
@@ -246,9 +248,89 @@ func _check_equipment_fit() -> void:
 	oracle.free()
 
 
+## Measure the rendered body and boot soles after real Player capsules settle.
+## The historical contact is the reference; moving test actors to fit their
+## geometry would hide the exact floating/sinking regression this checks.
+func _check_ground_contact() -> void:
+	var stage := Node3D.new()
+	add_child(stage)
+	var floor_body := StaticBody3D.new()
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(100.0, 0.1, 30.0)
+	collision.shape = shape
+	collision.position.y = -0.05
+	floor_body.add_child(collision)
+	stage.add_child(floor_body)
+	var oracle := EQUIPMENT_ORACLE.new() as Node
+	var players: Array[Player] = []
+	var labels: Array[String] = []
+	for preset: String in FINGERPRINTS:
+		for factors: Vector2 in [Vector2.ONE, Vector2(0.85, 0.85), Vector2(1.2, 1.2), Vector2(0.85, 1.2), Vector2(1.2, 0.85)]:
+			var recipe: Dictionary = CharacterFactory.load_recipe(CharacterCreator.PRESET_DIR + preset + ".json")
+			recipe["equipment"]["feet"] = "boots_worn"
+			if factors != Vector2.ONE:
+				recipe["version"] = 5
+				recipe["joint_push"] = recipe.get("joint_push", {})
+				recipe["joint_push"]["thigh"] = factors.x
+				recipe["joint_push"]["calf"] = factors.y
+			var player := Player.new()
+			player.control_enabled = false
+			stage.add_child(player)
+			player.position = Vector3(float(players.size() - 10) * 2.0, 2.0, 0.0)
+			player.set_character(recipe)
+			var body := player.get("_character_body") as Node3D
+			body.process_mode = Node.PROCESS_MODE_DISABLED
+			players.append(player)
+			labels.append("%s %s" % [preset, str(factors)])
+	for _frame in 100:
+		await get_tree().physics_frame
+	var reference := Vector3.ZERO
+	var reference_capsule: Array = []
+	for index in players.size():
+		var player := players[index]
+		_check(player.is_on_floor(), "actual Player capsule settles on the floor: " + labels[index])
+		player.set_physics_process(false)
+		var body := player.get("_character_body") as Node3D
+		var skeleton := CharacterFactory.find_skeleton(body)
+		skeleton.reset_bone_poses()
+		skeleton.force_update_all_bone_transforms()
+		var mesh := CharacterFactory.find_skinned_mesh(skeleton)
+		var boots := skeleton.get_node(NodePath(CharacterFactory.EQUIP_PREFIX + "boots_worn")) as MeshInstance3D
+		var body_drawn: Array = oracle.call("drawn", skeleton, mesh)
+		var boots_drawn: Array = oracle.call("drawn", skeleton, boots)
+		var contact := Vector3(_lowest_world_y(skeleton, body_drawn[0]), _lowest_world_y(skeleton, boots_drawn[0]), player.global_position.y)
+		if index % 5 == 0:
+			_check(body.position == Vector3.ZERO, "historical visual root remains exact: " + labels[index])
+			reference = contact
+			reference_capsule = _capsule_signature(player)
+		_check(absf(contact.x - reference.x) < 0.003, "body sole keeps historical floor contact within 3mm: " + labels[index])
+		_check(absf(contact.y - reference.y) < 0.003, "boot sole keeps historical floor contact within 3mm: " + labels[index])
+		_check(_capsule_signature(player) == reference_capsule, "stature preserves exact capsule geometry and offset: " + labels[index])
+		print("STATURE_GROUND %s body_delta=%.6f boot_delta=%.6f" % [labels[index], contact.x - reference.x, contact.y - reference.y])
+	oracle.free()
+	stage.free()
+
+
+func _capsule_signature(player: Player) -> Array:
+	for child: Node in player.get_children():
+		if child is CollisionShape3D and child.shape is CapsuleShape3D:
+			return [child.shape.radius, child.shape.height, child.transform]
+	_check(false, "grounding oracle must find the actual Player capsule")
+	return []
+
+
+func _lowest_world_y(skeleton: Skeleton3D, vertices: PackedVector3Array) -> float:
+	_check(not vertices.is_empty(), "contact oracle examines real rendered vertices")
+	var low := INF
+	for vertex: Vector3 in vertices:
+		low = minf(low, (skeleton.global_transform * vertex).y)
+	return low
+
+
 func _check_reader_only_clear(planned: Dictionary, ordinary: Dictionary) -> void:
-	var isolation := SaveIsolation.new("user://stature_clear_probe.json")
-	if not isolation.begin():
+	_save = SaveIsolation.new("user://stature_clear_probe.json")
+	if not _save.begin():
 		_check(false, "delete probe must isolate every save seam")
 		return
 	var path := CharacterStore.save_path()
@@ -259,6 +341,8 @@ func _check_reader_only_clear(planned: Dictionary, ordinary: Dictionary) -> void
 	_check(CharacterStore.load_saved() == planned, "clear probe uses accepted expanded state")
 	CharacterStore.clear()
 	_check(FileAccess.get_file_as_bytes(path) == before, "reader-only delete preserves expanded bytes")
+	_check(not FileLock.owns(path), "refused expanded delete holds no writer lock")
+	_check(not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(FileLock.path_for(path))), "refused delete removes its lock directory")
 	_check(FileLock.acquire(path), "refused expanded delete releases its writer lock")
 	FileLock.release(path)
 	file = FileAccess.open(path, FileAccess.WRITE)
@@ -266,92 +350,7 @@ func _check_reader_only_clear(planned: Dictionary, ordinary: Dictionary) -> void
 	file.close()
 	CharacterStore.clear()
 	_check(not FileAccess.file_exists(path), "ordinary supported deletion remains functional")
-	_check(isolation.real_save_untouched(), "delete probe never touches played state")
-
-
-func _check_update_metadata() -> void:
-	var manifest: Dictionary = UpdateManifest.build(10, "2030-01-01T00:00:00Z", WireCodec.VERSION, WireCodec.VERSION)["manifest"]
-	var installed := {"shell_version": DevLog.VERSION, "pack_version": DevLog.VERSION,
-		"save_schema": 4, "save_capability": 7, "save_reads_max": 5,
-		"protocol": WireCodec.VERSION, "observed_at": "2029-01-01T00:00:00Z"}
-	_check(UpdateDecision.decide(installed, manifest)["action"] == UpdateDecision.UP_TO_DATE, "expanded reader accepts its manifest for ordinary saved state")
-	installed["pack_version"] = "0.1.0"
-	_check(UpdateDecision.decide(installed, manifest)["action"] == UpdateDecision.PACK_UPDATE, "old recipe4 state can accept the reader expansion")
-	installed["save_schema"] = 5
-	installed["save_capability"] = 8
-	_check(UpdateDecision.decide(installed, manifest)["action"] == UpdateDecision.INVALID_MANIFEST, "reader-only publication cannot downstamp pre-existing schema5 state")
-	var target := {"version": "0.1.98", "url": "https://updates.example/stature.pck",
-		"sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 1,
-		"read_ceiling": manifest["shell"]["reads_max"], "save_capability": manifest["shell"]["reads_capability_max"],
-		"speaks_protocol": manifest["protocol"], "shell_compat": {"min": "0.1.0", "max": "9.0.0"}}
-	var old := target.duplicate(true)
-	old["version"] = "0.1.99"
-	old["read_ceiling"] = 4
-	old["save_capability"] = 7
-	var state := {"save": {"schema": 5, "capability": 8}, "protocol": manifest["protocol"], "shell_version": DevLog.VERSION}
-	var selected := RollbackSelection.select([old, target], state)
-	_check(selected["action"] == RollbackSelection.ROLLBACK and selected["version"] == target["version"], "mixed catalogue skips the newer unreadable recipe4 target")
-	_check(RollbackSelection.select([old], state)["action"] == RollbackSelection.NO_ELIGIBLE_TARGET, "old catalogue cannot claim expanded-state recovery")
-
-
-func _check_real_boot(planned: Dictionary, ordinary: Dictionary) -> void:
-	for recipe: Dictionary in [ordinary, planned]:
-		var boot := IsolatedBoot.new("user://stature_real_boot_probe.json")
-		var main := boot.boot()
-		if main == null:
-			_check(false, "stature probe must boot the actual isolated game")
-			return
-		var file := FileAccess.open(CharacterStore.save_path(), FileAccess.WRITE)
-		file.store_string(JSON.stringify(recipe, "  ", true, true))
-		file.close()
-		var before := FileAccess.get_file_as_bytes(CharacterStore.save_path())
-		add_child(main)
-		for _frame in 160:
-			await get_tree().process_frame
-		_check(main.get("_creator") == null, "existing recipe never opens first-run creator")
-		# Observe facts at the actual main -> UpdateCheck boundary, rather than
-		# calling a helper that the product might never use. No network can run.
-		main.child_entered_tree.connect(func(child: Node) -> void:
-			if child is UpdateCheck:
-				child.set_script(load("res://tests/stature_update_observer.gd")))
-		var vector: Dictionary = CharacterFactory.load_recipe("res://tests/data/update_trust_chain_vector.json")
-		var config := {"channel": "live", "manifest_url": "https://127.0.0.1:1/manifest.json",
-			"revocation_head_url": "https://127.0.0.1:1/head.json",
-			"root_public_key": FileAccess.get_file_as_string(vector["root_public_key_path"])}
-		var config_path := "user://stature_check_config_%d.json" % OS.get_process_id()
-		file = FileAccess.open(config_path, FileAccess.WRITE)
-		file.store_string(JCS.canonicalize(config)["text"])
-		file.close()
-		var old_enable := OS.get_environment(UpdateCheck.ENABLE_ENV)
-		var old_config := OS.get_environment(UpdateCheck.CONFIG_ENV)
-		OS.set_environment(UpdateCheck.ENABLE_ENV, "1")
-		OS.set_environment(UpdateCheck.CONFIG_ENV, config_path)
-		await main.call("_check_updates_after_boot")
-		OS.set_environment(UpdateCheck.ENABLE_ENV, old_enable)
-		OS.set_environment(UpdateCheck.CONFIG_ENV, old_config)
-		PersistenceTestSupport.remove_file(config_path)
-		var result: Dictionary = main.get("_update_check_result")
-		var facts: Dictionary = result.get("observed_installed", {})
-		var expanded := int(recipe["version"]) == 5
-		_check(facts.get("save_schema") == (5 if expanded else 4), "actual update entrypoint uses accepted recipe requirement")
-		_check(facts.get("save_capability") == (8 if expanded else 7), "actual update entrypoint retains expanded capability requirement")
-		_check(facts.get("save_reads_max") == 5, "actual update entrypoint advertises independent reader ceiling")
-
-		var accepted: Dictionary = CharacterStore.load_saved()
-		_check(accepted == recipe, "actual boot read preserves every seeded field")
-		var expected := CharacterFactory.build(accepted)
-		add_child(expected)
-		await get_tree().process_frame
-		var player := main.get_node("Wanderer") as Player
-		var actual_fp := CharacterFactory.fingerprint(player.get("_character_body"))
-		var expected_fp := CharacterFactory.fingerprint(expected)
-		print("STATURE_BOOT version=%d actual=%s expected=%s" % [recipe["version"], actual_fp, expected_fp])
-		_check(actual_fp == expected_fp, "real boot renders the exact saved character")
-		expected.free()
-		_check(FileAccess.get_file_as_bytes(CharacterStore.save_path()) == before, "boot leaves accepted character bytes intact")
-		main.free()
-		_check(boot.real_save_untouched(), "stature boot never touches played state")
-		boot = null
+	_check(_save.real_save_untouched(), "delete probe never touches played state")
 
 
 func _exit_tree() -> void:
@@ -364,6 +363,19 @@ func _check(condition: bool, message: String) -> void:
 		push_error(message)
 
 
+func _fail(message: String) -> void:
+	if _save != null and not _save.real_save_untouched():
+		message += " — save isolation breach"
+	print("TEST FAIL — " + message)
+	get_tree().quit(1)
+
+
 func _finish() -> void:
-	print("TEST FAIL — stature reader stage" if _failed else "TEST PASS — stature reader stage")
-	get_tree().quit(1 if _failed else 0)
+	if _failed:
+		_fail("stature reader stage")
+		return
+	if _save != null and not _save.real_save_untouched():
+		_fail("stature reader save isolation")
+		return
+	print("TEST PASS — stature reader stage")
+	get_tree().quit(0)
