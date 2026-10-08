@@ -40,3 +40,5 @@ writer in this preparation.
 ## Native historical identities
 
 Historical preservation uses an immutable, namespaced Factory/KitAssembly reference from reviewed base `6b878853`. Its input checksum manifest includes the shared idle/cloth helpers, kit assets and import settings, registries and all eight historical recipe inputs. The frozen implementation hashes both reference and candidate bodies on the same native runtime, and the production hash must agree. This preserves exact native identities without comparing Linux floats with macOS byte hashes; the captured macOS ARM64 Godot 4.7.1 hashes remain additional anchors. Preview flags are disabled only during this test and restored on finish.
+
+The planned reader is also exercised at its real post-staging commit boundary under the actual file lock. Readable foreign v5 state installed during staging must survive blind writes byte-for-byte; refused attempts remove their private stages and remain retryable. Ordinary blind replacement and exact expanded-value outfit edits must perform successful renames. This is a production responsibility boundary, with no timing-dependent thread race or test callback.

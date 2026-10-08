@@ -157,6 +157,7 @@ func _check_expanded_reader(planned: Dictionary) -> void:
 	await _check_ground_contact()
 	_check_writer_preservation(planned, ordinary)
 	_check_reader_only_clear(planned, ordinary)
+	_check_late_reader_preservation(planned, ordinary)
 
 
 func _check_leg_geometry() -> void:
@@ -270,6 +271,57 @@ func _check_writer_preservation(planned: Dictionary, ordinary: Dictionary) -> vo
 	_check(CharacterFactory.write_refusal_reason(schema_only, ordinary) != "", "even an empty schema5 stamp cannot originate")
 	for spec: Array in CharacterCreator.writable_bone_sliders():
 		_check(not (spec[1] == "joint_push" and spec[2] in ["thigh", "calf"]), "new leg controls stay absent from writable UI")
+	PersistenceTestSupport.remove_file(_probe)
+
+
+## Exercise the real post-staging responsibility with a foreign, readable target
+## already installed. No thread timing or production callback is involved.
+func _check_late_reader_preservation(planned: Dictionary, ordinary: Dictionary) -> void:
+	var store: GDScript = load("res://scripts/character_store.gd")
+	var names := []
+	for method: Dictionary in store.get_script_method_list():
+		names.append(method["name"])
+	_check("_commit_staged" in names, "reader commits through a preservation-checked staging boundary")
+	if "_commit_staged" not in names:
+		return
+	var stage := _probe + ".stature_stage"
+	var changed_thigh := planned.duplicate(true)
+	changed_thigh["joint_push"]["thigh"] = 1.05
+	var changed_calf := planned.duplicate(true)
+	changed_calf["joint_push"]["calf"] = 1.05
+	for candidate: Dictionary in [ordinary, changed_thigh, changed_calf]:
+		_check(PersistenceTestSupport.write_text(stage, JSON.stringify(candidate, "  ", true, true)), "late refusal has real staged bytes")
+		_check(PersistenceTestSupport.write_text(_probe, JSON.stringify(planned, "  ", true, true)), "foreign reader state is installed without writer cooperation")
+		var before := FileAccess.get_file_as_bytes(_probe)
+		_check(CharacterStore.can_write(_probe), "late target is readable, so readability alone cannot protect it")
+		var locked := FileLock.acquire(_probe)
+		_check(locked and FileLock.owns(_probe), "late commit holds the real target lock")
+		if locked:
+			_check(not store.call("_commit_staged", _probe, candidate, stage, CharacterStore.IDENTITY_UNCHECKED), "blind late commit cannot downstamp or change reader-only state")
+			_check(CharacterStore._last_refusal == CharacterStore.REFUSAL_STALE, "late preservation refusal is attributable and retryable")
+			FileLock.release(_probe)
+		_check(not CharacterStore.is_refused(_probe), "late readable collision does not latch the accepted character")
+		_check(not FileLock.owns(_probe), "late commit caller releases the actual lock")
+		_check(FileAccess.get_file_as_bytes(_probe) == before, "foreign v5 bytes survive the staging boundary exactly")
+		_check(not FileAccess.file_exists(stage), "late refusal removes its private stage")
+		PersistenceTestSupport.remove_file(stage)
+	# Both actual renames must succeed: ordinary blind replacement stays supported,
+	# and an outfit edit preserving the exact expanded values remains writable.
+	var ordinary_edit := ordinary.duplicate(true)
+	ordinary_edit["equipment"]["head"] = "relic_goggles"
+	var planned_edit := planned.duplicate(true)
+	planned_edit["equipment"]["head"] = "relic_goggles"
+	for pair: Array in [[ordinary, ordinary_edit], [planned, planned_edit]]:
+		_check(PersistenceTestSupport.write_text(_probe, JSON.stringify(pair[0], "  ", true, true)), "positive late target is installed")
+		_check(PersistenceTestSupport.write_text(stage, JSON.stringify(pair[1], "  ", true, true)), "positive late stage contains an ordinary edit")
+		var locked := FileLock.acquire(_probe)
+		_check(locked and FileLock.owns(_probe), "positive commit holds its actual lock")
+		if locked:
+			_check(store.call("_commit_staged", _probe, pair[1], stage, CharacterStore.IDENTITY_UNCHECKED), "late commit performs the permitted blind rename")
+			FileLock.release(_probe)
+		_check(CharacterStore.load_from(_probe) == pair[1], "positive commit publishes the actual candidate")
+		_check(not FileAccess.file_exists(stage), "successful rename consumes its stage")
+		PersistenceTestSupport.remove_file(stage)
 	PersistenceTestSupport.remove_file(_probe)
 
 
