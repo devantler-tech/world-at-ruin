@@ -25,3 +25,12 @@ resources, changed histories and a lost barrier acknowledgement.
 [ADR 0031](../../docs/adr/0031-close-the-complete-issued-gameserver-capability-set.md)
 defines that owner's scope. No receipt proves exclusive production writers,
 survives an incarnation restart or releases durable quarantine.
+
+The journal-reader arms round-trip exact native grant metadata through the
+shared Nakama storage fake and a freshly constructed read-only reader. Unfenced
+held writes still allocate after that readback; actual barriers make both old
+writes conflict. A fresh owner rejects the previous owner's receipt. Wrong
+incarnation, stale journal version and incomplete expected-set controls return
+no inventory. This proves source-reader behavior, not a serving Nakama rollout,
+actual retained rollback-artifact compatibility or durable journal writes. See
+[ADR 0032](../../docs/adr/0032-read-issued-grant-journals-without-restoring-authority.md).
