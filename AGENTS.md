@@ -1032,6 +1032,14 @@ everything shipped afterwards is held to.
   attribution, not authenticated exclusive allocator authority. See
   [ADR 0031](docs/adr/0031-close-the-complete-issued-gameserver-capability-set.md)
   for the durable journal, recovery and retained-reader activation gates.
+  Its explicitly enabled `JournalReader` reads a complete, private exact-version
+  inventory against independently pinned generation, membership, incarnation and
+  issued-set expectations. The StorageRead-only interface cannot write journals.
+  Source readback is diagnostic data and cannot recreate grants or receipts.
+  The native trial demonstrates that journal readback alone leaves unfenced old
+  writes able to allocate and that a fresh owner rejects a prior receipt.
+  [ADR 0032](docs/adr/0032-read-issued-grant-journals-without-restoring-authority.md)
+  keeps journal writers and serving-reader/retained-artifact activation separate.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
