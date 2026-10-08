@@ -40,6 +40,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
+	github.com/heroiclabs/nakama-common v1.48.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/magiconair/properties v1.8.1 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect

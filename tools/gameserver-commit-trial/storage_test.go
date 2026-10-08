@@ -235,6 +235,12 @@ type heldRequest struct {
 func (h *heldRequest) unblock() { h.once.Do(func() { close(h.release) }) }
 func proxy(t *testing.T) (*rest.Config, *heldRequest) {
 	t.Helper()
+	cfg, held := proxyMany(t, "zone")
+	return cfg, held["zone"]
+}
+
+func proxyMany(t *testing.T, names ...string) (*rest.Config, map[string]*heldRequest) {
+	t.Helper()
 	target, err := url.Parse(control.Host)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +251,11 @@ func proxy(t *testing.T) (*rest.Config, *heldRequest) {
 	}
 	independent := &http.Transport{TLSClientConfig: tlsConfig, DisableKeepAlives: true}
 	t.Cleanup(independent.CloseIdleConnections)
-	h := &heldRequest{started: make(chan struct{}), release: make(chan struct{}), status: make(chan int, 1)}
+	requests := make(map[string]*heldRequest, len(names))
+	for _, name := range names {
+		h := &heldRequest{started: make(chan struct{}), release: make(chan struct{}), status: make(chan int, 1)}
+		requests[name] = h
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body []byte
 		if r.Body != nil {
@@ -257,7 +267,11 @@ func proxy(t *testing.T) (*rest.Config, *heldRequest) {
 			}
 		}
 		var obj agonesv1.GameServer
-		held := r.Method == http.MethodPut && json.Unmarshal(body, &obj) == nil && obj.Status.State == agonesv1.GameServerStateAllocated && obj.Annotations[gameservercommit.BarrierAnnotation] == ""
+		var h *heldRequest
+		if r.Method == http.MethodPut && json.Unmarshal(body, &obj) == nil && obj.Status.State == agonesv1.GameServerStateAllocated && obj.Annotations[gameservercommit.BarrierAnnotation] == "" {
+			h = requests[obj.Name]
+		}
+		held := h != nil
 		if held {
 			close(h.started)
 			select {
@@ -295,11 +309,14 @@ func proxy(t *testing.T) (*rest.Config, *heldRequest) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	t.Cleanup(h.unblock)
+	// Release held handlers before closing their server, including a failed test.
+	for _, h := range requests {
+		t.Cleanup(h.unblock)
+	}
 	cfg := rest.CopyConfig(control)
 	cfg.Host = server.URL
 	cfg.TLSClientConfig = rest.TLSClientConfig{}
-	return cfg, h
+	return cfg, requests
 }
 func reached(t *testing.T, h *heldRequest) {
 	t.Helper()

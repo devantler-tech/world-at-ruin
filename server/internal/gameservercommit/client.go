@@ -1,6 +1,7 @@
 // Package gameservercommit implements an inactive exact-version Kubernetes
-// mutation capability. Its process-local receipts cover one frozen write only;
-// they cannot close an allocator generation or release durable quarantine.
+// mutation capability and a private owner of complete issued capability sets.
+// Process-local receipts cannot close a durable allocator generation or release
+// production quarantine.
 package gameservercommit
 
 import (
@@ -160,18 +161,33 @@ func (c *Client) Prepare(ctx context.Context, name, attemptID string) (Grant, er
 // Commit sends the frozen conditional mutation at most once. A lost reply
 // remains unknown; neither Retry-After nor a redirect can resubmit the mutation.
 func (g Grant) Commit(ctx context.Context) error {
+	obj, err := g.admit()
+	if err != nil {
+		return err
+	}
+	return g.submit(ctx, obj)
+}
+
+// admit closes submission locally before networking. A generation owner holds
+// its admission lock across this step, never across the outstanding HTTP call.
+func (g Grant) admit() (*agonesv1.GameServer, error) {
 	if g.state == nil {
-		return ErrInvalid
+		return nil, ErrInvalid
 	}
 	s := g.state
 	s.mu.Lock()
 	if s.submitted || s.draining {
 		s.mu.Unlock()
-		return ErrClosed
+		return nil, ErrClosed
 	}
 	s.submitted = true
 	obj := s.frozen.DeepCopy()
 	s.mu.Unlock()
+	return obj, nil
+}
+
+func (g Grant) submit(ctx context.Context, obj *agonesv1.GameServer) error {
+	s := g.state
 	ctx, cancel := context.WithTimeout(ctx, requestLimit)
 	defer cancel()
 	ack, err := s.client.put(ctx, obj)

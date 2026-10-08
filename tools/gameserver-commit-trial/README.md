@@ -15,5 +15,13 @@ or fake-client substitute.
 
 See [ADR 0028](../../docs/adr/0028-fence-an-inactive-exact-version-gameserver-mutation.md)
 for receipt scope and the production activation gates. The test deliberately
-demonstrates that an already submitted request can commit after caller
-cancellation. Its accepted receipt applies to one immutable capability only.
+demonstrates that already submitted requests can commit after caller cancellation.
+The single-resource receipt applies to one immutable capability. The generation
+trial freezes its complete issued set before networking and requires every exact
+storage barrier before accepting a complete process-local receipt. It exercises
+multiple outstanding writes, mixed allocation outcomes, replacements, missing
+resources, changed histories and a lost barrier acknowledgement.
+
+[ADR 0031](../../docs/adr/0031-close-the-complete-issued-gameserver-capability-set.md)
+defines that owner's scope. No receipt proves exclusive production writers,
+survives an incarnation restart or releases durable quarantine.
