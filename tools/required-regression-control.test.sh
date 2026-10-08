@@ -37,6 +37,9 @@ cp "${trusted}/client/project.godot" "${empty_trusted}/client/project.godot"
 mkdir -p "${trusted}/client/tests/data" "${candidate}/client/tests/data"
 printf '# historical declaration\n1\n2\n3\n4\n5\n6\n' >"${trusted}/client/tests/data/shipped_save_capability.txt"
 cp "${trusted}/client/tests/data/shipped_save_capability.txt" "${candidate}/client/tests/data/shipped_save_capability.txt"
+printf '# recipe history\n1\n2\n3\n4\n' >"${trusted}/client/tests/data/shipped_recipe_versions.txt"
+cp "${trusted}/client/tests/data/shipped_recipe_versions.txt" "${candidate}/client/tests/data/shipped_recipe_versions.txt"
+printf '{"version":5,"joint_push":{"thigh":1.16,"calf":1.12}}\n' >"${trusted}/client/tests/data/planned_recipe_v5.json"
 printf '%s\n' 'immutable golden player state' >"${trusted}/client/tests/data/golden_vault.json"
 printf '%s\n' 'candidate weakened golden' >"${candidate}/client/tests/data/golden_vault.json"
 # Candidate root files must not overwrite the controller's validated copy.
@@ -81,6 +84,14 @@ fi
 if [ "$(tail -n 1 client/tests/data/shipped_save_capability.txt)" != "${REQUIRED_REGRESSION_CAPABILITY:-6}" ]; then
 	echo "validated candidate capability declaration was not evaluated" >&2
 	exit 95
+fi
+if [ "$(tail -n 1 client/tests/data/shipped_recipe_versions.txt)" != "${REQUIRED_REGRESSION_RECIPE_VERSION:-4}" ]; then
+	echo "validated recipe declaration was not evaluated" >&2
+	exit 97
+fi
+if [ "${REQUIRED_REGRESSION_RECIPE_VERSION:-4}" = 5 ] && ! cmp -s client/tests/data/golden_recipe_v5.json client/tests/data/planned_recipe_v5.json; then
+	echo "planned golden did not come from trusted fixture bytes" >&2
+	exit 98
 fi
 printf '%s\n' "${name}" >>"${REQUIRED_REGRESSION_RUN_LOG}"
 if [ "${REQUIRED_REGRESSION_FAIL_TEST:-}" = "${name}" ]; then
@@ -391,6 +402,75 @@ run_capability_case 'malformed trusted history' fail 7
 printf '# historical declaration\n1\n2\n3\n4\n5\n6' >"${base_ledger}"
 cp "${base_ledger}" "${ledger}"
 run_capability_case 'unterminated trusted history' fail 6
+
+# Only the exact reviewed recipe plan may accompany the next reader.
+recipe_ledger="${candidate}/client/tests/data/shipped_recipe_versions.txt"
+base_recipe_ledger="${trusted}/client/tests/data/shipped_recipe_versions.txt"
+planned_recipe="${trusted}/client/tests/data/planned_recipe_v5.json"
+golden_recipe="${candidate}/client/tests/data/golden_recipe_v5.json"
+run_recipe_case() {
+	local label="$1" want="$2" version="$3"
+	: >"${run_log}"
+	: >"${run_log}.import"
+	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+		REQUIRED_REGRESSION_CAPABILITY=7 REQUIRED_REGRESSION_RECIPE_VERSION="${version}" \
+		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+		[ "${want}" = pass ] || fail "${label}: invalid recipe declaration passed"
+	else
+		if [ "${want}" = pass ]; then
+			fail "${label}: approved recipe declaration refused: $(<"${control_output}")"
+		elif ! grep -q 'recipe declaration' "${control_output}"; then
+			fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
+		fi
+	fi
+	if [ "${want}" = pass ]; then
+		[ -s "${run_log}.import" ] || fail "${label}: passing candidate did not record its import"
+		[ "$(<"${run_log}")" = "${expected_runs}" ] || fail "${label}: passing candidate did not execute the exact trusted scenes"
+	fi
+	if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
+		fail "${label}: candidate ran before recipe validation"
+	fi
+}
+cp "${tmp_dir}/trusted-ledger" "${base_ledger}"
+cp "${base_ledger}" "${ledger}"
+run_recipe_case 'unchanged recipe4' pass 4
+printf '5\n' >>"${recipe_ledger}"
+cp "${planned_recipe}" "${golden_recipe}"
+run_recipe_case 'exact planned recipe5' pass 5
+printf '6\n' >>"${recipe_ledger}"
+run_recipe_case 'unplanned recipe6' fail 6
+cp "${base_recipe_ledger}" "${recipe_ledger}"
+printf '5\n' >>"${recipe_ledger}"
+printf '{"version":5,"joint_push":{"thigh":1.99}}\n' >"${golden_recipe}"
+run_recipe_case 'changed planned fixture' fail 5
+rm "${golden_recipe}"
+run_recipe_case 'missing planned fixture' fail 5
+ln -s "${planned_recipe}" "${golden_recipe}"
+run_recipe_case 'symlinked planned fixture' fail 5
+rm "${golden_recipe}"
+cp "${planned_recipe}" "${golden_recipe}"
+sed 's/history/rewritten/' "${base_recipe_ledger}" >"${recipe_ledger}"
+printf '5\n' >>"${recipe_ledger}"
+run_recipe_case 'rewritten recipe history' fail 5
+cp "${base_recipe_ledger}" "${recipe_ledger}"
+run_recipe_case 'fixture5 without declaration' fail 4
+rm "${golden_recipe}"
+rm "${recipe_ledger}"
+run_recipe_case 'missing recipe declaration' fail 4
+ln -s "${base_recipe_ledger}" "${recipe_ledger}"
+run_recipe_case 'symlinked recipe declaration' fail 4
+rm "${recipe_ledger}"
+cp "${base_recipe_ledger}" "${recipe_ledger}"
+printf '5\n' >>"${base_recipe_ledger}"
+cp "${planned_recipe}" "${trusted}/client/tests/data/golden_recipe_v5.json"
+cp "${base_recipe_ledger}" "${recipe_ledger}"
+cp "${planned_recipe}" "${golden_recipe}"
+run_recipe_case 'unchanged shipped recipe5' pass 5
+sed '/^5$/d' "${base_recipe_ledger}" >"${recipe_ledger}"
+run_recipe_case 'recipe rollback after5 ships' fail 4
+cp "${base_recipe_ledger}" "${recipe_ledger}"
+printf '6\n' >>"${recipe_ledger}"
+run_recipe_case 'append after recipe5 ships' fail 6
 
 workflow_fixture_dir="${tmp_dir}/workflow-fixture"
 mkdir -p "${workflow_fixture_dir}"

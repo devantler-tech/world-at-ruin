@@ -155,7 +155,7 @@ func _test_values_track_their_sources() -> void:
 		"pack.version": [m["pack"]["version"], DevLog.VERSION],
 		"protocol.min": [m["protocol"]["min"], WireCodec.LEGACY_VERSION],
 		"protocol.max": [m["protocol"]["max"], WireCodec.VERSION],
-		"save_schema.writes": [m["save_schema"]["writes"], CharacterFactory.RECIPE_VERSION],
+		"save_schema.writes": [m["save_schema"]["writes"], CharacterFactory.RECIPE_WRITE_VERSION],
 		"save_schema.min": [m["save_schema"]["min"], UpdateManifest.SAVE_SCHEMA_MIN],
 		"save_schema.capability": [m["save_schema"]["capability"], UpdateManifest.SAVE_CAPABILITY_WRITES],
 		"shell.reads_min": [m["shell"]["reads_min"], UpdateManifest.SAVE_SCHEMA_MIN],
@@ -402,7 +402,8 @@ func _installed_current() -> Dictionary:
 	return {
 		"shell_version": DevLog.VERSION,
 		"pack_version": DevLog.VERSION,
-		"save_schema": CharacterFactory.RECIPE_VERSION,
+		"save_schema": CharacterFactory.RECIPE_WRITE_VERSION,
+		"save_reads_max": CharacterFactory.RECIPE_VERSION,
 		"save_capability": UpdateManifest.SAVE_CAPABILITY_WRITES,
 		"protocol": WireCodec.VERSION,
 		"manifest_sequence_high_water": MANIFEST_SEQUENCE - 1,

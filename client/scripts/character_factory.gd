@@ -24,6 +24,8 @@ class_name CharacterFactory
 ## (Godot 4.7 desyncs its rest/pose caches).
 
 const RECIPE_VERSION := 4
+## Highest schema this build may originate; reader expansion never raises it.
+const RECIPE_WRITE_VERSION := 4
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
 const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
 const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
@@ -686,9 +688,12 @@ static func fingerprint(instance: Node3D) -> String:
 		ctx.update(mesh_name.to_utf8_buffer())
 		var mixed := KitAssembly.mixed_vertices(meshes[mesh_name])
 		total_verts += mixed.size()
-		ctx.update(mixed.to_byte_array())
+		if not mixed.is_empty():
+			ctx.update(mixed.to_byte_array())
 	# The skin changes no geometry but IS the character's identity too.
-	ctx.update(String(instance.get_meta("skin", "")).to_utf8_buffer())
+	var skin_bytes := String(instance.get_meta("skin", "")).to_utf8_buffer()
+	if not skin_bytes.is_empty():
+		ctx.update(skin_bytes)
 	return "bones=%d meshes=%d verts=%d sha256=%s" % [
 		skeleton.get_bone_count(), names.size(), total_verts, ctx.finish().hex_encode()]
 

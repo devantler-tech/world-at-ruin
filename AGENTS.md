@@ -1201,10 +1201,14 @@ everything shipped afterwards is held to.
     Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
     aggregate, an empty trusted suite fails closed, and only the structurally pinned base-controlled local workflow may invoke the controller.
-    The sole candidate test-data exception is the save-capability declaration: the controller
-    reconstructs unchanged historical bytes or the exact planned capability-7 append, rejecting
-    every other change and symlinked path. Trusted tests support only writer stages 6/v4 and 7/v5
-    with reader 7/v5. The active writer passes trusted mastery mutation, retry, stale-session,
+    The candidate test-data exceptions are exact reviewed declarations: unchanged capability
+    history or its planned capability-7 append, and unchanged recipe history or its planned v5
+    append with the exact base-owned `planned_recipe_v5.json` fixture. The controller reconstructs
+    those bytes and rejects other changes and symlinked inputs before execution. Trusted tests
+    support retained capability-reader 7 / recipe-reader 4 and the planned capability-reader 8 /
+    recipe-reader 5, while recipe writes stay v4 and capability writers remain 6/vault4 or
+    7/vault5; the planned reader requires writer 7/vault5. The active writer passes trusted mastery
+    mutation, retry, stale-session,
     real-boot and exit-flush probes. The stage selector does not replace
     the retained-reader release proof required by #658; see ADR 0003.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
