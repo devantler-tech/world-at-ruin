@@ -285,13 +285,34 @@ func _check_real_boot(planned: Dictionary, ordinary: Dictionary) -> void:
 		for _frame in 160:
 			await get_tree().process_frame
 		_check(main.get("_creator") == null, "existing recipe never opens first-run creator")
-		_check(main.has_method("_installed_update_facts"), "real update path must separate accepted state from read ceilings")
-		if main.has_method("_installed_update_facts"):
-			var facts: Dictionary = main.call("_installed_update_facts")
-			var expanded := int(recipe["version"]) == 5
-			_check(facts.get("save_schema") == (5 if expanded else 4), "real boot uses actual accepted recipe requirement")
-			_check(facts.get("save_capability") == (8 if expanded else 7), "real boot retains actual expanded capability requirement")
-			_check(facts.get("save_reads_max") == 5, "real boot advertises independent reader ceiling")
+		# Observe facts at the actual main -> UpdateCheck boundary, rather than
+		# calling a helper that the product might never use. No network can run.
+		main.child_entered_tree.connect(func(child: Node) -> void:
+			if child is UpdateCheck:
+				child.set_script(load("res://tests/stature_update_observer.gd")))
+		var vector: Dictionary = CharacterFactory.load_recipe("res://tests/data/update_trust_chain_vector.json")
+		var config := {"channel": "live", "manifest_url": "https://127.0.0.1:1/manifest.json",
+			"revocation_head_url": "https://127.0.0.1:1/head.json",
+			"root_public_key": FileAccess.get_file_as_string(vector["root_public_key_path"])}
+		var config_path := "user://stature_check_config_%d.json" % OS.get_process_id()
+		file = FileAccess.open(config_path, FileAccess.WRITE)
+		file.store_string(JCS.canonicalize(config)["text"])
+		file.close()
+		var old_enable := OS.get_environment(UpdateCheck.ENABLE_ENV)
+		var old_config := OS.get_environment(UpdateCheck.CONFIG_ENV)
+		OS.set_environment(UpdateCheck.ENABLE_ENV, "1")
+		OS.set_environment(UpdateCheck.CONFIG_ENV, config_path)
+		await main.call("_check_updates_after_boot")
+		OS.set_environment(UpdateCheck.ENABLE_ENV, old_enable)
+		OS.set_environment(UpdateCheck.CONFIG_ENV, old_config)
+		PersistenceTestSupport.remove_file(config_path)
+		var result: Dictionary = main.get("_update_check_result")
+		var facts: Dictionary = result.get("observed_installed", {})
+		var expanded := int(recipe["version"]) == 5
+		_check(facts.get("save_schema") == (5 if expanded else 4), "actual update entrypoint uses accepted recipe requirement")
+		_check(facts.get("save_capability") == (8 if expanded else 7), "actual update entrypoint retains expanded capability requirement")
+		_check(facts.get("save_reads_max") == 5, "actual update entrypoint advertises independent reader ceiling")
+
 		var accepted: Dictionary = CharacterStore.load_saved()
 		_check(accepted == recipe, "actual boot read preserves every seeded field")
 		var expected := CharacterFactory.build(accepted)
