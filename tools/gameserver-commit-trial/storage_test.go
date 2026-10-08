@@ -233,12 +233,17 @@ type heldRequest struct {
 }
 
 func (h *heldRequest) unblock() { h.once.Do(func() { close(h.release) }) }
+
+// proxy holds the single-zone allocation request using the same native-storage
+// forwarding and cleanup behavior as the multi-object generation controls.
 func proxy(t *testing.T) (*rest.Config, *heldRequest) {
 	t.Helper()
 	cfg, held := proxyMany(t, "zone")
 	return cfg, held["zone"]
 }
 
+// proxyMany holds each named allocation PUT independently and forwards released
+// requests to native storage, even when the original caller has canceled.
 func proxyMany(t *testing.T, names ...string) (*rest.Config, map[string]*heldRequest) {
 	t.Helper()
 	target, err := url.Parse(control.Host)

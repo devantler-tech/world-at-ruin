@@ -52,6 +52,8 @@ func NewGeneration(cfg GenerationConfig) (*Generation, error) {
 	return &Generation{state: &generationState{client: client, record: record}}, nil
 }
 
+// validGenerationRecord checks writable-schema identity, canonical bounded
+// membership and its digest; it does not authenticate production writers.
 func validGenerationRecord(r nakamageneration.Record) bool {
 	if r.ReaderOnly() || r.State != "open" || !handoffidentity.OpaqueUTF8(r.GenerationID, 128) ||
 		r.Version == "*" || !handoffidentity.OpaqueUTF8(r.Version, 1024) ||

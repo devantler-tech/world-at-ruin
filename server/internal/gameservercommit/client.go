@@ -186,6 +186,8 @@ func (g Grant) admit() (*agonesv1.GameServer, error) {
 	return obj, nil
 }
 
+// submit sends the already admitted frozen object once and returns the outcome
+// without holding admission locks while the Kubernetes request is outstanding.
 func (g Grant) submit(ctx context.Context, obj *agonesv1.GameServer) error {
 	s := g.state
 	ctx, cancel := context.WithTimeout(ctx, requestLimit)

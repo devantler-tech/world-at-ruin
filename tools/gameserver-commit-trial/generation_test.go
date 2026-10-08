@@ -17,6 +17,8 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// resourcePair creates two independent GameServers in the native storage
+// fixture so a generation fence must account for distinct object identities.
 func resourcePair(t *testing.T) (typed.GameServerInterface, []*agonesv1.GameServer) {
 	t.Helper()
 	api, first := resource(t)
@@ -32,6 +34,8 @@ func resourcePair(t *testing.T) (typed.GameServerInterface, []*agonesv1.GameServ
 	return api, []*agonesv1.GameServer{first, second}
 }
 
+// nativeGeneration binds an explicitly enabled two-member owner to the supplied
+// native API transport without adding it to any production allocator path.
 func nativeGeneration(t *testing.T, cfg *rest.Config, ns string) *gameservercommit.Generation {
 	t.Helper()
 	g, err := gameservercommit.NewGeneration(gameservercommit.GenerationConfig{Enabled: true,
@@ -43,6 +47,8 @@ func nativeGeneration(t *testing.T, cfg *rest.Config, ns string) *gameservercomm
 	return g
 }
 
+// pairGrants registers one exact-object capability per member before tests
+// submit or close either capability against the native Kubernetes API.
 func pairGrants(t *testing.T, g *gameservercommit.Generation, objects []*agonesv1.GameServer) []gameservercommit.GenerationGrant {
 	t.Helper()
 	grants := make([]gameservercommit.GenerationGrant, len(objects))
@@ -57,6 +63,8 @@ func pairGrants(t *testing.T, g *gameservercommit.Generation, objects []*agonesv
 	return grants
 }
 
+// readNamed observes persisted native state independently of the generation's
+// private receipts, with a bounded deadline for storage verification.
 func readNamed(t *testing.T, api typed.GameServerInterface, name string) *agonesv1.GameServer {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -68,7 +76,8 @@ func readNamed(t *testing.T, api typed.GameServerInterface, name string) *agones
 	return got
 }
 
-// Omitting even one issued grant from Fence makes its held storage write succeed;
+// TestGenerationStorageFencesEveryOutstandingMutation checks that omitting even
+// one issued grant from Fence makes its held storage write succeed;
 // the unfenced arms prove this is actual optimistic concurrency, not proxy refusal.
 func TestGenerationStorageFencesEveryOutstandingMutation(t *testing.T) {
 	for _, fenced := range []bool{false, true} {
@@ -149,6 +158,8 @@ func TestGenerationStorageFencesEveryOutstandingMutation(t *testing.T) {
 	}
 }
 
+// TestGenerationStorageRetainsAllocatedOutcome checks mixed native outcomes
+// and proves that a barrier preserves an already persisted allocation.
 func TestGenerationStorageRetainsAllocatedOutcome(t *testing.T) {
 	api, objects := resourcePair(t)
 	g := nativeGeneration(t, control, objects[0].Namespace)
@@ -171,6 +182,8 @@ func TestGenerationStorageRetainsAllocatedOutcome(t *testing.T) {
 
 type lostBarrierReply struct{ base http.RoundTripper }
 
+// RoundTrip lets native storage persist the second barrier before dropping its
+// acknowledgement, proving that storage success alone cannot authorize a receipt.
 func (l lostBarrierReply) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := l.base.RoundTrip(r)
 	if err == nil && r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/zone-two") {
@@ -180,6 +193,8 @@ func (l lostBarrierReply) RoundTrip(r *http.Request) (*http.Response, error) {
 	return response, err
 }
 
+// TestGenerationStorageIncompleteProofCannotAccept injects second-target faults
+// and proves that the first target's partial native fence supplies no authority.
 func TestGenerationStorageIncompleteProofCannotAccept(t *testing.T) {
 	for _, fault := range []string{"replacement", "changed-history", "lost-ack", "missing"} {
 		t.Run(fault, func(t *testing.T) {

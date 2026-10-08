@@ -21,10 +21,14 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// generationRecord supplies an open two-member observation with a fixed
+// canonical digest so tests can detect changed or caller-mutated membership.
 func generationRecord() nakamageneration.Record {
 	return nakamageneration.Record{GenerationID: "generation-1", MemberPodUIDs: []string{"pod-a", "pod-b"}, MemberSetDigest: "5452b4d6f907967c5ef74179a64c12ea48755828ccea8fc9aac8092faa3bfe0d", State: "open", Version: "source-version-1"}
 }
 
+// generationFixture creates an explicitly enabled owner with a test-owned HTTP
+// endpoint and enough transport budget to exercise the lifetime grant bound.
 func generationFixture(t *testing.T, handler http.HandlerFunc) (*Generation, GenerationConfig) {
 	t.Helper()
 	s := httptest.NewServer(handler)
@@ -39,7 +43,7 @@ func generationFixture(t *testing.T, handler http.HandlerFunc) (*Generation, Gen
 	return g, cfg
 }
 
-// The fake supplies exact API bodies, while the owner and capability under test
+// generationAPI supplies exact API bodies, while the owner and capability under test
 // perform their real HTTP reads/writes and private admission/receipt checks.
 func generationAPI(t *testing.T, failName string) http.HandlerFunc {
 	t.Helper()
@@ -80,6 +84,8 @@ func generationAPI(t *testing.T, failName string) http.HandlerFunc {
 	}
 }
 
+// generationPrepare issues a registered capability attributed to the supplied
+// actor, with an attempt identifier unique to the named test GameServer.
 func generationPrepare(t *testing.T, g *Generation, actor, name string) GenerationGrant {
 	t.Helper()
 	grant, err := g.Prepare(context.Background(), actor, name, "attempt-"+name)
@@ -89,6 +95,8 @@ func generationPrepare(t *testing.T, g *Generation, actor, name string) Generati
 	return grant
 }
 
+// TestGenerationCompleteReceiptBindsAllIssuedGrants checks complete identity
+// and outcome accounting, detached receipt data and irreversible admission.
 func TestGenerationCompleteReceiptBindsAllIssuedGrants(t *testing.T) {
 	g, cfg := generationFixture(t, generationAPI(t, ""))
 	a := generationPrepare(t, g, "pod-a", "zone-a")
@@ -131,6 +139,8 @@ func TestGenerationCompleteReceiptBindsAllIssuedGrants(t *testing.T) {
 	}
 }
 
+// TestGenerationPartialProofNeverAcceptsOrReopens checks that one failed barrier
+// denies a complete receipt and permanently closes every issued capability.
 func TestGenerationPartialProofNeverAcceptsOrReopens(t *testing.T) {
 	g, _ := generationFixture(t, generationAPI(t, "zone-b"))
 	a := generationPrepare(t, g, "pod-a", "zone-a")
@@ -150,6 +160,8 @@ func TestGenerationPartialProofNeverAcceptsOrReopens(t *testing.T) {
 	}
 }
 
+// TestGenerationPreparationRacingDrainCannotExportGrant holds a preparation GET
+// across closure and checks that its late result exports no writable capability.
 func TestGenerationPreparationRacingDrainCannotExportGrant(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var puts atomic.Int32
@@ -193,6 +205,8 @@ func TestGenerationPreparationRacingDrainCannotExportGrant(t *testing.T) {
 	}
 }
 
+// TestGenerationReceiptOriginAndCopiedGrantState races copied grants to prove
+// single submission and rejects receipts from zero values or another owner.
 func TestGenerationReceiptOriginAndCopiedGrantState(t *testing.T) {
 	g, cfg := generationFixture(t, generationAPI(t, ""))
 	grant := generationPrepare(t, g, "pod-a", "zone")
@@ -237,6 +251,8 @@ func TestGenerationReceiptOriginAndCopiedGrantState(t *testing.T) {
 	}
 }
 
+// TestGenerationConcurrentFenceCopiesHaveOneCompleteReceipt races copied owners
+// and checks that exactly one closure produces the complete original receipt.
 func TestGenerationConcurrentFenceCopiesHaveOneCompleteReceipt(t *testing.T) {
 	g, _ := generationFixture(t, generationAPI(t, ""))
 	generationPrepare(t, g, "pod-a", "zone-a")
@@ -271,6 +287,8 @@ func TestGenerationConcurrentFenceCopiesHaveOneCompleteReceipt(t *testing.T) {
 	}
 }
 
+// TestGenerationCanceledFenceKeepsAdmissionClosed checks that cancellation
+// returns unknown completion while every later commit remains inadmissible.
 func TestGenerationCanceledFenceKeepsAdmissionClosed(t *testing.T) {
 	g, _ := generationFixture(t, generationAPI(t, ""))
 	grant := generationPrepare(t, g, "pod-a", "zone")
@@ -288,6 +306,8 @@ func TestGenerationCanceledFenceKeepsAdmissionClosed(t *testing.T) {
 	}
 }
 
+// TestGenerationRejectsMalformedOrReaderOnlyMembership checks opt-in, canonical
+// identity and membership, and rejection of a future-schema reader observation.
 func TestGenerationRejectsMalformedOrReaderOnlyMembership(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -324,6 +344,8 @@ func TestGenerationRejectsMalformedOrReaderOnlyMembership(t *testing.T) {
 	}
 }
 
+// TestGenerationNonmembersAndLifetimeBudget denies unlisted actors and checks
+// that the owner cannot export more than 256 capabilities over its lifetime.
 func TestGenerationNonmembersAndLifetimeBudget(t *testing.T) {
 	g, _ := generationFixture(t, generationAPI(t, ""))
 	if _, err := g.Prepare(context.Background(), "foreign", "zone", "attempt-1"); !errors.Is(err, ErrInvalid) {
