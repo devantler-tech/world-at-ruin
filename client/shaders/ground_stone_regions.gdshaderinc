@@ -1,3 +1,8 @@
+uniform bool region_stone_enabled = false;
+uniform vec3 stone_region_sites[9];
+uniform vec2 stone_region_profiles[4];
+uniform float stone_region_blend_band = 9.0;
+
 // Regional exposure never re-deals the cellular stone identities or their substance.
 // Blend all competing regions, taking each region's strongest site once. Summing
 // same-region sites would create a density seam where their Voronoi cells meet.

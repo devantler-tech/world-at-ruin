@@ -17,9 +17,6 @@ func _ready() -> void:
 	var shader := Shader.new()
 	shader.code = """shader_type canvas_item;
 uniform vec2 probe_at;
-uniform vec3 stone_region_sites[9];
-uniform vec2 stone_region_profiles[4];
-uniform float stone_region_blend_band = 9.0;
 #include "res://shaders/ground_stone_regions.gdshaderinc"
 void fragment() { COLOR = vec4(regional_stone_thresholds(probe_at), 0.0, 1.0); }
 """

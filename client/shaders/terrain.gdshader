@@ -78,10 +78,6 @@ uniform vec3 plate_pale: source_color = vec3(0.54, 0.51, 0.45);
 // WAR_GROUND_PLATES=1; this flips to true, and the uniform is retired, once the
 // treatment clears the bar.
 uniform bool plates_enabled = false;
-uniform bool region_stone_enabled = false;
-uniform vec3 stone_region_sites[9];
-uniform vec2 stone_region_profiles[4];
-uniform float stone_region_blend_band = 9.0;
 #include "res://shaders/ground_stone_regions.gdshaderinc"
 uniform float plate_scale = 0.85;
 // Crack half-width in plate units (so a crack stays the same fraction of a

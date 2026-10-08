@@ -29,10 +29,6 @@ uniform vec3 plate_basalt: source_color = vec3(0.22, 0.21, 0.22);
 uniform vec3 plate_ferric: source_color = vec3(0.42, 0.26, 0.18);
 uniform vec3 plate_pale: source_color = vec3(0.54, 0.51, 0.45);
 uniform bool plates_enabled = false;
-uniform bool region_stone_enabled = false;
-uniform vec3 stone_region_sites[9];
-uniform vec2 stone_region_profiles[4];
-uniform float stone_region_blend_band = 9.0;
 #include "res://shaders/ground_stone_regions.gdshaderinc"
 uniform float plate_scale = 0.85;
 uniform float crack_width: hint_range(0.001, 0.3) = 0.032;
