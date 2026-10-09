@@ -20,7 +20,8 @@ import (
 //go:embed testdata/golden_allocator_grant_journal_v1.json
 var nativeJournalFixture []byte
 
-const journalKey = "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8"
+// journalObjectID is the public deterministic fixture address, not a credential.
+const journalObjectID = "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8"
 
 // journalExpected pins every field independently of the reader and object.
 func journalExpected(count int) allocatorjournal.JournalObservation {
@@ -58,7 +59,7 @@ func journalDocument(t *testing.T, count int) []byte {
 // journalSeed writes only to the fresh database owned by newFixture.
 func (f *fixture) journalSeed(raw []byte) {
 	f.t.Helper()
-	if _, err := f.db.Exec("INSERT INTO storage(collection,key,user_id,value,version,read,write,create_time,update_time) VALUES($1,$2,$3::uuid,$4::text::jsonb,md5($4::text),0,0,now(),now())", allocatorjournal.JournalCollection, journalKey, zeroOwner, string(raw)); err != nil {
+	if _, err := f.db.Exec("INSERT INTO storage(collection,key,user_id,value,version,read,write,create_time,update_time) VALUES($1,$2,$3::uuid,$4::text::jsonb,md5($4::text),0,0,now(),now())", allocatorjournal.JournalCollection, journalObjectID, zeroOwner, string(raw)); err != nil {
 		f.t.Fatal("seed disposable journal")
 	}
 }
@@ -68,7 +69,7 @@ func (f *fixture) journalRow() (string, string, int, int) {
 	f.t.Helper()
 	var value, version string
 	var read, write int
-	if err := f.db.QueryRow("SELECT value::text,version,read,write FROM storage WHERE collection=$1 AND key=$2 AND user_id=$3::uuid", allocatorjournal.JournalCollection, journalKey, zeroOwner).Scan(&value, &version, &read, &write); err != nil {
+	if err := f.db.QueryRow("SELECT value::text,version,read,write FROM storage WHERE collection=$1 AND key=$2 AND user_id=$3::uuid", allocatorjournal.JournalCollection, journalObjectID, zeroOwner).Scan(&value, &version, &read, &write); err != nil {
 		f.t.Fatal("read disposable journal")
 	}
 	return value, version, read, write
@@ -211,7 +212,7 @@ func TestNativeJournalRefusals(t *testing.T) {
 					if fault == "public-write" {
 						column = "write"
 					}
-					if _, err := f.db.Exec("UPDATE storage SET "+column+"=1 WHERE collection=$1 AND key=$2", allocatorjournal.JournalCollection, journalKey); err != nil {
+					if _, err := f.db.Exec("UPDATE storage SET "+column+"=1 WHERE collection=$1 AND key=$2", allocatorjournal.JournalCollection, journalObjectID); err != nil {
 						t.Fatal(err)
 					}
 				}

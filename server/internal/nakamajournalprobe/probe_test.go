@@ -16,6 +16,9 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+// journalObjectID pins the public deterministic storage address of this fixture.
+const journalObjectID = "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8"
+
 type failingStorage struct{ reads int }
 
 func (s *failingStorage) StorageRead(context.Context, []*runtime.StorageRead) ([]*api.StorageObject, error) {
@@ -46,7 +49,7 @@ type replyStorage struct {
 
 func (s *replyStorage) StorageRead(_ context.Context, reads []*runtime.StorageRead) ([]*api.StorageObject, error) {
 	s.reads++
-	if len(reads) != 1 || reads[0].Collection != allocatorjournal.JournalCollection || reads[0].Key != "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8" || reads[0].UserID != "" {
+	if len(reads) != 1 || reads[0].Collection != allocatorjournal.JournalCollection || reads[0].Key != journalObjectID || reads[0].UserID != "" {
 		panic("unexpected journal read")
 	}
 	if s.after != nil {
@@ -81,7 +84,7 @@ func TestCompleteProbeAndUnknownControls(t *testing.T) {
 			env := map[string]string{"WAR_ALLOCATOR_JOURNAL_PROBE_ENABLED": "true", "WAR_ALLOCATOR_JOURNAL_PROBE_BINDING": string(cfg)}
 			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), runtime.RUNTIME_CTX_ENV, env))
 			defer cancel()
-			storage := &replyStorage{row: &api.StorageObject{Collection: allocatorjournal.JournalCollection, Key: "c3be3a401178b7bbc9e7df4140309335b7d5f06188f18c7c8dadcd2378e466e8", UserId: nakamastorage.SystemOwnerID, Version: binding.Version, Value: string(raw)}}
+			storage := &replyStorage{row: &api.StorageObject{Collection: allocatorjournal.JournalCollection, Key: journalObjectID, UserId: nakamastorage.SystemOwnerID, Version: binding.Version, Value: string(raw)}}
 			switch fault {
 			case "error-with-row":
 				storage.err = errors.New("private-provider-diagnostic")
