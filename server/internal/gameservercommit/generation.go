@@ -2,13 +2,10 @@ package gameservercommit
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"slices"
 	"sync"
 
-	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
+	"github.com/devantler-tech/world-at-ruin/server/internal/allocatorjournal"
 	"github.com/devantler-tech/world-at-ruin/server/nakamageneration"
 )
 
@@ -55,22 +52,7 @@ func NewGeneration(cfg GenerationConfig) (*Generation, error) {
 // validGenerationRecord checks writable-schema identity, canonical bounded
 // membership and its digest; it does not authenticate production writers.
 func validGenerationRecord(r nakamageneration.Record) bool {
-	if r.ReaderOnly() || r.State != "open" || !handoffidentity.OpaqueUTF8(r.GenerationID, 128) ||
-		r.Version == "*" || !handoffidentity.OpaqueUTF8(r.Version, 1024) ||
-		len(r.MemberPodUIDs) == 0 || len(r.MemberPodUIDs) > maxGrants {
-		return false
-	}
-	for i, member := range r.MemberPodUIDs {
-		if !handoffidentity.OpaqueUTF8(member, 128) || (i > 0 && member <= r.MemberPodUIDs[i-1]) {
-			return false
-		}
-	}
-	encoded, err := json.Marshal(r.MemberPodUIDs)
-	if err != nil {
-		return false
-	}
-	digest := sha256.Sum256(append([]byte("world-at-ruin/allocator-generation-members/v1\n"), encoded...))
-	return r.MemberSetDigest == hex.EncodeToString(digest[:])
+	return !r.ReaderOnly() && r.State == "open" && allocatorjournal.ValidGenerationBinding(r.GenerationID, r.Version, r.MemberPodUIDs, r.MemberSetDigest)
 }
 
 // GenerationGrant cannot be detached from its generation's admission gate.
