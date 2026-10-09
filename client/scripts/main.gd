@@ -426,20 +426,20 @@ func _check_updates_after_boot() -> void:
 	else:
 		var checker := UpdateCheck.new()
 		add_child(checker)
-		var installed := {
-			"shell_version": DevLog.VERSION, "pack_version": DevLog.VERSION,
-			"save_schema": CharacterFactory.RECIPE_VERSION,
-			"save_capability": UpdateManifest.SAVE_CAPABILITY_READS,
-			"protocol": WireCodec.VERSION,
-		}
+		var installed := _installed_update_facts()
+		if installed.is_empty():
+			checker.queue_free()
+			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
+			print("UPDATE_CHECK_FINISHED — refused")
+			return
 		var result: Dictionary = await checker.check(installed, loaded["document"])
 		if is_instance_valid(checker):
 			checker.queue_free()
 		if not is_inside_tree() or is_queued_for_deletion():
 			return
 		_update_check_result = result
-		if not _update_save_requirements_known():
-			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown", "decision": {}}
+		if not _update_save_requirements_known() or not _update_requirements_unchanged(installed):
+			_update_check_result = {"trusted": false, "error": "installed save requirements are unknown or changed", "decision": {}}
 		elif _update_check_result.get("trusted", false):
 			_update_check_result = _retain_checked_update(installed, loaded["document"], _update_check_result,
 				Time.get_datetime_string_from_system(true) + "Z")
@@ -455,6 +455,29 @@ func _retain_checked_update(installed: Dictionary, config: Dictionary,
 	facts["observed_at"] = result.get("observed_at")
 	return UpdateHistory.accept(UpdateHistory.history_path(), facts, config,
 		result["manifest"], result["head"], observed_at)
+
+
+## Save requirements describe accepted state, independently of this reader's
+## ceiling. A v5 character needs capability 8 even while new saves remain v4/7.
+func _installed_update_facts() -> Dictionary:
+	var recipe: Variant = CharacterStore.load_saved()
+	if recipe == null and CharacterStore.is_refused(CharacterStore.save_path()):
+		return {}
+	var schema := CharacterFactory.RECIPE_WRITE_VERSION
+	if recipe is Dictionary:
+		schema = maxi(schema, int(recipe["version"]))
+	return {
+		"shell_version": DevLog.VERSION, "pack_version": DevLog.VERSION,
+		"save_schema": schema,
+		"save_capability": 8 if schema >= CharacterFactory.STATURE_VERSION else UpdateManifest.SAVE_CAPABILITY_WRITES,
+		"save_reads_max": CharacterFactory.RECIPE_VERSION,
+		"protocol": WireCodec.VERSION,
+	}
+
+
+func _update_requirements_unchanged(installed: Dictionary) -> bool:
+	var current := _installed_update_facts()
+	return not current.is_empty() and current.get("save_schema") == installed.get("save_schema") and current.get("save_capability") == installed.get("save_capability")
 
 
 func _update_save_requirements_known() -> bool:
