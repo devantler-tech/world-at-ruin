@@ -271,7 +271,7 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-two named mandatory scenarios use
+The image refuses a default invocation. Twenty-five named mandatory scenarios use
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
 Eleven scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.
@@ -302,9 +302,45 @@ substitute the ordinary graph for the full runtime graph. The container build
 checks that dependency download leaves both lock files byte-identical and scans
 the full native server/plugin for reachable vulnerabilities.
 
-These disposable checks establish source behavior. Production serving artifacts,
+These disposable checks establish behavior of the identified candidate artifacts.
+They do not establish adoption by production serving artifacts or compatibility of
+the actual retained rollback artifact. Production serving artifacts,
 rollout, attested credentials and the existing authority/fencing gates remain
 under #569 and #1177. Experimental build retirement is tracked by #1192. See
 [ADR 0022](../../docs/adr/0022-prove-the-native-nakama-runtime-with-disposable-storage.md) and
 [ADR 0023](../../docs/adr/0023-exercise-native-handoffs-through-built-sealed-zones.md) and
 [ADR 0024](../../docs/adr/0024-negotiate-authoritative-movement-on-opt-in-zone-sockets.md).
+
+
+## Default-off journal observation
+
+The packaged plugin has a read-only startup observation for the inactive
+allocator grant journal. It does nothing when
+`WAR_ALLOCATOR_JOURNAL_PROBE_ENABLED` is absent or `false`, even if its
+subsettings are malformed. Explicit `true` requires
+`WAR_ALLOCATOR_JOURNAL_PROBE_BINDING` in Nakama's `runtime.env`: a JSON
+encoding of the independently pinned journal binding (generation identity and
+source version, canonical membership and digest, incarnation, namespace, Fleet,
+complete issued count/digest and exact journal object version). Expectations
+never come from the stored row. Reads have a five-second deadline.
+
+A complete private read logs only its grant count and full-observation SHA-256.
+An invalid, missing, conflicting, incomplete or canceled read prevents startup
+with a generic unknown observation and no partial report or provider details.
+The explicit `WAR_ALLOCATOR_JOURNAL_PROBE_CANCEL_READ=true` fixture control
+cancels that read before dispatch; it does not cancel the parent initialization
+context. It is absent in normal invocation.
+
+Three required native scenarios use the same candidate binary and plugin,
+verify their bundle hashes and architecture, and separately prove default-off
+startup, complete zero/one/two-grant observations, and eleven unknown controls.
+Fixture writes happen only in fresh disposable PostgreSQL setup. Reads leave
+object bytes, version and privacy unchanged and make no allocation requests.
+No helper plugin, journal writer, allocation capability, receipt, admission
+closure, barrier or quarantine authority is introduced. Existing generation
+and lease compatibility trials remain mandatory.
+
+This is candidate-reader evidence for #1293. Every serving reader and the
+actual retained rollback artifact still require compatibility proof before
+future journal writers or recovery are activated under #793/#569. See
+[ADR 0035](../../docs/adr/0035-observe-journals-through-the-packaged-nakama-candidate.md).

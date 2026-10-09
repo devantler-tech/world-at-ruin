@@ -63,7 +63,7 @@ linters:
         source: 'response, err := client\.Do\(request\)'
       # Nakama's public context API uses these exact string constants. RPC
       # fixtures must reproduce it, not use private keys the server never sets.
-      - path: ^(nakamaauth|nakamaruntime)/.*_test\.go$
+      - path: ^(nakamaauth|nakamaruntime|internal/nakamajournalprobe)/.*_test\.go$
         linters:
           - staticcheck
         text: "SA1029: should not use built-in type string as key"

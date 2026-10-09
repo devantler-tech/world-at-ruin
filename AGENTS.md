@@ -912,10 +912,10 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-two
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-five
   named scenarios against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
-  authoritative movement. Both native Linux
+  authoritative movement and complete read-only journal observations. Both native Linux
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
   and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
@@ -1049,11 +1049,14 @@ everything shipped afterwards is held to.
   Its explicitly enabled `JournalReader` reads a complete, private exact-version
   inventory against independently pinned generation, membership, incarnation and
   issued-set expectations. The StorageRead-only interface cannot write journals.
-  Source readback is diagnostic data and cannot recreate grants or receipts.
+  The shared read-only leaf also supplies the default-off Nakama startup probe.
+  Source and candidate readback are diagnostic data and cannot recreate grants or receipts.
   The native trial demonstrates that journal readback alone leaves unfenced old
   writes able to allocate and that a fresh owner rejects a prior receipt.
   [ADR 0032](docs/adr/0032-read-issued-grant-journals-without-restoring-authority.md)
   keeps journal writers and serving-reader/retained-artifact activation separate.
+  [ADR 0035](docs/adr/0035-observe-journals-through-the-packaged-nakama-candidate.md)
+  adds native candidate readback while preserving those activation gates.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

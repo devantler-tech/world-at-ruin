@@ -38,7 +38,9 @@ barriers, and a fresh owner rejects the previous owner's receipt. The journal
 fixture uses the shared Nakama storage fake; this proves the source reader,
 not a serving Nakama rollout or actual retained-artifact compatibility.
 
-No journal writer or runtime registration exists. The permanent schema fixture
+No journal writer exists. The default-off read-only startup observation in
+[ADR 0035](0035-observe-journals-through-the-packaged-nakama-candidate.md) adds
+identified candidate-reader evidence. The permanent schema fixture
 and production-reader registration preserve the reader contract before future
 writer work. Activation requires every serving reader and the actual retained
 rollback artifact to accept proposed documents, a complete durable grant
