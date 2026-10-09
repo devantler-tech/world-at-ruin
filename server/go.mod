@@ -1,6 +1,6 @@
 module github.com/devantler-tech/world-at-ruin/server
 
-go 1.27.1
+go 1.27.2
 
 require (
 	agones.dev/agones v1.61.0
@@ -9,7 +9,7 @@ require (
 	github.com/heroiclabs/nakama-common v1.48.0
 	github.com/heroiclabs/nakama/v3 v3.41.0
 	github.com/jackc/pgx/v5 v5.11.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	google.golang.org/api v0.299.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12

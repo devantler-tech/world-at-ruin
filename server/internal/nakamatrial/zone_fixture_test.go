@@ -448,7 +448,7 @@ func verifyZoneArtifact(t *testing.T) {
 		t.Fatal("packaged zone digest mismatch")
 	}
 	info, err := buildinfo.ReadFile(*zoneArtifact)
-	if err != nil || info.GoVersion != "go1.27.1" || info.Main.Path != "github.com/devantler-tech/world-at-ruin/server" {
+	if err != nil || info.GoVersion != "go1.27.2" || info.Main.Path != "github.com/devantler-tech/world-at-ruin/server" {
 		t.Fatal("packaged zone provenance mismatch")
 	}
 }
