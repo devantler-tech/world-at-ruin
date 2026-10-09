@@ -1,15 +1,24 @@
 class_name SaveContractStage
 extends RefCounted
-## The trusted harness recognizes only the retained reader and its planned
-## mastery activation. Advancing beyond these stages needs another reviewed
-## preparation; candidate constants cannot invent a new supported contract.
+## Reviewed retained mastery stages and the one planned stature reader.
+## Reader preparation never authorizes capability8 writes or recipe5 origination.
 
 
 static func refusal_reason() -> String:
-	if UpdateManifest.SAVE_CAPABILITY_READS != 7 or SaveVault.VAULT_READ_VERSION != 5:
-		return "the retained mastery reader must advertise capability 7 / vault v5"
-	var writes := UpdateManifest.SAVE_CAPABILITY_WRITES
-	var vault := SaveVault.VAULT_VERSION
-	if not ((writes == 6 and vault == 4) or (writes == 7 and vault == 5)):
-		return "unsupported save writer stage: capability %d / vault v%d" % [writes, vault]
-	return ""
+	return stage_refusal(
+		UpdateManifest.SAVE_CAPABILITY_READS, SaveVault.VAULT_READ_VERSION,
+		UpdateManifest.SAVE_CAPABILITY_WRITES, SaveVault.VAULT_VERSION,
+		CharacterFactory.RECIPE_VERSION, CharacterFactory.RECIPE_WRITE_VERSION)
+
+
+static func stage_refusal(
+		reads: int, vault_reads: int, writes: int, vault_writes: int,
+		recipe_reads: int, recipe_writes: int) -> String:
+	if vault_reads != 5 or recipe_writes != 4:
+		return "unsupported vault reader or recipe writer stage"
+	if reads == 7 and recipe_reads == 4:
+		if (writes == 6 and vault_writes == 4) or (writes == 7 and vault_writes == 5):
+			return ""
+	elif reads == 8 and recipe_reads == 5 and writes == 7 and vault_writes == 5:
+		return ""
+	return "unsupported save reader/writer stage"

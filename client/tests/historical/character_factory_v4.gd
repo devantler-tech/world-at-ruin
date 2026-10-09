@@ -1,4 +1,5 @@
-class_name CharacterFactory
+extends RefCounted
+const HISTORICAL_KIT := preload("res://tests/historical/kit_assembly_v4.gd")
 ## Runtime composition layer of the character system (issue #24, stages 2+3):
 ## builds a character from a RECIPE — a versioned, name-keyed parameter
 ## dictionary — on top of the baked humanoid kit, and dresses it from the
@@ -24,8 +25,6 @@ class_name CharacterFactory
 ## (Godot 4.7 desyncs its rest/pose caches).
 
 const RECIPE_VERSION := 4
-## Highest schema this build may originate; reader expansion never raises it.
-const RECIPE_WRITE_VERSION := 4
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
 const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
 const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
@@ -224,7 +223,7 @@ static func build(recipe: Dictionary) -> Node3D:
 			_apply_girth(skeleton, bone, recipe["bone_girth"][key])
 	for key: String in recipe.get("bone_scale", {}):
 		for bone in _bones_for(skeleton, key):
-			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
+			HISTORICAL_KIT.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
 	for key: String in recipe.get("joint_push", {}):
 		for bone in _bones_for(skeleton, key):
 			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
@@ -237,7 +236,7 @@ static func build(recipe: Dictionary) -> Node3D:
 	for hand in ["hand_l", "hand_r"]:
 		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
 	_apply_contrapposto(skeleton)
-	KitAssembly.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
+	HISTORICAL_KIT.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
 
 	for piece_name in pieces_to_wear(recipe.get("equipment", {})):
 		_equip_piece(skeleton, mesh_instance, piece_name, recipe.get("shapes", {}))
@@ -523,7 +522,7 @@ static func weapon_socket(instance: Node3D, hand_bone: String) -> BoneAttachment
 ## silently skipping unknown fields would render a character that is not what
 ## its recipe says (a forward-compat lie).
 static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: MeshInstance3D) -> String:
-	var version_problem := KitAssembly.recipe_version_problem(recipe, RECIPE_VERSION)
+	var version_problem := HISTORICAL_KIT.recipe_version_problem(recipe, RECIPE_VERSION)
 	if version_problem != "":
 		return version_problem
 	var version := int(recipe["version"])
@@ -663,7 +662,7 @@ static func _preserves_deformation_value(
 
 ## Loads a recipe JSON from disk; null on parse failure (with an error).
 static func load_recipe(path: String) -> Variant:
-	return KitAssembly.load_recipe_object(path, "CharacterFactory")
+	return HISTORICAL_KIT.load_recipe_object(path, "CharacterFactory")
 
 
 ## Order-stable fingerprint of a built character: skeleton global rests plus
@@ -675,7 +674,7 @@ static func fingerprint(instance: Node3D) -> String:
 	var skeleton := find_skeleton(instance)
 	if skeleton == null or find_skinned_mesh(skeleton) == null:
 		return "no-skeleton-or-mesh"
-	var ctx := KitAssembly.rest_hash_context(skeleton)
+	var ctx := HISTORICAL_KIT.rest_hash_context(skeleton)
 	var names := PackedStringArray()
 	var meshes := {}
 	for child in skeleton.get_children():
@@ -686,7 +685,7 @@ static func fingerprint(instance: Node3D) -> String:
 	var total_verts := 0
 	for mesh_name in names:
 		ctx.update(mesh_name.to_utf8_buffer())
-		var mixed := KitAssembly.mixed_vertices(meshes[mesh_name])
+		var mixed := HISTORICAL_KIT.mixed_vertices(meshes[mesh_name])
 		total_verts += mixed.size()
 		if not mixed.is_empty():
 			ctx.update(mixed.to_byte_array())
@@ -699,7 +698,7 @@ static func fingerprint(instance: Node3D) -> String:
 
 ## CPU linear-blend skinning of a MeshInstance3D against its skeleton's
 ## current global poses. Returns the deformed vertex stream, surface-ordered.
-## `KitAssembly.mixed_vertices` answers "what shape is this mesh in its own
+## `HISTORICAL_KIT.mixed_vertices` answers "what shape is this mesh in its own
 ## space"; this answers "where does that shape actually land once the skeleton
 ## moves" — which is what an equipment piece has to agree with to sit on the
 ## body.
@@ -736,12 +735,12 @@ static func cpu_skin(skel: Skeleton3D, mi: MeshInstance3D) -> PackedVector3Array
 
 
 static func find_skeleton(node: Node) -> Skeleton3D:
-	return KitAssembly.find_skeleton(node)
+	return HISTORICAL_KIT.find_skeleton(node)
 
 
 ## The BODY mesh — equipment meshes (Equip_ prefix) are deliberately skipped.
 static func find_skinned_mesh(skeleton: Skeleton3D) -> MeshInstance3D:
-	return KitAssembly.find_skinned_mesh(skeleton, EQUIP_PREFIX)
+	return HISTORICAL_KIT.find_skinned_mesh(skeleton, EQUIP_PREFIX)
 
 
 ## A recipe bone key is an exact bone name or a bare name with _l/_r variants.

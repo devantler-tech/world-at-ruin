@@ -224,7 +224,7 @@ static func build(sequence: Variant, not_after: Variant, protocol_min: Variant, 
 			"save_schema": {
 				"min": SAVE_SCHEMA_MIN,
 				# What a freshly-written save carries, straight from the writer.
-				"writes": CharacterFactory.RECIPE_VERSION,
+				"writes": CharacterFactory.RECIPE_WRITE_VERSION,
 				"capability": SAVE_CAPABILITY_WRITES,
 			},
 			# No mountable content pack is retained yet. The v0.52.0 whole-app

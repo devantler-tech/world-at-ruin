@@ -71,7 +71,7 @@ func _ready() -> void:
 	if not SaveContractStage.refusal_reason().is_empty():
 		_fail(SaveContractStage.refusal_reason())
 		return
-	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != 7 \
+	if int((manifest["shell"] as Dictionary).get("reads_capability_max", -1)) != UpdateManifest.SAVE_CAPABILITY_READS \
 			or int((manifest["save_schema"] as Dictionary).get("capability", -1)) != UpdateManifest.SAVE_CAPABILITY_WRITES:
 		_fail("active contracts advertise the wrong read/write capabilities: %s/%s" % [
 			(manifest["shell"] as Dictionary).get("reads_capability_max"),

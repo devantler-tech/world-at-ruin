@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Execute the regression suite from a trusted workflow snapshot against a
 # candidate checkout. The candidate supplies product code; it never supplies
-# the selector, test harness, historical fixtures, or verdict runner. The one
-# candidate data declaration is validated against the trusted capability ledger.
+# the selector, test harness, historical fixtures, or verdict runner. The
+# candidate declarations are reconstructed from reviewed capability/recipe history.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -124,6 +124,66 @@ if ! cmp -s "${candidate_root}/${ledger_path}" "${validated_ledger}"; then
 	fi
 fi
 
+# The stature expansion is one reviewed schema declaration, never arbitrary
+# candidate test data. Future golden bytes come exclusively from the base plan.
+recipe_ledger_path='client/tests/data/shipped_recipe_versions.txt'
+recipe_fixture_path='client/tests/data/golden_recipe_v5.json'
+planned_fixture_path='client/tests/data/planned_recipe_v5.json'
+for root in "${trusted_root}" "${candidate_root}"; do
+	if [ -L "${root}/${recipe_ledger_path}" ] || [ ! -f "${root}/${recipe_ledger_path}" ]; then
+		echo '::error::recipe declaration is missing or symlinked' >&2
+		exit 1
+	fi
+done
+if [ "$(tail -c 1 "${trusted_root}/${recipe_ledger_path}" | wc -l)" -ne 1 ]; then
+	echo '::error::trusted recipe declaration lacks its final newline' >&2
+	exit 1
+fi
+trusted_recipe="$(awk '
+	/^#/ || /^$/ { next }
+	!/^[1-9][0-9]*$/ || $0 != ++version { invalid = 1; exit }
+	END {
+		if (invalid || (version != 4 && version != 5)) exit 1
+		print version
+	}
+' "${trusted_root}/${recipe_ledger_path}")" || {
+	echo '::error::trusted recipe declaration is malformed or unsupported' >&2
+	exit 1
+}
+validated_recipe="${scratch_root}/validated-recipe.txt"
+validated_fixture="${scratch_root}/validated-recipe-v5.json"
+cp "${trusted_root}/${recipe_ledger_path}" "${validated_recipe}"
+candidate_recipe="${trusted_recipe}"
+if ! cmp -s "${candidate_root}/${recipe_ledger_path}" "${validated_recipe}"; then
+	if [ "${trusted_recipe}" != 4 ]; then
+		echo '::error::recipe declaration differs from shipped history' >&2
+		exit 1
+	fi
+	printf '5\n' >>"${validated_recipe}"
+	if ! cmp -s "${candidate_root}/${recipe_ledger_path}" "${validated_recipe}"; then
+		echo '::error::recipe declaration must preserve history and append only recipe5' >&2
+		exit 1
+	fi
+	candidate_recipe=5
+fi
+if [ "${candidate_recipe}" = 5 ]; then
+	fixture_source="${trusted_root}/${recipe_fixture_path}"
+	if [ "${trusted_recipe}" = 4 ]; then
+		fixture_source="${trusted_root}/${planned_fixture_path}"
+	fi
+	if [ -L "${fixture_source}" ] || [ ! -f "${fixture_source}" ] ||
+		[ -L "${candidate_root}/${recipe_fixture_path}" ] ||
+		[ ! -f "${candidate_root}/${recipe_fixture_path}" ] ||
+		! cmp -s "${fixture_source}" "${candidate_root}/${recipe_fixture_path}"; then
+		echo '::error::recipe declaration needs the exact trusted recipe5 fixture' >&2
+		exit 1
+	fi
+	cp "${fixture_source}" "${validated_fixture}"
+elif [ -e "${candidate_root}/${recipe_fixture_path}" ] || [ -L "${candidate_root}/${recipe_fixture_path}" ]; then
+	echo '::error::recipe declaration does not permit a recipe5 fixture' >&2
+	exit 1
+fi
+
 # Do not mutate the checkout Actions produced. Copy only tracked-worktree
 # content (never its .git directory), then replace the candidate-controlled
 # harness wholesale with the snapshot that contains this workflow.
@@ -145,6 +205,10 @@ cp -R "${trusted_tests}" "${evaluation_root}/client/tests"
 cp "${trusted_project}" "${evaluation_root}/client/project.godot"
 cp "${validated_ledger}" "${evaluation_root}/${ledger_path}"
 rm "${validated_ledger}"
+cp "${validated_recipe}" "${evaluation_root}/${recipe_ledger_path}"
+if [ "${candidate_recipe}" = 5 ]; then
+	cp "${validated_fixture}" "${evaluation_root}/${recipe_fixture_path}"
+fi
 
 if ! (
 	cd "${evaluation_root}"

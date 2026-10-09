@@ -211,7 +211,8 @@ func _installed_current() -> Dictionary:
 	return {
 		"shell_version": DevLog.VERSION,
 		"pack_version": DevLog.VERSION,
-		"save_schema": CharacterFactory.RECIPE_VERSION,
+		"save_schema": CharacterFactory.RECIPE_WRITE_VERSION,
+		"save_reads_max": CharacterFactory.RECIPE_VERSION,
 		"save_capability": UpdateManifest.SAVE_CAPABILITY_WRITES,
 		"protocol": WireCodec.VERSION,
 		"manifest_sequence_high_water": SEQUENCE - 1,

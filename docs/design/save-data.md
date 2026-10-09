@@ -81,11 +81,16 @@ when an expanded document is already present; rollback safety requires both halv
   adds the new golden in the same pull request. A same-schema addition raises only the read-capability
   ceiling. Neither change activates the writer.
 
-Do not blindly raise a constant that also controls writing. `CharacterFactory.RECIPE_VERSION`
-currently feeds both `UpdateManifest.shell.reads_max` and `UpdateManifest.save_schema.writes`, while
-`SaveVault.VAULT_VERSION` feeds the version of a new empty vault. Split the read ceiling from the
-write version before schema read support advances. An expansion that starts writing is not an
-expansion.
+The recipe read ceiling is `CharacterFactory.RECIPE_VERSION`; the independent origination
+ceiling is `CharacterFactory.RECIPE_WRITE_VERSION`. The manifest derives shell reads from the
+former and recipe writes from the latter. `SaveVault.VAULT_VERSION` similarly governs new vault
+writes independently of its reader ceiling. Never advance a writer as part of reader preparation.
+
+The reviewed harness owns `planned_recipe_v5.json` for the stature expansion. Its controller may
+accept exactly recipe history plus `5` and that fixture, reconstructing both from trusted bytes.
+The planned stage is recipe reads 5 / writes 4 and capability reads 8 / writes 7. Preparation
+keeps the actual reader at recipe v4/capability 7; it neither enables new saved values nor proves a
+retained expanded rollback release. See [ADR 0033](../adr/0033-prepare-the-trusted-stature-reader-contract.md).
 
 ### 2. Bake the expansion
 
