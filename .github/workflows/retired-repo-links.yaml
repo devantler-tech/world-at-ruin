@@ -65,4 +65,3 @@ jobs:
           echo 'PASS: clean scan, seeded retired link rejection, and missing configuration refusal'
       - name: Guard routing and credential boundary cannot be bypassed
         run: bash tools/retired-repo-links-workflow.test.sh
-
