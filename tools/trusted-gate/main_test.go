@@ -129,6 +129,7 @@ func TestOutputFileUsesBoundedSingleLineIdentity(t *testing.T) {
 	}
 }
 
+// TestInspectReportsOverlapWithoutClaimingActivation keeps GET-only overlap proof distinct from activation.
 func TestInspectReportsOverlapWithoutClaimingActivation(t *testing.T) {
 	replacement, retained := readinessRulesetFixtures()
 	inventory := []map[string]any{readinessSummary(replacement), readinessSummary(retained)}

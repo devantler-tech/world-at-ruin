@@ -14,6 +14,7 @@ const TrustedContext = "World trusted regressions"
 // that identity, so matching it cannot authenticate an independent verdict.
 const knownActionsAppID int64 = 15368
 
+// publisherAppID accepts configured App identities and excludes the shared Actions identity.
 func publisherAppID(id int64) bool {
 	return id > 0 && id != knownActionsAppID
 }

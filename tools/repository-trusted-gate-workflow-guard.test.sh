@@ -6,6 +6,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 workflow="$root/.github/workflows/repository-trusted-regressions.yaml"
 guard="$root/tools/repository-trusted-gate-workflow-guard.sh"
+# Reports a fixture regression and exits before any success verdict.
 fail() { echo "TEST FAIL -- repository trusted gate workflow: $*" >&2; exit 1; }
 bash "$guard" "$workflow" >"$work/log" 2>&1 || { cat "$work/log"; fail 'reviewed workflow was rejected'; }
 yq -o=json '.' "$workflow" | jq -S . >"$work/baseline.json"

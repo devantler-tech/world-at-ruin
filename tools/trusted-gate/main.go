@@ -17,6 +17,7 @@ import (
 
 const mainWorkflow = "devantler-tech/world-at-ruin/.github/workflows/repository-trusted-regressions.yaml@refs/heads/main"
 
+// main runs the fixed GitHub command surface without exposing credentials in errors.
 func main() {
 	env := map[string]string{}
 	for _, key := range []string{"WAR_REPOSITORY_TRUSTED_GATE_ENABLED", "TRUSTED_GATE_APP_ID", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF", "GITHUB_WORKFLOW_SHA", "GITHUB_EVENT_NAME", "GITHUB_TOKEN"} {
@@ -30,6 +31,8 @@ func main() {
 	}
 }
 
+// execute admits enabled commands only from the reviewed-main workflow source.
+// Disabled resolve and publish commands return before credential or candidate validation.
 func execute(args []string, env map[string]string, client *Client, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("use resolve, publish or inspect")

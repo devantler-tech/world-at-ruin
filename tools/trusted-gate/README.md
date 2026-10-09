@@ -23,11 +23,13 @@ protection shape does not establish credentials, App permissions or live canarie
 Missing protection is not ready; unreadable, partial or ambiguous observations
 are unknown and exit unsuccessfully. Inspection never changes settings.
 
+When `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` is `true`,
 `resolve --run-id <id> --output <path>` and
 `publish --identity <resolved-json> --verdict <pending|failure|success>` require
-the canonical `workflow_run` source, exact workflow SHA, explicit scoped token
-and enabled flag. Unset or `false` emits `admitted=false` without reading
-candidate identity or publishing. Other flag values are refused. Successful
+the canonical `workflow_run` source, exact workflow SHA and an explicit scoped
+token. Unset or `false` emits `admitted=false` before validating the source or
+token, resolving the App ID, decoding candidate identity or publishing. Other
+flag values are refused. Successful
 publication re-resolves the evaluated identity and verifies the API
 acknowledgement and fresh App/name/head/status/conclusion readback.
 

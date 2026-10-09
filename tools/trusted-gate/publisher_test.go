@@ -31,6 +31,7 @@ type publisherFaults struct {
 	mutateRead    func(map[string]any)
 }
 
+// publisherClient serves complete identity and check fixtures while recording writes and injected faults.
 func publisherClient(t *testing.T, identity Identity, faults publisherFaults) (*Client, *publisherObservation) {
 	t.Helper()
 	seen := &publisherObservation{}
@@ -202,6 +203,7 @@ func TestPublisherDoesNotTrustWriteAcknowledgementWithoutReadback(t *testing.T) 
 	}
 }
 
+// TestPublisherRejectsInvalidInputsBeforeNetwork refuses malformed verdicts, App IDs and candidates before API use.
 func TestPublisherRejectsInvalidInputsBeforeNetwork(t *testing.T) {
 	for _, name := range []string{"empty outcome", "unknown outcome", "no configured app", "invalid candidate", "invalid head", "unknown identity kind", "missing run", "missing pull request", "wrong ref"} {
 		t.Run(name, func(t *testing.T) {
@@ -237,6 +239,7 @@ func TestPublisherRejectsInvalidInputsBeforeNetwork(t *testing.T) {
 	}
 }
 
+// TestPublisherQueueCheckAttachesQueueCandidate binds publication to the verified queue head.
 func TestPublisherQueueCheckAttachesQueueCandidate(t *testing.T) {
 	identity := publisherIdentity()
 	identity.Kind = "merge_group"
