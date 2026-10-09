@@ -52,7 +52,7 @@ if ! jq -e --arg evaluate "$evaluate" --arg publish "$publish" --arg verdict "$v
   def go_toolchain:
     keys == ["name","uses","with"]
     and .uses == "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
-    and .with == {"go-version":"1.27.1",cache:false};
+    and .with == {"go-version":"1.27.2",cache:false};
   keys == ["concurrency","jobs","name","on","permissions"]
   and .name == "Repository trusted regressions"
   and .on == {workflow_run:{workflows:["CI"],types:["completed"]}}

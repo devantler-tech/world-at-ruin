@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const toolchain = "go1.27.1"
+const toolchain = "go1.27.2"
 
 type bundleEvidence struct {
 	Schema         int               `json:"schema"`
@@ -65,7 +65,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 		return err
 	}
 	if strings.Fields(string(version))[2] != toolchain {
-		return errors.New("native Nakama build requires Go 1.27.1")
+		return errors.New("native Nakama build requires Go 1.27.2")
 	}
 	for _, dependency := range []struct{ path, version string }{
 		{"github.com/heroiclabs/nakama/v3", "v3.40.0"},
