@@ -38,7 +38,7 @@ func TestLockedBundleLoadsAndRejectsMismatch(t *testing.T) {
 		Go        string            `json:"go_version"`
 		Artifacts map[string]string `json:"artifact_sha256"`
 	}
-	if json.Unmarshal(bytes, &evidence) != nil || evidence.Schema != 1 || evidence.OS != "linux" || evidence.Go != "go1.27.1" || len(evidence.Artifacts) != 2 {
+	if json.Unmarshal(bytes, &evidence) != nil || evidence.Schema != 1 || evidence.OS != "linux" || evidence.Go != "go1.27.2" || len(evidence.Artifacts) != 2 {
 		t.Fatal("native bundle evidence incomplete")
 	}
 	for name, digest := range evidence.Artifacts {
