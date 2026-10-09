@@ -17,6 +17,7 @@ import (
 
 const mainWorkflow = "devantler-tech/world-at-ruin/.github/workflows/repository-trusted-regressions.yaml@refs/heads/main"
 
+// main runs the fixed GitHub command surface without exposing credentials in errors.
 func main() {
 	env := map[string]string{}
 	for _, key := range []string{"WAR_REPOSITORY_TRUSTED_GATE_ENABLED", "TRUSTED_GATE_APP_ID", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF", "GITHUB_WORKFLOW_SHA", "GITHUB_EVENT_NAME", "GITHUB_TOKEN"} {
@@ -30,6 +31,8 @@ func main() {
 	}
 }
 
+// execute admits enabled commands only from the reviewed-main workflow source.
+// Disabled resolve and publish commands return before credential or candidate validation.
 func execute(args []string, env map[string]string, client *Client, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("use resolve, publish or inspect")
@@ -60,7 +63,7 @@ func execute(args []string, env map[string]string, client *Client, out io.Writer
 	outputPath := flags.String("output", "", "GitHub output file")
 	rawIdentity := flags.String("identity", "", "resolved candidate identity")
 	verdict := flags.String("verdict", "", "pending, failure or success")
-	appID := flags.Int64("app-id", 0, "dedicated publisher App ID")
+	appID := flags.Int64("app-id", 0, "configured publisher App ID")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid arguments")
 	}
@@ -86,11 +89,11 @@ func execute(args []string, env map[string]string, client *Client, out io.Writer
 		var err error
 		*appID, err = strconv.ParseInt(env["TRUSTED_GATE_APP_ID"], 10, 64)
 		if err != nil {
-			return errors.New("dedicated publisher App ID is missing")
+			return errors.New("configured publisher App ID is missing")
 		}
 	}
-	if !independentAppID(*appID) {
-		return errors.New("an independent dedicated publisher App ID is required")
+	if !publisherAppID(*appID) {
+		return errors.New("a configured non-Actions publisher App ID is required")
 	}
 	if client == nil {
 		return errors.New("API client missing")
@@ -99,7 +102,7 @@ func execute(args []string, env map[string]string, client *Client, out io.Writer
 		if err := client.Inspect(ctx, *appID); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(out, "replacement_ready=true")
+		_, err := fmt.Fprintln(out, "protection_overlap_verified=true\nactivation_ready=unknown")
 		return err
 	}
 	identity, err := decodeIdentity(*rawIdentity)

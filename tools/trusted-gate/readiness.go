@@ -38,10 +38,10 @@ type requiredStatusParameters struct {
 
 // Inspect establishes the overlap needed before retiring the old organization
 // gate. It never writes settings, and API summaries never stand in for full
-// ruleset readback. The independent status producer must already be configured.
+// ruleset readback. It proves rule shape, not the publisher credential boundary or activation.
 func (c *Client) Inspect(ctx context.Context, appID int64) error {
-	if !independentAppID(appID) {
-		return fmt.Errorf("readiness UNKNOWN: a dedicated status producer is required")
+	if !publisherAppID(appID) {
+		return fmt.Errorf("readiness UNKNOWN: a configured status producer is required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()

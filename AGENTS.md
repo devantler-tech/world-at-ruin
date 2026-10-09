@@ -972,18 +972,24 @@ everything shipped afterwards is held to.
   do not add another World-only organization rule to select this latent source.
   The external catalogue required workflow remains active throughout activation; no ruleset cutover
   is implied by these source bytes.
-- **Repository-owned trusted verdicts are default-off:**
+- **Repository-owned verdicts are default-off:**
   `.github/workflows/repository-trusted-regressions.yaml` treats completed `CI` runs only as
-  notifications. Reviewed main code independently resolves current PR/integration or queue
-  identities, executes the frozen suite in the existing sandbox, and publishes through a separate
-  dedicated App job. Its key belongs only to the main-only `world-trusted-gate-publisher`
-  environment. Never reuse an inherited automation key or bind this context to the Actions App.
-  `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` is unset/off until explicit activation with the dedicated
-  `WAR_TRUSTED_GATE_APP_ID` and environment secret `WAR_TRUSTED_GATE_PRIVATE_KEY`.
+  notifications. Reviewed main independently resolves current PR/integration or queue identities,
+  executes the frozen suite in the existing sandbox, and publishes in a separate main-only
+  `world-trusted-gate-publisher` job. It reuses the existing organization App through `APP_ID`,
+  `APP_CLIENT_ID` and `APP_PRIVATE_KEY`; do not ask for a separate World App or private key.
+  The evaluator never receives the App key. The publisher requests a World-only token with
+  Checks write and Actions, Contents and Pull Requests read, and verifies current identity and
+  exact App/head/verdict readback. Keep `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` unset/off until
+  activation facts and canaries are verified. Do not change shared App permissions or credentials
+  as part of source preparation.
   Run `go -C tools/trusted-gate test -race ./...` plus the admission and workflow mutation tests
-  when changing it. ADR 0027 defines exact-head publication, readback, scope, overlap and recovery.
-  The operator's read-only `inspect` command proves rule shape only; live protected-key confinement,
-  nonzero scenes and tamper canaries remain separate gates before old-rule retirement.
+  when changing it. ADR 0027 defines publication, scope, overlap and recovery. The read-only
+  `inspect` command reports `protection_overlap_verified=true` and `activation_ready=unknown`:
+  rule shape does not establish publisher credential confinement or live behavior. A shared App
+  key available to other workflows can publish the same App/context, so App binding alone cannot
+  authenticate workflow origin. Retain the established organization gate until permission,
+  credential-boundary, nonzero-scene and tamper-canary proof supports a reviewed cutover.
 - **Shared workflow ownership:** lint, release creation and result aggregation use the canonical
   `devantler-tech/.github` catalogue at one reviewed release. Their independent consumers justify
   reuse. World-specific tests, policy, selectors and controller behavior remain in this repository.
