@@ -2,8 +2,25 @@
 # Exercise the real engine under the same containment as the product gate.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
+# shellcheck source=tools/trusted-regression-lifecycle.sh
+source "$root/tools/trusted-regression-lifecycle.sh"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/containers"
+export GODOT_SANDBOX_CONTAINERS="$tmp/containers"
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
+cleanup() {
+  result=$?
+  trap - EXIT INT TERM
+  trusted_stop_child
+  if bash "$root/tools/trusted-regression-phase.sh" "sandbox cleanup" bash "$root/tools/trusted-regression-phase.sh" --cleanup-containers "$GODOT_SANDBOX_CONTAINERS"; then
+    rm -rf "$tmp"
+  else
+    result=1
+  fi
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 mkdir -p "$tmp/work/client/tests"
 mkdir -p "$tmp/work/server/wire" "$tmp/work/.github/workflows"
 printf 'source data\n' >"$tmp/work/server/wire/wire.go"
@@ -70,14 +87,15 @@ func _initialize() -> void:
 GODOT
 sed -i "s|HOST_SENTINEL|$tmp/host-only|" "$tmp/work/client/tests/probe.gd"
 original="$(sha256sum "$tmp/work/client/tests/probe.gd" | cut -d' ' -f1)"
-GOTOOLCHAIN=local GOWORK=off go build -o "$tmp/cache-guard" "$root/tools/trusted-regression-cache.go"
+GOTOOLCHAIN=local GOWORK=off trusted_wait bash "$root/tools/trusted-regression-phase.sh" "host cache guard build" go build -o "$tmp/cache-guard" "$root/tools/trusted-regression-cache.go"
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/cache-guard"
 mkdir "$tmp/import-metadata"
 export GODOT_SANDBOX_METADATA="$tmp/import-metadata"
 printf 'source data\n' >"$tmp/frozen-frame.png"
 export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
-image="$(bash "$root/tools/build-trusted-regression-runtime.sh")"
+trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
+image="$(cat "$tmp/image")"
 cd "$tmp/work"
 # Require a concrete refusal from one real containment control.
 probe_failure() {
@@ -86,10 +104,10 @@ probe_failure() {
 }
 GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel ACTIONS_RUNTIME_TOKEN=host-only-sentinel \
   ACTIONS_ID_TOKEN_REQUEST_TOKEN=host-only-sentinel GITHUB_OUTPUT=host-only-sentinel GITHUB_ENV=host-only-sentinel \
-  bash "$root/tools/sandbox-godot.sh" --headless --editor --quit --path client >"$tmp/import.log" 2>&1 || probe_failure
+  trusted_wait bash "$root/tools/sandbox-godot.sh" --headless --editor --quit --path client >"$tmp/import.log" 2>&1 || probe_failure
 GODOT_SANDBOX_IMAGE="$image" GITHUB_TOKEN=host-only-sentinel ACTIONS_RUNTIME_TOKEN=host-only-sentinel \
   ACTIONS_ID_TOKEN_REQUEST_TOKEN=host-only-sentinel GITHUB_OUTPUT=host-only-sentinel GITHUB_ENV=host-only-sentinel \
-  bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/probe.gd >"$tmp/run.log" 2>&1 || probe_failure
+  trusted_wait bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/probe.gd >"$tmp/run.log" 2>&1 || probe_failure
 grep -q 'TEST PASS -- real sandbox refuses' "$tmp/run.log" || probe_failure
 if grep -Eq 'TEST FAIL|SCRIPT ERROR|^ERROR' "$tmp/import.log" "$tmp/run.log"; then
   cat "$tmp/import.log" "$tmp/run.log"
@@ -98,6 +116,24 @@ fi
 test "$(sha256sum client/tests/probe.gd | cut -d' ' -f1)" = "$original"
 test "$(cat "$tmp/host-only")" = 'host-only sentinel'
 echo 'TEST PASS -- real runtime containment and immutable harness readback'
+
+# A stopped Docker client must not leave the real engine container running.
+cat >"$tmp/work/client/tests/held.gd" <<'HELD'
+extends SceneTree
+func _initialize() -> void:
+	OS.delay_msec(60000)
+	quit(0)
+HELD
+status=0
+GODOT_SANDBOX_IMAGE="$image" WAR_TRUSTED_PROBE_SECONDS=1 trusted_wait bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/held.gd >"$tmp/held.log" 2>&1 || status=$?
+if [ "$status" -ne 124 ] && [ "$status" -ne 137 ]; then
+  cat "$tmp/held.log"
+  echo 'TEST FAIL -- held real engine did not time out' >&2
+  exit 1
+fi
+grep -Fq 'sandbox execution timed out' "$tmp/held.log"
+test -z "$(ls -A "$GODOT_SANDBOX_CONTAINERS")"
+echo 'TEST PASS -- held real engine times out and owned container absence is verified'
 
 # Exercise the production controller and every real scene under that same boundary.
 # This candidate-controlled CI trial is evidence, not the base-owned required verdict.
@@ -115,4 +151,4 @@ if [ -n "${GITHUB_EVENT_PATH:-}" ]; then
   tar -xf "$tmp/base.tar" -C "$trusted_data"
   printf 'Historical regression data pinned to %s; host helpers stay workflow-owned.\n' "$base"
 fi
-bash "$root/tools/run-sandboxed-trusted-regressions.sh" "$trusted_data" "$root"
+trusted_wait bash "$root/tools/run-sandboxed-trusted-regressions.sh" "$trusted_data" "$root"

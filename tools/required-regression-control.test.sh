@@ -26,6 +26,7 @@ mkdir -p \
 	"${bin_dir}"
 
 cp "${control_source}" "${control}"
+cp "$repo_root/tools/trusted-regression-phase.sh" "$repo_root/tools/trusted-regression-lifecycle.sh" "$workflow_source/tools/"
 printf '%s\n' 'trusted alpha harness' >"${trusted}/client/tests/alpha_test.tscn"
 printf '%s\n' 'trusted beta harness' >"${trusted}/client/tests/beta_test.tscn"
 printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alpha_test.tscn"
@@ -237,6 +238,7 @@ cat >"${bin_dir}/docker" <<'CONTAINER'
 #!/bin/bash
 set -euo pipefail
 case "$1" in
+  rm|ps) exit 0 ;;
   build) exit 0 ;;
   image) printf 'sha256:%064d\n' 0 ;;
   run)

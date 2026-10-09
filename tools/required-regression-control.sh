@@ -23,6 +23,8 @@ trusted_tests="${trusted_root}/client/tests"
 control_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 trusted_runner="${control_dir}/run-client-test.sh"
 trusted_project="${trusted_root}/client/project.godot"
+# shellcheck source=tools/trusted-regression-lifecycle.sh
+source "$control_dir/trusted-regression-lifecycle.sh"
 
 if [ ! -d "${trusted_tests}" ] || [ -L "${trusted_tests}" ]; then
 	echo "::error::trusted regression directory is missing or symlinked: ${trusted_tests}" >&2
@@ -71,10 +73,19 @@ scratch_root="$(mktemp -d "${TMPDIR:-/tmp}/required-regression-control.XXXXXX")"
 evaluation_root="${scratch_root}/candidate"
 host_logs="${scratch_root}/logs"
 # Remove only this invocation's private evaluation tree and reconstructed ledger.
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
-	rm -rf "${scratch_root}"
+  result=$?
+  trap - EXIT INT TERM
+  trusted_stop_child
+  if [ -n "${GODOT_SANDBOX_CONTAINERS:-}" ] && ! bash "$control_dir/trusted-regression-phase.sh" "sandbox cleanup" bash "$control_dir/trusted-regression-phase.sh" --cleanup-containers "$GODOT_SANDBOX_CONTAINERS"; then
+    result=1
+  fi
+  rm -rf "$scratch_root"
+  exit "$result"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 # Host output never follows a path supplied by the copied candidate.
 mkdir "${evaluation_root}" "${host_logs}"
 
@@ -210,14 +221,13 @@ if [ "${candidate_recipe}" = 5 ]; then
 	cp "${validated_fixture}" "${evaluation_root}/${recipe_fixture_path}"
 fi
 
-if ! (
-	cd "${evaluation_root}"
-	set -o pipefail
-	godot --headless --editor --quit --path client 2>&1 | tee "${host_logs}/import.log"
-); then
+cd "$evaluation_root"
+if ! trusted_wait bash "$control_dir/trusted-regression-phase.sh" "editor import" godot --headless --editor --quit --path client >"$host_logs/import.log" 2>&1; then
+  cat "$host_logs/import.log"
 	echo "::error::candidate client failed the trusted headless import" >&2
 	exit 1
 fi
+cat "$host_logs/import.log"
 if grep -qE 'SCRIPT ERROR|^ERROR' "${host_logs}/import.log"; then
 	echo "::error::candidate client reported errors during the trusted headless import" >&2
 	exit 1
@@ -226,10 +236,7 @@ fi
 ran=0
 for scene in "${trusted_scenes[@]}"; do
 	name="$(basename "${scene}" .tscn)"
-	(
-		cd "${evaluation_root}"
-		RUN_CLIENT_TEST_LOG_DIR="${host_logs}" "${trusted_runner}" "${name}" "trusted required regression failed"
-	)
+	RUN_CLIENT_TEST_LOG_DIR="$host_logs" trusted_wait "$trusted_runner" "$name" "trusted required regression failed"
 	ran=$((ran + 1))
 done
 
