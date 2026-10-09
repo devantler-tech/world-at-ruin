@@ -15,8 +15,9 @@ host; hosted Ubuntu supplies it, and macOS developers can install coreutils thro
 | Sandbox CI step | 45 minutes | Include setup, containment controls and every base-selected scene. |
 | Client smoke CI job | 75 minutes | Include other client contracts and ordinary regression coverage. |
 
-Each host phase forwards termination to its child process group, then allows five seconds before
-forced termination. Controller cancellation forwards to its active child before cleaning private
+Each host phase forwards termination to its child process group, then polls the entire group every
+100 milliseconds for up to five seconds. It returns earlier when the group is absent; resistant
+descendants retain the full grace before forced termination. Controller cancellation forwards to its active child before cleaning private
 state. Controllers check for child exit every 100 milliseconds, allowing the phase its full
 five-second grace plus a one-second scheduling margin. They return earlier after an acknowledged
 exit; this controller margin is separate from the 30-second container cleanup budget. Container names use an invocation-private random identifier, recorded outside every mounted

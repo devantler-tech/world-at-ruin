@@ -55,7 +55,11 @@ cancel() {
   trap - INT TERM
   if [ -n "$pid" ]; then
     kill -TERM -- "-$pid" 2>/dev/null || true
-    sleep "$grace"
+    local tries=0
+    while kill -0 -- "-$pid" 2>/dev/null && [ "$tries" -lt $((grace * 10)) ]; do
+      sleep 0.1
+      tries=$((tries + 1))
+    done
     kill -KILL -- "-$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   fi

@@ -127,6 +127,52 @@ echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves 
 
 FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
+# A phase returns as soon as every member of its process group acknowledges TERM.
+FAKE_READY="$tmp/phase-ready" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap "exit 130" TERM; touch "$FAKE_READY"; while :; do sleep 0.1; done' >"$tmp/phase-fast.log" 2>&1 &
+phase_pid=$!
+for ((tries=0;tries<50;tries++)); do
+  [ ! -f "$tmp/phase-ready" ] || break
+  sleep 0.1
+done
+test -f "$tmp/phase-ready"
+start=$SECONDS
+kill -TERM "$phase_pid"
+status=0
+wait "$phase_pid" || status=$?
+test "$status" -eq 130
+elapsed=$((SECONDS-start))
+if [ "$elapsed" -gt 2 ]; then
+  echo "TEST FAIL -- acknowledged phase group took ${elapsed}s to cancel" >&2
+  exit 1
+fi
+grep -Fq 'sandbox execution cancelled' "$tmp/phase-fast.log"
+# A surviving descendant retains the full grace even after its leader exits.
+cat >"$tmp/resistant-group" <<'GROUP'
+#!/bin/bash
+bash -c 'trap "" TERM; echo $$ >"$FAKE_CHILD"; touch "$FAKE_READY"; sleep 60' &
+wait
+GROUP
+FAKE_READY="$tmp/group-ready" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash "$tmp/resistant-group" >"$tmp/phase-resistant.log" 2>&1 &
+phase_pid=$!
+for ((tries=0;tries<50;tries++)); do
+  [ ! -f "$tmp/group-ready" ] || break
+  sleep 0.1
+done
+test -f "$tmp/group-ready"
+start=$SECONDS
+kill -TERM "$phase_pid"
+status=0
+wait "$phase_pid" || status=$?
+test "$status" -eq 130
+elapsed=$((SECONDS-start))
+test "$elapsed" -ge 4
+test "$elapsed" -le 7
+if kill -0 "$(cat "$tmp/child")" 2>/dev/null; then
+  state="$(ps -o stat= -p "$(cat "$tmp/child")" || true)"
+  case "$state" in Z*) ;; *) echo 'TEST FAIL -- cancelled resistant group descendant survived' >&2; exit 1;; esac
+fi
+echo 'TEST PASS -- phase cancellation returns after group acknowledgment and preserves resistant descendant grace'
+
 # Cancellation must propagate while a long phase is still running.
 sleep 60 &
 unrelated=$!
