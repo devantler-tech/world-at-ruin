@@ -21,6 +21,7 @@ env:
 jobs:
   client-smoke:
     name: Client smoke boot
+    timeout-minutes: 75
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,6 +84,7 @@ jobs:
           bash tools/repository-trusted-gate-workflow-guard.test.sh
           bash tools/repository-trusted-gate-admission.test.sh
           bash tools/sandbox-godot.test.sh
+          bash tools/trusted-regression-deadlines.test.sh
           GOTOOLCHAIN=local GOWORK=off go test tools/trusted-regression-cache.go tools/trusted-regression-cache_test.go
       - name: A new dev-log entry carries "next" rather than a predicted release
         # #518: a number written on a branch is a prediction a sibling release
@@ -920,6 +922,7 @@ jobs:
           unzip -q godot.zip
           sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
       - name: Real sandbox refuses escape and runs the full trusted suite
+        timeout-minutes: 45
         run: bash tools/sandbox-godot-isolation.test.sh
       - name: Headless import + class-name scan
         # --import alone never writes global_script_class_cache.cfg, so scene-arg
@@ -928,7 +931,7 @@ jobs:
         # pipefail: without it, `| tee` masks a crashing godot behind tee's 0.
         run: |
           set -o pipefail
-          godot --headless --editor --quit --path client 2>&1 | tee import.log
+          bash tools/trusted-regression-phase.sh "editor import" godot --headless --editor --quit --path client 2>&1 | tee import.log
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod

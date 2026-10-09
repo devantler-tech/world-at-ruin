@@ -972,6 +972,12 @@ everything shipped afterwards is held to.
   do not add another World-only organization rule to select this latent source.
   The external catalogue required workflow remains active throughout activation; no ruleset cutover
   is implied by these source bytes.
+- **Trusted setup is bounded:** runtime builds, image inspection, editor import and sandbox probes
+  use reviewed host deadlines; cancellation forwards to the active child and cleanup verifies
+  absence of invocation-owned containers. The scene verdict watchdog remains 180 seconds. Run
+  `bash tools/trusted-regression-deadlines.test.sh` and the existing controller/containment tests
+  when changing this boundary. Phase and CI budgets are in
+  [trusted regression deadlines](docs/ci/trusted-regression-budgets.md).
 - **Repository-owned verdicts are default-off:**
   `.github/workflows/repository-trusted-regressions.yaml` treats completed `CI` runs only as
   notifications. Reviewed main independently resolves current PR/integration or queue identities,

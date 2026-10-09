@@ -2,6 +2,9 @@
 # Candidate code sees immutable source and private generated import state.
 # The controller and verdict runner stay outside the process/network boundary.
 set -euo pipefail
+phase_runner="$(cd "$(dirname "$0")" && pwd -P)/trusted-regression-phase.sh"
+# shellcheck source=tools/trusted-regression-lifecycle.sh
+source "$(dirname "$phase_runner")/trusted-regression-lifecycle.sh"
 image="$GODOT_SANDBOX_IMAGE"
 [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || {
   echo '::error::trusted runtime image must be an exact local digest' >&2
@@ -82,9 +85,37 @@ if [ "$editor" = false ]; then "$cache_guard" "$project"; fi
 # Candidate workflow commands stay log data. The private nonce is never passed
 # into the sandbox or written beneath the mounted project.
 nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+container="war-trusted-$nonce"
+records="${GODOT_SANDBOX_CONTAINERS:-}"
+private_records=false
+if [ -z "$records" ]; then
+  records="$(mktemp -d)"
+  private_records=true
+fi
+if [ ! -d "$records" ] || [ -L "$records" ]; then
+  echo '::error::sandbox container records must be a private real directory' >&2
+  exit 2
+fi
+: >"$records/$container"
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
+cleanup() {
+  result=$?
+  trap - EXIT INT TERM
+  trusted_stop_child
+  if ! bash "$phase_runner" "sandbox cleanup" bash "$phase_runner" --cleanup-containers "$records"; then
+    result=1
+  elif [ "$private_records" = true ]; then
+    rmdir "$records"
+  fi
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 printf '::stop-commands::%s\n' "$nonce"
 status=0
-docker run --rm --network none --cap-drop ALL \
+phase='sandbox execution'
+if [ "$editor" = true ]; then phase='editor import'; fi
+trusted_wait bash "$phase_runner" "$phase" docker run --name "$container" --rm --network none --cap-drop ALL \
   --security-opt no-new-privileges --read-only --user "$(id -u):$(id -g)" \
   --pids-limit 256 --memory 4g --cpus 2 \
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777 \

@@ -11,6 +11,7 @@ printf 'source data\n' >"$tmp/work/.github/workflows/ci.yaml"
 printf 'immutable trusted harness\n' >"$tmp/work/client/tests/alpha_test.gd"
 cat >"$tmp/bin/docker" <<'DOCKER'
 #!/bin/bash
+if [ "$1" = rm ] || [ "$1" = ps ]; then exit 0; fi
 printf '%s\n' "$@" > "$SANDBOX_ARGS"
 exit "$SANDBOX_EXIT"
 DOCKER
