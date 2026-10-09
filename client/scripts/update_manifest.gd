@@ -119,8 +119,8 @@ const SAVE_CAPABILITY_WRITES := 7
 ## needlessly routed away from a pack update despite a valid fallback existing.
 ##
 ## Must always be >= the write capability (a build must read what it writes).
-## Capability 7 reads and writes the complete vault-v5 mastery snapshot.
-const SAVE_CAPABILITY_READS := 7
+## Capability 8 additionally reads recipe-v5 leg lengths; writes remain v4/7.
+const SAVE_CAPABILITY_READS := 8
 
 ## The oldest shell this manifest still supports updating FROM.
 ##

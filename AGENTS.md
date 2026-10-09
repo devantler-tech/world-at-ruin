@@ -880,6 +880,14 @@ everything shipped afterwards is held to.
   without activating their writers; production origination is the explicit
   `client/registries/character_writer_vocabulary.json` subset, whose equipment-slot, skin,
   blend-shape and bone-key additions require the contract-stage save-capability advance.
+  The recipe reader accepts v5 `joint_push.thigh` and `joint_push.calf`: they scale knee and
+  ankle offsets, not hip separation. Versions 1–4 refuse these keys, and absent keys preserve
+  historical geometry and visual roots. Recipe origination stays v4 and capability writes stay 7;
+  ordinary edits preserve accepted v5 state exactly, while new/changed/removed leg values,
+  downstamping and deletion are refused. Actual update checks retain the accepted save requirements
+  separately from reader ceilings. The trusted stature scenes cover real boots, grounded Player
+  capsules, clothing clearance and lock release; see
+  [ADR 0034](docs/adr/0034-read-stature-without-originating-it.md).
 - **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
   - **Experimental content-pack builds:** `bash tools/build-contentpack.sh --experimental
     client <new-output-directory>` stages a trusted local project privately, imports it natively and

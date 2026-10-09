@@ -375,6 +375,12 @@ static func _save_to_locked(
 	# round an untouched grandfathered float while rewriting the whole document.
 	file.store_string(JSON.stringify(recipe, "  ", true, true))
 	file.close()
+	return _commit_staged(path, recipe, tmp_path, expected_identity)
+
+
+## Commit already-serialized private bytes while the caller holds the target lock.
+static func _commit_staged(path: String, recipe: Dictionary, tmp_path: String,
+		expected_identity: String = IDENTITY_UNCHECKED) -> bool:
 	# Re-check immediately before the replacement. The check above is a
 	# point-in-time reading, and the actors this store is written against — cloud
 	# sync, a second client — can install a recipe this build cannot accept while
@@ -382,10 +388,20 @@ static func _save_to_locked(
 	# newly-arrived character having never refused or latched it, which is the
 	# exact loss the latch exists to prevent. The residual window is the rename
 	# itself; the vault narrows the same window the same way.
-	if not can_write(path):
+	var latest: Variant = load_from(path)
+	if is_refused(path):
 		push_error("CharacterStore: refusing to replace %s — its recipe changed to one this build cannot accept" % path)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
 		_last_refusal = REFUSAL_UNACCEPTABLE
+		return false
+	# Readability alone cannot authorize erasing newly installed reader-only state.
+	# Blind ordinary replacements remain valid, but preservation is mandatory.
+	var preserved: Dictionary = latest if latest is Dictionary else {}
+	var reader_problem := CharacterFactory.reader_only_write_problem(recipe, preserved)
+	if reader_problem != "":
+		push_error("CharacterStore: %s gained different reader-only state — refusing to replace it: %s" % [path, reader_problem])
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp_path))
+		_last_refusal = REFUSAL_STALE
 		return false
 	# Prove we are STILL the lock's holder. A reclaimer that misjudged this live
 	# lock as abandoned would have moved it away, and another writer could then
@@ -531,9 +547,11 @@ static func clear() -> void:
 	# no-resets law is unrecoverable. The pre-lock check stays as a cheap way to
 	# avoid creating a lock directory for a delete that is already doomed; THIS is
 	# the authoritative pass.
-	if not can_write(path):
+	var accepted: Variant = load_from(path)
+	if is_refused(path) or (accepted is Dictionary
+			and int(accepted["version"]) > CharacterFactory.RECIPE_WRITE_VERSION):
 		push_error(
-			"CharacterStore: refusing to delete %s — its recipe changed to one this build cannot accept"
+			"CharacterStore: refusing to delete %s — its recipe cannot be discarded by this writer"
 			% path)
 		FileLock.release(path)
 		return

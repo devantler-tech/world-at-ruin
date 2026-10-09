@@ -23,9 +23,12 @@ class_name CharacterFactory
 ## scaling for joint pushes, and no engine global reads between rest edits
 ## (Godot 4.7 desyncs its rest/pose caches).
 
-const RECIPE_VERSION := 4
+const RECIPE_VERSION := 5
 ## Highest schema this build may originate; reader expansion never raises it.
 const RECIPE_WRITE_VERSION := 4
+const STATURE_VERSION := 5
+## Length keys describe segments: knee offset for thigh, ankle offset for calf.
+const STATURE_JOINTS := {"thigh": "calf", "calf": "foot"}
 const KIT_SCENE_PATH := "res://assets/characters/humanoid_kit/humanoid_base.glb"
 const EQUIPMENT_DIR := "res://assets/characters/humanoid_kit/equipment/"
 const EQUIPMENT_REGISTRY_PATH := EQUIPMENT_DIR + "equipment.json"
@@ -193,7 +196,7 @@ static var _skin_materials: Dictionary = {}
 const GUARDED_BONE_KEYS := {
 	"bone_girth": ["neck_01", "spine_03", "upperarm", "lowerarm", "thigh", "calf"],
 	"bone_scale": ["head", "hand", "foot"],
-	"joint_push": ["upperarm", "hand"],
+	"joint_push": ["upperarm", "hand", "thigh", "calf"],
 }
 
 
@@ -226,6 +229,8 @@ static func build(recipe: Dictionary) -> Node3D:
 		for bone in _bones_for(skeleton, key):
 			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
 	for key: String in recipe.get("joint_push", {}):
+		if key in STATURE_JOINTS:
+			continue
 		for bone in _bones_for(skeleton, key):
 			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
 	# Arms down from the bake's T-pose — the standing pose every body wears
@@ -237,6 +242,16 @@ static func build(recipe: Dictionary) -> Node3D:
 	for hand in ["hand_l", "hand_r"]:
 		_hang_toward_down(skeleton, skeleton.find_bone(hand), HAND_RELAX_DEG)
 	_apply_contrapposto(skeleton)
+	# Preserve the historical stance and floor contact. Only expanded leg
+	# offsets move; the capsule and every absent-key character stay exact.
+	var pushes: Dictionary = recipe.get("joint_push", {})
+	if pushes.has("thigh") or pushes.has("calf"):
+		var historical_ankle := _lowest_ankle_rest_y(skeleton)
+		for key: String in STATURE_JOINTS:
+			if pushes.has(key):
+				for bone in _bones_for(skeleton, STATURE_JOINTS[key]):
+					_scale_joint_origin(skeleton, bone, pushes[key])
+		instance.position.y += historical_ankle - _lowest_ankle_rest_y(skeleton)
 	KitAssembly.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
 
 	for piece_name in pieces_to_wear(recipe.get("equipment", {})):
@@ -261,6 +276,10 @@ static func build(recipe: Dictionary) -> Node3D:
 	idle.phase_offset = _idle_phase_for(recipe)
 	instance.add_child(idle)
 	return instance
+
+static func _lowest_ankle_rest_y(skeleton: Skeleton3D) -> float:
+	return minf(_composed_global_rest(skeleton, skeleton.find_bone("foot_l")).origin.y,
+		_composed_global_rest(skeleton, skeleton.find_bone("foot_r")).origin.y)
 
 
 ## A stable phase offset in [0, BREATH_PERIOD) for this body recipe.
@@ -557,6 +576,8 @@ static func validate(recipe: Dictionary, skeleton: Skeleton3D, mesh_instance: Me
 			var key := String(bone_key)
 			if key not in (GUARDED_BONE_KEYS[field] as Array):
 				return "bone key '%s' in %s is outside the guarded set — only golden-guarded keys may persist" % [key, field]
+			if field == "joint_push" and key in STATURE_JOINTS and version < STATURE_VERSION:
+				return "leg length keys require recipe v5"
 			if _bones_for(skeleton, key).is_empty():
 				return "unknown bone '%s' in %s" % [key, field]
 			var factor: Variant = recipe[field][key]
@@ -625,6 +646,9 @@ static func write_refusal_reason(
 	var problem := refusal_reason(recipe)
 	if problem != "":
 		return problem
+	problem = reader_only_write_problem(recipe, preserved)
+	if problem != "":
+		return problem
 	for shape_name: String in recipe.get("shapes", {}):
 		var weight := float(recipe["shapes"][shape_name])
 		if (
@@ -642,6 +666,23 @@ static func write_refusal_reason(
 						preserved, field, key, factor)):
 				return "bone factor '%s' in %s must be between %s and %s" % [
 					key, field, BONE_FACTOR_MIN, BONE_FACTOR_MAX]
+	return ""
+
+
+## A reader expansion can preserve existing future state but never originate,
+## change, remove, or downstamp it before its separate writer contract.
+static func reader_only_write_problem(recipe: Dictionary, preserved: Dictionary = {}) -> String:
+	var version := int(recipe.get("version", 0))
+	var previous := int(preserved.get("version", 0))
+	if version > RECIPE_WRITE_VERSION and version != previous:
+		return "recipe v5 is reader-only and cannot be originated"
+	if previous > RECIPE_WRITE_VERSION and version != previous:
+		return "reader-only recipe version must be preserved"
+	var current: Dictionary = recipe.get("joint_push", {}) if recipe.get("joint_push", {}) is Dictionary else {}
+	var initial: Dictionary = preserved.get("joint_push", {}) if preserved.get("joint_push", {}) is Dictionary else {}
+	for key: String in STATURE_JOINTS:
+		if current.has(key) != initial.has(key) or current.get(key) != initial.get(key):
+			return "leg length %s is reader-only and must be preserved exactly" % key
 	return ""
 
 

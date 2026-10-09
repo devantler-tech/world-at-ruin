@@ -788,6 +788,8 @@ func _outermost(slot: String) -> String:
 
 
 func _restamp_version() -> void:
+	if int(_recipe.get("version", 0)) > CharacterFactory.RECIPE_WRITE_VERSION:
+		return
 	# The layered list form is version 4 and is checked FIRST: a recipe that
 	# uses it must never be stamped 3, or the save would understate its own
 	# shape and a version-3 client would read the list as one piece name and
@@ -864,6 +866,10 @@ static func writer_vocabulary_problem(initial: Dictionary, candidate: Dictionary
 	var vocabulary := writer_vocabulary()
 	if vocabulary.is_empty():
 		return "the production writer vocabulary is unavailable"
+
+	var reader_only_problem := CharacterFactory.reader_only_write_problem(candidate, initial)
+	if reader_only_problem != "":
+		return reader_only_problem
 
 	var initial_shapes: Dictionary = initial.get("shapes", {}) \
 		if initial.get("shapes", {}) is Dictionary else {}

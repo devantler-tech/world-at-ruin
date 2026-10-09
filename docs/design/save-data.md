@@ -88,9 +88,18 @@ writes independently of its reader ceiling. Never advance a writer as part of re
 
 The reviewed harness owns `planned_recipe_v5.json` for the stature expansion. Its controller may
 accept exactly recipe history plus `5` and that fixture, reconstructing both from trusted bytes.
-The planned stage is recipe reads 5 / writes 4 and capability reads 8 / writes 7. Preparation
-keeps the actual reader at recipe v4/capability 7; it neither enables new saved values nor proves a
-retained expanded rollback release. See [ADR 0033](../adr/0033-prepare-the-trusted-stature-reader-contract.md).
+The active stage is recipe reads 5 / writes 4 and capability reads 8 / writes 7.
+Recipe v5 accepts independent `joint_push.thigh` and `joint_push.calf`; older versions refuse them.
+Absent keys preserve historical appearances. Production controls cannot originate either key, and
+ordinary edits preserve the exact version, presence and values of already accepted v5 state.
+Deletion, downstamping and any new or changed leg value are refused.
+
+Actual update checks retain schema4/capability7 requirements for ordinary saves and
+schema5/capability8 requirements for accepted v5 saves. Unknown or changed requirements cannot
+authorize update-history acceptance. Recovery rejects targets that cannot read the accepted state.
+These behaviors neither enable new creation options nor prove a retained expanded rollback release.
+See [ADR 0033](../adr/0033-prepare-the-trusted-stature-reader-contract.md) and
+[ADR 0034](../adr/0034-read-stature-without-originating-it.md).
 
 ### 2. Bake the expansion
 
