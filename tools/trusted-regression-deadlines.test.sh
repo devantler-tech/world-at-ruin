@@ -97,6 +97,34 @@ test "$(cat "$tmp/containers/unrelated")" = unrelated
 test "$(ls -A "$tmp/containers")" = unrelated
 echo 'TEST PASS -- held build, import and probe fail within deadline and release descendants'
 
+# A controller should return promptly when its child acknowledges cancellation.
+cat >"$tmp/fast-child" <<'FAST'
+#!/bin/bash
+trap 'exit 130' TERM
+while :; do :; done
+FAST
+chmod +x "$tmp/fast-child"
+source "$root/tools/trusted-regression-lifecycle.sh"
+"$tmp/fast-child" &
+trusted_active_pid=$!
+sleep 0.2
+start=$SECONDS
+trusted_stop_child
+test "$((SECONDS-start))" -le 2
+# A supervisor needs the full five-second grace plus a small scheduling margin.
+cat >"$tmp/slow-child" <<'SLOW'
+#!/bin/bash
+trap 'sleep 5.2; touch "$FAKE_SETTLED"; exit 130' TERM
+while :; do :; done
+SLOW
+chmod +x "$tmp/slow-child"
+FAKE_SETTLED="$tmp/settled" "$tmp/slow-child" &
+trusted_active_pid=$!
+sleep 0.2
+trusted_stop_child
+test -f "$tmp/settled"
+echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves supervisor grace'
+
 FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
 # Cancellation must propagate while a long phase is still running.

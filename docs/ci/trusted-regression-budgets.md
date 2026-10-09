@@ -17,7 +17,9 @@ host; hosted Ubuntu supplies it, and macOS developers can install coreutils thro
 
 Each host phase forwards termination to its child process group, then allows five seconds before
 forced termination. Controller cancellation forwards to its active child before cleaning private
-state. Container names use an invocation-private random identifier, recorded outside every mounted
+state. Controllers check for child exit every 100 milliseconds, allowing the phase its full
+five-second grace plus a one-second scheduling margin. They return earlier after an acknowledged
+exit; this controller margin is separate from the 30-second container cleanup budget. Container names use an invocation-private random identifier, recorded outside every mounted
 candidate directory. A parent cleans those records after a child exits, including when the existing
 scene watchdog kills the child. Cleanup uses bounded Docker calls and an exact-name absence query;
 unknown cleanup fails the invocation and retains its private records. It never enumerates or removes
