@@ -8,7 +8,7 @@ from one separate, locked dependency graph. That graph selects the runtime API
 runtime API 1.48 selection; compiling a plugin under that graph does not certify
 that the packaged Nakama process can load it.
 
-Both artifacts use Go 1.27.1, native CGO, and matching shared-package build flags.
+Both artifacts use Go 1.27.2, native CGO, and matching shared-package build flags.
 The builder refuses implicit execution, existing output and missing locks. It
 uses read-only module resolution, verifies the locks remain unchanged, and
 records toolchain, architecture, graph hashes and artifact hashes. The native
