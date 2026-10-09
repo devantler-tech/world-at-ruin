@@ -14,7 +14,7 @@ const TrustedContext = "World trusted regressions"
 // that identity, so matching it cannot authenticate an independent verdict.
 const knownActionsAppID int64 = 15368
 
-func independentAppID(id int64) bool {
+func publisherAppID(id int64) bool {
 	return id > 0 && id != knownActionsAppID
 }
 
@@ -32,10 +32,10 @@ type publishedCheck struct {
 // Publish is called only by the credential-isolated reporter after the trusted
 // evaluator supplies its verdict. Notification CI conclusions are not verdicts.
 // Every write rebinds the evaluated identity to current GitHub state; readback
-// must prove the check belongs to the dedicated producer and exact candidate.
+// must prove the check belongs to the configured producer and exact candidate.
 func (c *Client) Publish(ctx context.Context, identity Identity, verdict string, appID int64) error {
-	if !independentAppID(appID) || (verdict != "pending" && verdict != "failure" && verdict != "success") {
-		return fmt.Errorf("trusted publication needs a dedicated producer and an explicit verdict")
+	if !publisherAppID(appID) || (verdict != "pending" && verdict != "failure" && verdict != "success") {
+		return fmt.Errorf("trusted publication needs a configured producer and an explicit verdict")
 	}
 	if err := validatePublishIdentity(identity); err != nil {
 		return err

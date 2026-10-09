@@ -1,8 +1,8 @@
 name: Repository trusted regressions
 
 # Additive, default-off preparation. The existing organization-required workflow
-# remains enforced until a dedicated publisher identity and repository rule are
-# deployed and positive, negative and current-head controls are observed.
+# remains enforced while the existing organization App is prepared as publisher.
+# Permission, credential-boundary and behavioral proof precede any cutover.
 on:
   # Candidate data runs only in containment; the writer checks out reviewed main
   # and consumes resolver identity rather than candidate workflow artifacts.
@@ -51,7 +51,7 @@ jobs:
       - name: Admit enabled reviewed-main invocation
         env:
           WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
-          WAR_TRUSTED_GATE_APP_ID: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          WAR_TRUSTED_GATE_APP_ID: ${{ vars.APP_ID }}
           WAR_TRUSTED_GATE_PUBLISHER_ENVIRONMENT: world-trusted-gate-publisher
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: bash workflow-source/tools/repository-trusted-gate-admission.sh
@@ -127,7 +127,7 @@ jobs:
       - name: Admit enabled publisher configuration
         env:
           WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
-          WAR_TRUSTED_GATE_APP_ID: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          WAR_TRUSTED_GATE_APP_ID: ${{ vars.APP_ID }}
           WAR_TRUSTED_GATE_PUBLISHER_ENVIRONMENT: world-trusted-gate-publisher
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: bash workflow-source/tools/repository-trusted-gate-admission.sh
@@ -140,21 +140,21 @@ jobs:
         id: publisher-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
-          private-key: ${{ secrets.WAR_TRUSTED_GATE_PRIVATE_KEY }}
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: devantler-tech
           repositories: world-at-ruin
           permission-actions: read
           permission-checks: write
           permission-contents: read
           permission-pull-requests: read
-      - name: Publish current-head verdict through dedicated App
+      - name: Publish current-head verdict through configured organization App
         working-directory: workflow-source/tools/trusted-gate
         env:
           GITHUB_TOKEN: ${{ steps.publisher-token.outputs.token }}
           WAR_REPOSITORY_TRUSTED_GATE_ENABLED: ${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}
           GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          TRUSTED_GATE_APP_ID: ${{ vars.WAR_TRUSTED_GATE_APP_ID }}
+          TRUSTED_GATE_APP_ID: ${{ vars.APP_ID }}
           IDENTITY_JSON: ${{ needs.evaluate.outputs.identity-json }}
           VERDICT: ${{ needs.evaluate.result == 'success' && 'success' || 'failure' }}
           GOTOOLCHAIN: local

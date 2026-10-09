@@ -1,7 +1,8 @@
-# ADR 0027: Bind repository protection to independent verdicts
+# ADR 0027: Bind repository protection to a configured verdict publisher
 
 - Status: Accepted; activation is separate
 - Date: 2026-10-05
+- Updated: 2026-10-09 — reuse the existing organization App
 - Decision issue: [#745](https://github.com/devantler-tech/world-at-ruin/issues/745)
 
 ## Context
@@ -29,13 +30,17 @@ and runs the base-owned suite using the existing non-root, networkless Godot
 sandbox. Candidate scenes, skip lists and scripts cannot select the suite or
 publish its outcome. The evaluator has read-only credentials and no App key.
 
-A separate job checks out only the exact reviewed workflow source. It uses a
-dedicated World-only publishing App and the `world-trusted-gate-publisher`
-environment. That environment permits deployments from `main` only; the App
-key exists only as its environment secret, never as a repository or organization
-secret. Its token requests Checks write and Actions, Contents and Pull Requests
-read. A candidate-authored Actions check has a different App identity and
-cannot satisfy the repository rule's source binding.
+A separate job checks out only the exact reviewed workflow source. It reuses
+the existing organization App: `APP_CLIENT_ID` and `APP_PRIVATE_KEY` mint the
+token, while numeric `APP_ID` binds admission and check readback. The
+`world-trusted-gate-publisher` environment must permit deployments from `main`
+only; activation requires live branch-policy readback. It requires no separate
+App key. The token is requested for World at Ruin only,
+with Checks write and Actions, Contents and Pull Requests read. The evaluator
+receives no App key. A candidate-authored Actions check has a different App
+identity, but another workflow with the shared key and suitable App permissions
+can publish the same App/context. App binding authenticates the App, not a
+workflow path or the origin of a shared key.
 
 The publisher attaches `World trusted regressions` to the verified pull-request
 head, or queue candidate. Before publishing success it re-resolves the entire
@@ -46,26 +51,32 @@ the existing merge behavior: a passing head can retain its result after main
 advances. Delivery still revalidates the current base immediately before merge.
 
 `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` defaults to unset/off. Enabled execution
-requires `WAR_TRUSTED_GATE_APP_ID` and the protected environment's
-`WAR_TRUSTED_GATE_PRIVATE_KEY`. It must not reuse a general automation App or
-an inherited key. The CLI and admission guard test both states; malformed
+requires the existing organization `APP_ID`, `APP_CLIENT_ID` and
+`APP_PRIVATE_KEY`. No separate World App, App ID variable or private key is
+requested. Source preparation changes no shared permission or credential. The CLI and admission guard test both states; malformed
 configuration fails closed. No App token is minted while disabled.
 
 ## Activation and recovery
 
 The active organization rule continues to require the catalogue source in ADR
 0003. Independent repository enforcement is a separate declarative delivery in
-the GitHub configuration owner. Require the exact context and dedicated App
+the GitHub configuration owner. Require the exact context and configured App
 under an active World/default-branch `RepositoryRuleset` with no bypass actors.
 Enable and verify the protected producer first, then require both controls.
 
-Run `go -C tools/trusted-gate run . inspect --app-id <dedicated-app-id>` with an
+Run `go -C tools/trusted-gate run . inspect --app-id <org-app-id>` with an
 explicit read token to inspect complete live ruleset inventory and details.
-`replacement_ready=true` proves only the declared overlap shape; it does not
-prove credential confinement, nonzero scene execution or tamper resistance.
+`protection_overlap_verified=true` proves only the declared overlap shape and
+is accompanied by `activation_ready=unknown`. It does not prove App permission,
+credential confinement, nonzero scene execution or tamper resistance.
 Those require separate live positive and negative controls, including a
-candidate-created duplicate context from Actions, deleted candidate workflow
+candidate-created duplicate contexts from Actions and any accessible shared App
+key, deleted candidate workflow
 and scenes, missing project inputs and changed head/base during evaluation.
+
+A shared key alone cannot establish independent verdict authority. Keep the
+established gate until actual credential-boundary and canary evidence supports
+the reviewed cutover design; do not infer it from the protected publisher job.
 
 Only after those controls pass may a reviewed configuration release disable
 the exact retained organization rule identity. Preserve its managed identity

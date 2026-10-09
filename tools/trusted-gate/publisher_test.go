@@ -106,7 +106,7 @@ func publisherClient(t *testing.T, identity Identity, faults publisherFaults) (*
 		_ = json.NewEncoder(w).Encode(value)
 	}))
 	t.Cleanup(server.Close)
-	return &Client{BaseURL: server.URL, Token: "dedicated-app-test", HTTP: server.Client()}, seen
+	return &Client{BaseURL: server.URL, Token: "configured-app-test", HTTP: server.Client()}, seen
 }
 
 func TestPublisherRejectsMatchedActionsProducerBeforeAnyAPI(t *testing.T) {
@@ -203,7 +203,7 @@ func TestPublisherDoesNotTrustWriteAcknowledgementWithoutReadback(t *testing.T) 
 }
 
 func TestPublisherRejectsInvalidInputsBeforeNetwork(t *testing.T) {
-	for _, name := range []string{"empty outcome", "unknown outcome", "no dedicated app", "invalid candidate", "invalid head", "unknown identity kind", "missing run", "missing pull request", "wrong ref"} {
+	for _, name := range []string{"empty outcome", "unknown outcome", "no configured app", "invalid candidate", "invalid head", "unknown identity kind", "missing run", "missing pull request", "wrong ref"} {
 		t.Run(name, func(t *testing.T) {
 			identity, verdict, appID := publisherIdentity(), "success", publisherTestAppID
 			switch name {
@@ -211,7 +211,7 @@ func TestPublisherRejectsInvalidInputsBeforeNetwork(t *testing.T) {
 				verdict = ""
 			case "unknown outcome":
 				verdict = "neutral"
-			case "no dedicated app":
+			case "no configured app":
 				appID = 0
 			case "invalid candidate":
 				identity.Candidate = "main"
@@ -278,7 +278,7 @@ func TestPublisherQueueCheckAttachesQueueCandidate(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(value)
 	}))
 	defer server.Close()
-	client := Client{BaseURL: server.URL, Token: "dedicated-app-test", HTTP: server.Client()}
+	client := Client{BaseURL: server.URL, Token: "configured-app-test", HTTP: server.Client()}
 	if err := client.Publish(context.Background(), identity, "success", publisherTestAppID); err != nil {
 		t.Fatal(err)
 	}

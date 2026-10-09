@@ -45,7 +45,7 @@ if ! jq -e --arg evaluate "$evaluate" --arg publish "$publish" --arg verdict "$v
     keys == ["env","name","run"]
     and .env == {
       WAR_REPOSITORY_TRUSTED_GATE_ENABLED:"${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}",
-      WAR_TRUSTED_GATE_APP_ID:"${{ vars.WAR_TRUSTED_GATE_APP_ID }}",
+      WAR_TRUSTED_GATE_APP_ID:"${{ vars.APP_ID }}",
       WAR_TRUSTED_GATE_PUBLISHER_ENVIRONMENT:"world-trusted-gate-publisher",
       GITHUB_WORKFLOW_SHA:"${{ github.workflow_sha }}"}
     and .run == "bash workflow-source/tools/repository-trusted-gate-admission.sh";
@@ -119,7 +119,7 @@ if ! jq -e --arg evaluate "$evaluate" --arg publish "$publish" --arg verdict "$v
       keys == ["id","name","uses","with"]
       and .id == "publisher-token"
       and .uses == "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
-      and .with == {"app-id":"${{ vars.WAR_TRUSTED_GATE_APP_ID }}","private-key":"${{ secrets.WAR_TRUSTED_GATE_PRIVATE_KEY }}",
+      and .with == {"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}",
         owner:"devantler-tech",repositories:"world-at-ruin","permission-actions":"read","permission-checks":"write",
         "permission-contents":"read","permission-pull-requests":"read"})
     and (.steps[5] |
@@ -127,7 +127,7 @@ if ! jq -e --arg evaluate "$evaluate" --arg publish "$publish" --arg verdict "$v
       and ."working-directory" == "workflow-source/tools/trusted-gate"
       and .env == {GITHUB_TOKEN:"${{ steps.publisher-token.outputs.token }}",WAR_REPOSITORY_TRUSTED_GATE_ENABLED:"${{ vars.WAR_REPOSITORY_TRUSTED_GATE_ENABLED }}",
         GITHUB_WORKFLOW_SHA:"${{ github.workflow_sha }}",
-        TRUSTED_GATE_APP_ID:"${{ vars.WAR_TRUSTED_GATE_APP_ID }}",IDENTITY_JSON:"${{ needs.evaluate.outputs.identity-json }}",
+        TRUSTED_GATE_APP_ID:"${{ vars.APP_ID }}",IDENTITY_JSON:"${{ needs.evaluate.outputs.identity-json }}",
         VERDICT:$verdict,GOTOOLCHAIN:"local",GOWORK:"off",GOFLAGS:""}
       and .run == "go run . publish --identity \"$IDENTITY_JSON\" --verdict \"$VERDICT\""))
 ' "$work/workflow.json" >/dev/null; then
