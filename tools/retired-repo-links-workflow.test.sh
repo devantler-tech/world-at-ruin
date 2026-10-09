@@ -19,8 +19,8 @@ jq -s '{ci:.[0],guard:.[1]}' "$scratch/ci.json" "$scratch/guard.json" >"$scratch
 # conditions, inherited secrets and success-on-error settings from hiding work.
 # Action revisions are read from the workflow rather than repeated here, so a
 # routine version update does not need a matching edit to this file. What stays
-# fixed is their shape: each is one full commit id, both checkouts use the same
-# one, and the refusal controls build the very revision the scan step ran.
+# fixed is their shape: each is one full commit id, and refusal controls build
+# the source output returned by the scan, with no second revision declaration.
 admit() {
   jq -e '
     def pinned($action): capture("^" + $action + "@(?<sha>[0-9a-f]{40})$").sha;
@@ -52,7 +52,7 @@ admit() {
       keys == ["name","permissions","runs-on","steps","timeout-minutes"]
       and .permissions == {contents:"read"}
       and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 10
-      and (.steps | length) == 6
+      and (.steps | length) == 5
       and all(.steps[]; (has("if") or has("continue-on-error") or has("shell") or has("working-directory")) | not))
     and (.guard.jobs["retired-repo-links"].steps |
       (.[0] | keys == ["uses","with"] and .uses == $checkout
@@ -62,13 +62,11 @@ admit() {
       and (.[2] | keys == ["env","name","run"]
         and .env == {VALIDATED:"${{ steps.links.outputs.validated }}"}
         and .run == "test \"$VALIDATED\" = true")
-      and (.[3] | keys == ["name","uses","with"] and .uses == $checkout
-        and .with == {repository:"devantler-tech/.github",ref:$source,
-          path:".retired-link-validator-source","persist-credentials":false})
-      and (.[4] | keys == ["env","name","run"]
-        and .env == {GOWORK:"off",GOFLAGS:"",GOTOOLCHAIN:"local"}
-        and (.run | contains("test \"$status\" = 1") and contains("test \"$status\" = 2")))
-      and (.[5] | keys == ["name","run"]
+      and (.[3] | keys == ["env","name","run"]
+        and .env == {GOWORK:"off",GOFLAGS:"",GOTOOLCHAIN:"local",
+          VALIDATOR_SOURCE:"${{ steps.links.outputs.source-directory }}"}
+        and .run == "bash tools/retired-repo-links-controls.sh")
+      and (.[4] | keys == ["name","run"]
         and .run == "bash tools/retired-repo-links-workflow.test.sh"))
   ' "$1" >/dev/null
 }
@@ -92,6 +90,16 @@ for ref in refs/heads/main refs/heads/feature refs/tags/v1.0.0; do
   esac
 done
 
+# A dependency updater changes only the declared action revision. This must
+# remain admissible without a source-checkout or guard-test pin update.
+jq '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@" + ("a" * 40)' \
+  "$scratch/bundle.json" >"$scratch/updated-pin.json"
+if ! admit "$scratch/updated-pin.json"; then
+  echo 'TEST FAIL -- an isolated immutable validator pin update requires another edit' >&2
+  exit 1
+fi
+
+mutation_count=0
 for mutation in \
   'del(.guard.on.push)' \
   '.guard.on.push.branches=["feature"]' \
@@ -108,26 +116,33 @@ for mutation in \
   '.guard.jobs["retired-repo-links"].if="false"' \
   '.guard.jobs["retired-repo-links"].steps[0].with["persist-credentials"]=true' \
   '.guard.jobs["retired-repo-links"].steps[1].with.enabled="false"' \
-  '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@bd0035dd8f41fcf1459b878882b8897443f8dc59"' \
-  '.guard.jobs["retired-repo-links"].steps[3].with.ref="bd0035dd8f41fcf1459b878882b8897443f8dc59"' \
+  '.guard.jobs["retired-repo-links"].steps[3].env.VALIDATOR_SOURCE="/tmp/substituted-validator"' \
+  '.guard.jobs["retired-repo-links"].steps[3].env.VALIDATOR_SOURCE |= sub("steps.links"; "steps.other")' \
+  '.guard.jobs["retired-repo-links"].steps[3].run = "VALIDATOR_SOURCE=/tmp/substituted-validator\n" + .guard.jobs["retired-repo-links"].steps[3].run' \
+  '.guard.jobs["retired-repo-links"].steps[3].env.GOFLAGS="-C /tmp/substituted-validator"' \
+  '.guard.jobs["retired-repo-links"].steps[3].env.GOTOOLCHAIN="auto"' \
   '.guard.jobs["retired-repo-links"].steps[2].run="true"' \
-  '.guard.jobs["retired-repo-links"].steps[4]["continue-on-error"]=true' \
-  '.guard.jobs["retired-repo-links"].steps[5].run="true"' \
+  '.guard.jobs["retired-repo-links"].steps[3]["continue-on-error"]=true' \
+  '.guard.jobs["retired-repo-links"].steps[4].run="true"' \
   '.ci.jobs["ci-required-checks"].needs |= map(select(. != "retired-repo-links"))' \
   '.ci.jobs["ci-required-checks"].steps[0].with["job-results"]="success"' \
   '.ci.jobs["ci-required-checks"].steps[0].if="false"' \
   '.ci.jobs["ci-required-checks"].steps[0]["continue-on-error"]=true' \
   '.ci.jobs["ci-required-checks"].steps[0].uses="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"' \
   '.guard.jobs["retired-repo-links"].steps[0].uses="actions/checkout@v7"' \
-  '.guard.jobs["retired-repo-links"].steps[3].uses="actions/checkout@bd0035dd8f41fcf1459b878882b8897443f8dc59"' \
   '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@v7.2.10"' \
-  '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@main" | .guard.jobs["retired-repo-links"].steps[3].with.ref="main"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@main"' \
   '.ci.jobs["ci-required-checks"].steps[0].uses="devantler-tech/.github/actions/aggregate-job-checks@v7"' \
   '.ci.jobs["ci-required-checks"].steps[0].uses="example/.github/actions/aggregate-job-checks@bd0035dd8f41fcf1459b878882b8897443f8dc59"'; do
   jq "$mutation" "$scratch/bundle.json" >"$scratch/mutant.json"
+  mutation_count=$((mutation_count + 1))
+  if cmp -s "$scratch/bundle.json" "$scratch/mutant.json"; then
+    echo "TEST FAIL -- mutation did not change the fixture: $mutation" >&2
+    exit 1
+  fi
   if admit "$scratch/mutant.json"; then
     echo "TEST FAIL -- workflow accepted $mutation" >&2
     exit 1
   fi
 done
-echo 'TEST PASS -- main-only shared guard, read-only credentials and 31 rejected wiring mutations'
+echo "TEST PASS -- main-only shared guard, read-only credentials and $mutation_count rejected wiring mutations"

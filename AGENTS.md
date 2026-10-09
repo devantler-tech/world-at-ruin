@@ -1203,8 +1203,11 @@ everything shipped afterwards is held to.
     exported app boots — not a distribution channel; that artifact has no version identity.
   - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active
     `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
-    scan, and proves seeded retired links and missing configuration fail. Its main path runs
-    only this read-only guard. Run `bash tools/retired-repo-links-workflow.test.sh` locally
+    scan, and proves seeded retired links and missing configuration fail using the exact source
+    returned by that scan. The validator revision is declared once, so routine pin updates need
+    no separate source-checkout edit. The fixed `tools/retired-repo-links-controls.sh` invocation
+    builds and runs both refusal controls. Its main path runs only this read-only guard.
+    Run `bash tools/retired-repo-links-workflow.test.sh` locally
     with `yq` and `jq` to check routing, credentials and required-check wiring, including
     rejection controls; use ShellCheck on that script and actionlint on both workflow files.
     Hosted runs provide the actual PR and post-merge main execution proof.
