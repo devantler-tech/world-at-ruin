@@ -1,0 +1,2274 @@
+{
+  "schema": 1,
+  "adoptionRevision": "afd354c2987d92b89156d7bd96ddc34f7172bb8a",
+  "scanner": "cpd 5.0.16",
+  "settingsSHA256": "84faac11c88bd73b70d8677aa6bbd94076ee6c58a088f74062d48393db950f6d",
+  "entries": [
+    {
+      "key": "0197786ce398a1116485e0a6bd7048bd6881c30ab873b11ae652bc9d4c5d9071",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/recovery_fence_test.go",
+        "server/internal/nakamatrial/recovery_owner_test.go"
+      ],
+      "fragmentSHA256": "be2aae3183ba3bb28b179d94e5fec0dfe2939dee787a68ff9bd7eed4779254f6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "01ed944f04afeac1ed54fecf907a8278acad2d11d7df0f7b0b40650c5e231182",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "tools/gameserver-commit-trial/storage_test.go"
+      ],
+      "fragmentSHA256": "e30cf3e140fd89dd2f07d411ce5cb24de94c0dd850ab72cafb496f39712e7616",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "02624c6fccd34984b647e14b036aff117426122399958d938eac537def511925",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "73f71fab01dcb7af8eaee895b92de8e2fbb65a77d60cfbb51cfd2802ddd0690d",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "031a13682434f1c1d79c1101e6672179fa2179565d152aadf6912c34ae3ab1fb",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_guard_test.gd",
+        "client/tests/save_vault_guard_test.gd"
+      ],
+      "fragmentSHA256": "422272e6604545ff1e0fc056f99ca75d8c81e747d26de7960182ddff533ec08d",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "040db83be6bcc48c06c584e382c701fd41b3aec2aa37c3fd00b9cda72dc985a9",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "82f910b428d3e3ed572b7a05d75bc28bd280501c57dba9b8d41ede442452478a",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0481900c25010c9fd4c208f751bbf8c284d2e69564dabf5ea642d565f7518a7b",
+      "format": "gdscript",
+      "files": [
+        "client/tests/replica_store_test.gd",
+        "client/tests/replica_view_test.gd"
+      ],
+      "fragmentSHA256": "8201ae6bf60c33861bd379d62f83e2fc90f4f9671bfb290e76420a007fcb5057",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0514ec3f6ae255e32299abd0a0a13ae8f04dbf9abe2a9243e2d4360405e0d3c0",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "18782e2a815053662f66c487e27faadf6413e45f6aebae9e4cb707e95683a611",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "0547e962cb02b340a465f7d33e0c9f3d0fc0b9856a350689e41cd70eda3d7fdc",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "2a591438abea40513e726d5c6abc20f2887de33333651c74a6ed92815f62f06f",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "055a0fb86e57fe695bf0779c019c34a341d185d80af8780d42110b67daa6d82e",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/admission_test.go"
+      ],
+      "fragmentSHA256": "9429c5238d9dc5411397efa8190c727635eb463e77565604bbfbb01a3c3bd9cd",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "075361971df972ca1c8bcc2420ca7518db81b7630922ed1d649a61f297695922",
+      "format": "bash",
+      "files": [
+        "tools/repository-trusted-gate-workflow-guard.sh",
+        "tools/trusted-regression-workflow-guard.sh"
+      ],
+      "fragmentSHA256": "c747f70b6c3b4c5cdad1591cb8ead76720e51c94e7b002ca85ac1a0db8e01c3f",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "07e3fd2cfeb7677fe4c3e171b48c0ad55d5bcd6d192fc15040053164e61d9c3f",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "5b9f33f9c73d0f8edf391ae1db58adb38a1abb25fa952d91b845d14d9a26fe28",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "0af16ac79fc3657e8c69065317becb7c81ab55ae838600a0fc7b2f49362cb3e2",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission.go",
+        "server/internal/allocatoradmission/handoff.go"
+      ],
+      "fragmentSHA256": "efcff62a84221f2b308eafb95cfed32209eb1a7adbe4cf1f634c42b7602567cb",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0b32712b81c57968f8e0199da9f90449a2a53f47f36919c5931eaa47f5f1dc6f",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ragged_drape_test.gd",
+        "client/tests/ragged_wrap_shape_test.gd"
+      ],
+      "fragmentSHA256": "590aab5dd01eedcd0b2b125b256df58c34be1cd6d044f2802ef5f94fd1561c12",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0d2cf5c3ad5b64904a88eb58807e847b0f9446aabec27f8db7115428d443c40f",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "9d3887a4670364a880a7f196455c5e9fa5f9885f573d9396dd1c7932456d19c7",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0dd5936afd23b3ccd592187a7f0205385ada2f29ea0635b4af8ec4fe3dc4f382",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/recovery_fence_test.go"
+      ],
+      "fragmentSHA256": "d640923f8e11575ed9047cc022d71c34e1ead5cc26799f6f707866a866fa76a6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0ea8318686b6d90704aed2216392a6a13ec9e354b621eaf17ce16851b127582b",
+      "format": "go",
+      "files": [
+        "server/nakamacharacter/store_test.go",
+        "server/nakamacharacter/store_test.go"
+      ],
+      "fragmentSHA256": "2cfeb4e5a3184c314a6453a21a9212f8359e6b42e148fbb85982b2482aeb7cc1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0ec1b9b2821094b4537301fbb601edd2c372e169fc69303f55f85f672a3bac1a",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/recovery_fence_test.go",
+        "server/internal/nakamatrial/recovery_owner_test.go"
+      ],
+      "fragmentSHA256": "d447d458587342c156acc3d61254f4176e1b71048476f5d0773533bc48abb684",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "0fadbb1be143801a48587db523cc2f09f1436a1b0df568586f01edf81493a95c",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "6ac44ecc46bd5e8dd1e19e53e54cafef89091840d0d43926ee327a58c0900cb0",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "0fdab41d88f07d0f5e3d983150244d322c202a787fc6c07b1a5b6db5c67a1f2e",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/publication_test.go",
+        "server/internal/gameservercommit/publication_test.go"
+      ],
+      "fragmentSHA256": "155103e8886be0b4a87f4352a237483b9d7fa7e45401788b5bee17af149820a4",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "10780addc4d891277a083f47bdb454d64fac3bfa747287ecfc35f46e556e5807",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "bc8ac35fd62a4f0f201645640606f319d9e60bed71e93fc2ac2976c099feb0ec",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "10d8acfcec80dff78c3fe812b5c2623ed3a9f9abeae452f7f0ab9cc3d30dbd57",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/handoff_test.go"
+      ],
+      "fragmentSHA256": "435145518f005f89ab28b4a7bead521928ee56372a7d5eedc04be8ad50759047",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "10ed8e14c7e4888df64ed6b2583ed011c640196a558d192ef1fad718b062841a",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/player.gd",
+        "client/tests/controller_input_test.gd"
+      ],
+      "fragmentSHA256": "fd3c66bf86c673744f8ac6b1c702f5a8629098806e5f6cd3443fad0d1629a893",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1585286fb38451a431b85d6f0f409542c4336bed8aed3d95a90ab466427467d6",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ability_registry_test.gd",
+        "client/tests/controller_input_test.gd"
+      ],
+      "fragmentSHA256": "957f0517c3edffac1f06f13f78e227a373b09c37a70ca629ac011db74357298c",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "163b34a268599a8bda0fe9372b29691926e507b644f455904477647be03e1c10",
+      "format": "go",
+      "files": [
+        "tools/trusted-gate/publisher_test.go",
+        "tools/trusted-gate/readiness_test.go"
+      ],
+      "fragmentSHA256": "f70cd7c9075e63b567d28985e25dc3bd378b682ff7ecfcd24b8118dbc537e17c",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1676eaed3675408c717f6f63352d64c54365e76144787c1924ee9c8818c5752b",
+      "format": "bash",
+      "files": [
+        "tools/smoke-zone-container.sh",
+        "tools/smoke-zone-container.sh"
+      ],
+      "fragmentSHA256": "39c5cd5b9ec6464ad312a20de83d8414510c475d9478226873bd47474f6ec9e3",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "17e352a873457a63a162638e28b00c09aea81135917d04110d7f1866d09dcb88",
+      "format": "go",
+      "files": [
+        "server/agonesresources/adapter_test.go",
+        "server/agonesresources/adapter_test.go"
+      ],
+      "fragmentSHA256": "1074d46b2010c651b22a612a16b8e43b04cede08d07a0a0cb6f0201b3e3f7f02",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "18f8544e19afa1fac9444fc0136fbc123a40dee9cf94bfced6cf098d9d383edd",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "7bab004560a31b14bf2b16a253193e4046f6342f3cbbdaa6a5f78c0df0dd93d6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "193af8b30c7fcb32ab4721391b6d2cf3526247af8ad7108535cd3ca13979351f",
+      "format": "bash",
+      "files": [
+        "tools/provenance-guard.test.sh",
+        "tools/provenance-guard.test.sh"
+      ],
+      "fragmentSHA256": "58ce6fb85d39885ee8c4cac8550ef4915e7eb7745529cef78c09214bca785ac1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1a3af414d83b84299db348b5c8032294cda1fcebbb7764a3dcc9faec268a616c",
+      "format": "go",
+      "files": [
+        "server/zonesock/movement_test.go",
+        "server/zonesock/movement_test.go"
+      ],
+      "fragmentSHA256": "23984c434b398d1f93993e8b8750e9fd4061a180b4e81fe7b14d896c5b1b5955",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1b25a001f36bbbf5c4f8f8d1cb9adc0ff7ec745590651893ec05887e5db2d8a8",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/recovery_owner_test.go"
+      ],
+      "fragmentSHA256": "a1a9da38d2240d75f954339085c42950f6cfea2be1d416f1b60fd0a401e12f60",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1dc616d1b2468acbfa004553b224b2c14ec40a87f705782e70dec1fca3a6e962",
+      "format": "gdscript",
+      "files": [
+        "client/tests/creature_factory_test.gd",
+        "client/tests/save_fixture_guard_test.gd"
+      ],
+      "fragmentSHA256": "0ca2fcbd4bbf2b1cde05f3bae89993def3f4db0b138635ac46e15468cf49d757",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1dd739fbd3332dce16e82f15f1e9c6082241ddda026c9d20c3602be0bb981263",
+      "format": "gdscript",
+      "files": [
+        "client/tests/player_step_budget_test.gd",
+        "client/tests/player_step_budget_test.gd"
+      ],
+      "fragmentSHA256": "5faffa9656fb84e3ec2765275440d53af355b8c1f1a9b5f7320c0696cf0a0a09",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "1e689e2a1c4f9c43832d50e668d55f67f8b7c92fe497de9d42da60a9cc55c554",
+      "format": "bash",
+      "files": [
+        "tools/test-cd-cask-disarm-budget.sh",
+        "tools/test-cd-cask-rest-delivery.sh"
+      ],
+      "fragmentSHA256": "4b1772a158e5292e2e0feacd6417d85523c087beceec05dbb3f638266e11f179",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "22635c9336a4c85e88a990e2bda9b63c833ac29fae1169ced1d2054f940e558d",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ground_plate_glancing_test.gd",
+        "client/tools/plate_crossing_sweep.gd"
+      ],
+      "fragmentSHA256": "2abfff7b030c9e43cf564623dcba83344ec3520d53e23d40ea512d864b40d330",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "238ba3c7ebfb85daa09a3f609e733a5155356ee86c9e10ca39a81fd780ea1d1e",
+      "format": "go",
+      "files": [
+        "server/agonesresources/adapter_test.go",
+        "server/agonesresources/adapter_test.go"
+      ],
+      "fragmentSHA256": "488febc5812942eb367c7a39c698d92c9e238a7cff7ed6a3a16091851f1a88e2",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "26fca46de964e31d1641df0aa09f50a59f24b45621062b9aa98a142b1b446b8a",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_guard_test.gd",
+        "client/tests/save_vault_guard_test.gd"
+      ],
+      "fragmentSHA256": "47aebf1d4ea589cc5e66cbb4fca2e42858b2af16e057c8487acac4b14d9c33bb",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "27818c4eda3e300ef43dc568a6dbd7c94b4609438c7bda07597b3966daa538bb",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal.go",
+        "server/nakamageneration/document.go"
+      ],
+      "fragmentSHA256": "f28e70666417754d0fcbe3df21ef91f01c4dcf0fbd05ed55bd3ca0453f0683ed",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "27acfe76ba629ba4a296183f32841eece5879932eef9ab3a00291abe6fbd33b9",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/foliage_gen.gd",
+        "client/tests/foliage_scatter_test.gd"
+      ],
+      "fragmentSHA256": "8383d88dd7b126bf6307c1f2483aac20f02d0ff7e328af7b6cc30a2ac6aaff01",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "28ff8832f232fdc1299be80b5b83e243b2a5b1a3ece1e946d84c916890168648",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/admission_test.go"
+      ],
+      "fragmentSHA256": "67d1b47b18e1e36ad2ba7decb2f700ea7187d049473139cfd16d301519d7cf3a",
+      "occurrences": 2,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2a8c9ae2d01d520d3bf018ce8bf50a5c3f36a0c94aed32bacdfa4e709c44177e",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal_test.go",
+        "server/internal/gameservercommit/journal_test.go"
+      ],
+      "fragmentSHA256": "104b9eed26800765d9b5b1071fb9ab523ad0a1020409f1847582f6bdf1dd495a",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2b017abfeceec89d7002839f7b29464ad0c646174b8c253740ec3bcf52078e44",
+      "format": "bash",
+      "files": [
+        "tools/provenance-guard.test.sh",
+        "tools/provenance-guard.test.sh"
+      ],
+      "fragmentSHA256": "db1f7f6fcf2d2a79c681c5cdbbe7ffa9a3b33825518e16a9b07002b6040fdec7",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2b37da45d87d3b13a1094d3dd6142c59c571f833972d8aa990047dbc23cfda49",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "6c2787d75ed131a1c54319e357b210226adf4d6531cf02cd00c953f807b72efe",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2c3042d87a54e45ab0f5e4802c4306b3683fffb74eabaac1ae0b6d35a9053825",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "284fbea9c47c28af95e2afdc86cb6cf79ac8d68ae977fdc9dbd9ef415e2d14fa",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2ce03ea09f65a7b0f33fbde1b2298dd245236a0f563cb13aa841ce8108859c29",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/recovery_fence_test.go",
+        "server/internal/nakamatrial/recovery_owner_test.go"
+      ],
+      "fragmentSHA256": "d8beabb6f7af4aa92249dd1d1814fdaf61b314b930373ba4c36cdcc7406789b8",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2cf3eaa9c79ea58ec7341d70f8d06a9fc0077d79fc40d828591f3000cae12ab0",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/handoff_test.go"
+      ],
+      "fragmentSHA256": "e8568cdf9852b9e18c451af1281a2e162bab7fd75c7b6b6f1bfd4cb4375aa43a",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "2e40f25a64df83322a7b49d0614968e76fcda715861c5a87dfa20ed88e972dc3",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_cas_test.gd",
+        "client/tests/boot_recovery_lock_test.gd"
+      ],
+      "fragmentSHA256": "50335f5f34630c76bc0c29cae6f42e9760b3731f61bcf514734c10602efc1399",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "30057de40c5196a0299cf49485a1c79067027e43d0e472f5b87496c8d18c00ed",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal.go",
+        "server/nakamalease/reader.go"
+      ],
+      "fragmentSHA256": "6b80b731ca3376e3126dc4af46e9a59aae997b0460b82a19af5007e96c53d4c5",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "30586dd95979770934a89a3703f1b3e53a89b92a13ccc1a9defd45932b4beeeb",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_staging_test.gd",
+        "client/tests/character_staging_test.gd"
+      ],
+      "fragmentSHA256": "b58653e5f3f6305fcae8c05f18d011596e9dbbe0a9095a9f3ef689b23042de2c",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "30f07251d11591326079d2444d06b323916249cf8c8bc2ad95d2098c7f8fb91e",
+      "format": "gdscript",
+      "files": [
+        "client/tests/save_vault_guard_test.gd",
+        "client/tests/vault_restore_boot_test.gd"
+      ],
+      "fragmentSHA256": "82cd34ca85529502a52ca6415d2283c5e9fc16980de0b3614d3bea7640471507",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "31e2762116dcf2f596bc150a4136aa4c7f78e1122af3951134bde0ed55501904",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/admission_test.go"
+      ],
+      "fragmentSHA256": "841734f7c54e09838e0a5efa039e156a22d68b23915aa7a65e34c822f19b5f18",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "3262eec0d4926b28df11427ea41acb01602739d8c90721149d503b8894be6ade",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "8d882304dda61e523fe26f428c281854244e8e514480bcc3bb44467ecf09579b",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "355f34995dd5355208489249af0da3ded9e872129b3a9a772f486fee924feaf9",
+      "format": "gdscript",
+      "files": [
+        "client/tools/plate_crawl.gd",
+        "client/tools/relief_read.gd"
+      ],
+      "fragmentSHA256": "b61b24a126f8fc0bbda6624ff23d01a81a899c6369db4cfab6716d0c8b889e45",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "37c4bb7a2e83843d091ce1bad15b22ff6bb1e72616ec1540a18f1051bcc7266d",
+      "format": "go",
+      "files": [
+        "server/nakamalease/store_test.go",
+        "server/nakamalease/store_test.go"
+      ],
+      "fragmentSHA256": "d7943b5fcc937551b8acac602102f7d1b2684c18623b9507f94fa7256319e2ac",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "38792ad8db830b875a54f224146356bca4ce9fa8d1594640bfa34d52be89bad3",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/publication_test.go",
+        "server/internal/gameservercommit/publication_test.go"
+      ],
+      "fragmentSHA256": "6008734df8001b12976ea472d7183d5c39c019a15f3c31a0cbaeea35c0a5be31",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "3a5a2f398374f2e8ff023f744a0d246bbad431c1101afce5997e2f72581cc937",
+      "format": "gdscript",
+      "files": [
+        "client/tests/replica_store_test.gd",
+        "client/tests/zone_connection_test.gd"
+      ],
+      "fragmentSHA256": "fc076b7b988744573e8c600d1ea1054035f885441f4d5da53fa0f479368981b1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "3b7ccb6f12a88c009645884a89cf6ac37ca6c2ae9336b4ce270812f1ce5074d0",
+      "format": "gdscript",
+      "files": [
+        "client/tests/mastery_lock_process_test.gd",
+        "client/tests/mastery_vault_writer_test.gd"
+      ],
+      "fragmentSHA256": "030ceabcefb3e5384e487ea9ae625497b0831ca2bc680877cf1aa39fd3e5c166",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "3edf5765c4c7613042fa22677558c5052f891f689fe7b5ba2af47b9ea5547d5f",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/durable_test.go",
+        "server/internal/gameservercommit/durable_test.go"
+      ],
+      "fragmentSHA256": "6eb98e506b1c01c14034b11d14874e1fa8fa583a025ca9a1101bf770381d6e32",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4739383a8f89029b536126cb27b4caf3d7cd4744825417fe440468cc887978c7",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "b41ab214b5cd2ea64fa57d2916eb5b4babb9460f6e03d197fad41e6d125474c6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4bdd7c66c564ecd433a60d7ed5d68285f7820f625c34729ce09f582d09d6f681",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "0020bb8305b700a2f2b1fee88722be9ff310d28735997ad1e29bb5f5d37546c8",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4bf75b67e4f4b7c2e69298b041e67db50f0b27b8dc5b0c5b9810404eb5b9c85e",
+      "format": "go",
+      "files": [
+        "server/claimrpc/boundary_test.go",
+        "server/claimrpc/boundary_test.go"
+      ],
+      "fragmentSHA256": "b3d74ac03c70214530af1ca4bba4fcdce8553d5dabcebf887ceb6a8871fd4d67",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4c1ba013f79a4a7ed30dbad0859b0bef39dc712a18cd771893df861163a31013",
+      "format": "go",
+      "files": [
+        "server/nakamaruntime/private_listener_test.go",
+        "server/nakamaruntime/private_listener_test.go"
+      ],
+      "fragmentSHA256": "777454ba4c3b944f8e6e6cfee3794c1c9cfc563ceb47b5b1a02e7d43441d9f69",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4c3b79eb5217568cf1cdc29ad171b3bb911173ded8f92266a2dcaf3182fda2fc",
+      "format": "gdscript",
+      "files": [
+        "client/tests/mastery_lock_process_test.gd",
+        "client/tests/persistence_scenario.gd"
+      ],
+      "fragmentSHA256": "030ceabcefb3e5384e487ea9ae625497b0831ca2bc680877cf1aa39fd3e5c166",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4d7b2568cdc8731ad35f4a5349b3c03c0ca37093cd676e7bd20f6c62ce65b529",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal.go",
+        "server/internal/gameservercommit/publication.go"
+      ],
+      "fragmentSHA256": "b074fc700f61a95d056045e8041108b3127f8fc8340fe742a12262715a267798",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4da4b4a54fa4608684c91a80d470385bae79a5fceba51bf0d333b46c5c385b1d",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/recovery_fence_test.go"
+      ],
+      "fragmentSHA256": "b13a5e51196b99f05456ba8a5ebb8f496aa7f44a03c2c67888da9b3a18132626",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "4e6407014d6d8abc59362f282230c2f259aec9cba21007bd8191712f4180b7c8",
+      "format": "go",
+      "files": [
+        "server/nakamainventory/store_test.go",
+        "server/nakamainventory/store_test.go"
+      ],
+      "fragmentSHA256": "05e12b15463f0ceeb4d9a2e5970120fc31d56460e76d47691a388c9121d84e7e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "5167ecdb9035653afc302093c21881e6defbe4415c520a8691a15b4cfe58308b",
+      "format": "gdscript",
+      "files": [
+        "client/tests/shipped_piece_slots_test.gd",
+        "client/tests/skin_layer_test.gd"
+      ],
+      "fragmentSHA256": "9e4169498a783097076cd50dcfbbd72cd15a1e98e90dc2ef85bbc0faade66fae",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "51af4473437ee0581142cc6d02426db2b8305f2b5b98ec0d96ef7b884f859b7d",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/handoff_test.go",
+        "server/internal/allocatoradmission/handoff_test.go"
+      ],
+      "fragmentSHA256": "d9b1c33600531eb3cfc24670f3a882ecc6a91aeb2fad5ccc6cb61a627c328dd4",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "51c32d31f14a7837a3e1ed065a9cf17c1abadc843de90b8745cde634555c9d7a",
+      "format": "go",
+      "files": [
+        "server/claimrpc/completion.go",
+        "server/claimrpc/handler.go"
+      ],
+      "fragmentSHA256": "7d106ecf66ef0972acb5c3aa39ac1eefe3d650b7db36322a4a3eaba2973a6120",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "54bf44fde2b66b37adeec0a84d36669fae7682f6a19d93c6410a492eb307f2f6",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal_test.go",
+        "server/internal/gameservercommit/journal_test.go"
+      ],
+      "fragmentSHA256": "04b476eb38c27bf02f99812a86ee2be1904a789d64b61979dcc0bba83a0c0daa",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "5663047283bf3434c49f53f779b08c7b9056011d357a32ba05764b75c16833c8",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "526a129f68d6f1980b1c6aa97067de9779e207b8e58547315316a0e5fb19b6f2",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "5801dcf2ee63abbf2ec1acb96edae3d7316207a1ad2fd27dcb5027f062162f23",
+      "format": "go",
+      "files": [
+        "server/nakamamastery/store.go",
+        "server/nakamamastery/store.go"
+      ],
+      "fragmentSHA256": "939296fecfb4b50453ef9e16aee26a698540c0d2f650e48b0c2d44e9d0e93670",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "5910a3dacf10a51505c8726e59d54b2b3c2341fd7ee74cf88cc69059f02ec147",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/save_vault.gd",
+        "client/scripts/save_vault.gd"
+      ],
+      "fragmentSHA256": "06e6094d426d1f5ddcaa581416bfd3651ae8e18569a321b74bc1f120ff0c8167",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "59758bd44df7566cf7e3855f3073d692b54657b28225ac8c89a7727ed89119a7",
+      "format": "gdscript",
+      "files": [
+        "client/tests/plate_junction_test.gd",
+        "client/tests/plate_junction_test.gd"
+      ],
+      "fragmentSHA256": "8055a5bde12593d4b7984d7f685ff049a41270c89dcb508a47bb9cab6a36dde9",
+      "occurrences": 2,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "5fab64cc3eca381d5614d83b2d63eed9ac1ba031e705eee1ef90a707f9451233",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "8d89417a0faca113327d700a1a70e2a6b3ce0bbd26f7415f43a8d8c0011da52a",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "6180e568cd94394b49f0dbcbf97ce181c919015af5729c04b57dfb69b752df50",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/generation_test.go",
+        "tools/gameserver-commit-trial/generation_test.go"
+      ],
+      "fragmentSHA256": "0370179aeb5261657d90a5f3690d822fe2230681ae32d5b7bdd926bc0bbe42f4",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "63bda757dade5f70149a8f9fbec3b18483b4c8997241e438f9c2875ab08cc0a9",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/ragged_drape.gd",
+        "client/scripts/ragged_drape.gd"
+      ],
+      "fragmentSHA256": "12501e277a5951e7d95ac5545d126da46d50cd28ce9260d2fa689fa5dcf36614",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "64c545c5f93af199e6eda37eb4e4533bb3d294cf94e29463f8376a56b992f01e",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/durable_test.go",
+        "server/internal/gameservercommit/durable_test.go"
+      ],
+      "fragmentSHA256": "d2ca9c1721b991ef9a15978a34328c17fff5c45752cd14f2fe2de4f6256e7e70",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "64ccd9794fbc750148dfeadf9dbc8bea8ed2b56d6fac7c01ae88953fccfd8bb0",
+      "format": "go",
+      "files": [
+        "server/zonesock/shutdown_test.go",
+        "server/zonesock/shutdown_test.go"
+      ],
+      "fragmentSHA256": "914e0e844e20bf34d9a52369afae0553d6706413da39c5a6527206c43f53ce52",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "699d856da7053c1115a499be37c182f36542cd978c5fc498cc9f53f130f33bb9",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "8a113760704fd8d53bc1506e6c07d27717a92de2df32e192398c98e8797c05e9",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "6c76afb74f7836fa83dbe0f2dfb873a2ebd19ea4dbce8f4b910c5309637c4d2a",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/publication_test.go",
+        "server/internal/gameservercommit/publication_test.go"
+      ],
+      "fragmentSHA256": "d4d240a06308b60d2298e5cbef6a90703fd1854427d7dd5ed752af05716303dc",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "6ef0f1e53797d34d584fcee5957a76130c0aba1dee20d4012a4a8bc9b0d9e4a1",
+      "format": "gdscript",
+      "files": [
+        "client/tests/creature_kit_test.gd",
+        "client/tests/humanoid_kit_test.gd"
+      ],
+      "fragmentSHA256": "18f0f62970b1f21ba5014024745eb96b5eec81c82483cec186fd5273018df0c7",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "7002f8d52cc6111ef5f9bbefbc7f1256b6d5e269fd9773c0636263cf1148b17d",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/handoff_test.go"
+      ],
+      "fragmentSHA256": "df729a35f2fd649fd6f7caf7d10519eb07b882bb4a7e4d20aa89ce6842d61024",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "70ed22859d24e17a385c9dca088d9282fc3e60cd51083797461bcba825e932f3",
+      "format": "gdscript",
+      "files": [
+        "client/tests/update_decision_test.gd",
+        "client/tests/update_manifest_test.gd"
+      ],
+      "fragmentSHA256": "1fe4988c1bf7406f156b9022bcf7b60b8615c485911e719d79c770b123b9983e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "7176cf5b492f2c134ed50602643cba327acbc9e4a9a1cacc7ebd64e2abc24466",
+      "format": "go",
+      "files": [
+        "server/cmd/zone/movement_test.go",
+        "server/cmd/zone/shutdown_test.go"
+      ],
+      "fragmentSHA256": "9213296076f33f8474c6790b798fb58633f33ad1734409675221e0fc96a5577e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "71805ce07ccb693a3dc627f49719905bc89b31c797d0147ef9fb91e23e919354",
+      "format": "python",
+      "files": [
+        "tools/artgen/creature_kit/bake.py",
+        "tools/artgen/humanoid_kit/bake.py"
+      ],
+      "fragmentSHA256": "12f42de468d8ef8a1a4b35be5f2f08f15326cefe4fc50042bc58f424047a37a6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "718a6dec451d786dab9f9a359ad3fa35f775a3adaaf613b4dd7861e80e25edf8",
+      "format": "go",
+      "files": [
+        "server/nakamalease/store.go",
+        "server/nakamalease/store.go"
+      ],
+      "fragmentSHA256": "bed63d263854512e0eb7d4fe40957ad188777736ad7b0770f1480401534f934f",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "7472559d8fce07f42f2081df4d2d0730c374669ff6e4afb097648b93deec09d9",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/world_gen.gd",
+        "client/scripts/world_gen.gd"
+      ],
+      "fragmentSHA256": "7bd57593e8f64f96008b9f1f71d837478776d908f88f6656f5834b9af6aea048",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "75ab8a979b1facd6a1347c888fa51d58d4c723811311f472a1237375ee6e5a67",
+      "format": "go",
+      "files": [
+        "server/claimrpc/boundary_test.go",
+        "server/claimrpc/boundary_test.go"
+      ],
+      "fragmentSHA256": "09b76d10797c706ccde86c2f34fde587606e9f15c117882578f0d2c033d820e9",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "7982e6d5f2edf7472ce78f258c48e4d5f9d2b04a1e248989354a148e33bb15d2",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/admission_test.go"
+      ],
+      "fragmentSHA256": "1302374e89e55d18344a71d8b7070f463a3f0bd36c37c5a3a023240ca9615c8e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "7a7d83feb8fc6926d1b5637dd74f3de5221b65517278f6c77c5c1df65eda5989",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ragged_morphed_shell_test.gd",
+        "client/tests/ragged_waist_skin_test.gd"
+      ],
+      "fragmentSHA256": "4661b1f43f73fa4464c6119078c798878105ec6c35ecea0ee7c145f805b114b8",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "8023740b81a03741ea276b68e2a2b3716c55d00b470d8a8955b2b37e16d599f8",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_guard_test.gd",
+        "client/tests/save_vault_guard_test.gd"
+      ],
+      "fragmentSHA256": "8cc757ff1002db1be16a2e8246186579b29aa0b7e101093bdb966c116ce969b1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "80417d685404198747a127bed683b3625487b06a081ece9fc3078280e4cbd119",
+      "format": "go",
+      "files": [
+        "server/internal/fencereference/rpc_test.go",
+        "server/internal/fencereference/rpc_test.go"
+      ],
+      "fragmentSHA256": "6658f9c877c8cb9e94b7534dfdb16b00ef6abb8f32c730a95d299f775b2d24f3",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "80821d2723398da414a861a9ab03f19d9bb96e4646625851f6bd4fbc4472a0a3",
+      "format": "go",
+      "files": [
+        "server/cmd/zone/movement_test.go",
+        "server/internal/nakamatrial/movement_test.go"
+      ],
+      "fragmentSHA256": "4f57ed040245f6ff85649062c2b2892da3ae8e4761ec93c524525d515f85a550",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "8341f5845f279f7161c2a87f505560fdf463fdf5853079fd52bd80388181a1e9",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/durable_test.go",
+        "server/internal/gameservercommit/handoff_test.go"
+      ],
+      "fragmentSHA256": "96663d3d12a766815e3939bf01c53065b113b56ab10a10242aac438885e3e711",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "83480aaed477134bd311d3d4f9d35487faf0effb2c27f95832ea66c8ac42836e",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "38f67ff22633f10336baa25e7e898858ba42d04a13ce6481cd6f018dce08cf8b",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "83922c69a3f30f1da423ab99c704d900f84fe6ffbfbbcd547ff5c77b4c8c65df",
+      "format": "go",
+      "files": [
+        "server/claimrpc/completion_test.go",
+        "server/claimrpc/session_end_test.go"
+      ],
+      "fragmentSHA256": "d9a45179cc48a54389f1423ab325723def6745f0a193d5ee92d681d29bddfade",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "844d81af869d3bc6eceabc0982bb2f2a248cc1c1748fd092414c78e6b5804769",
+      "format": "gdscript",
+      "files": [
+        "client/tests/foliage_render_test.gd",
+        "client/tests/foliage_scatter_test.gd"
+      ],
+      "fragmentSHA256": "e588aef15b1961511203d0079146a44ae18e40aafa053cd67471b6fb35e63dd1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "8723ae6c7d2f85460a2fc7606dc074d3c0dd0ad63f94bf21867be0c833ae4fc0",
+      "format": "gdscript",
+      "files": [
+        "client/tests/character_persistence_test.gd",
+        "client/tests/character_refusal_test.gd"
+      ],
+      "fragmentSHA256": "9e6485dcd4a70287530d89715b4974a6c7e8e7025aacaf82588749b493a2c5aa",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "873af34fb6829f8d45a6e2e7280263fb029fa906f330978761acd80b05af5549",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/generation_test.go",
+        "tools/gameserver-commit-trial/generation_test.go"
+      ],
+      "fragmentSHA256": "b3d65fea021563e26dca02191e9666e022c2446a9efdfd4474495f8e9f99ce41",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "87d6a4e565ea455b04f897589bfda4d722b2614fcabfbae9c5976414c9803372",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "7fafba608fb84117805571280a22c12712234bb6c53f0c46606cda09d55a58ed",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "87feadea0baf11156eb278f724196bc1d646ddee35e9eeaf93477fc06958855c",
+      "format": "go",
+      "files": [
+        "server/internal/nakamacapabilityprobe/recovery_owner.go",
+        "server/internal/nakamacapabilityprobe/recovery_publication.go"
+      ],
+      "fragmentSHA256": "f0c9b2d558cced66250f5e531eea596d6a1b970ddbb91e34d21ff9582d28d0ad",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "888e6ab5336405e5d6adad35859a48074a66ca9f45c20918938cd369d7e06219",
+      "format": "go",
+      "files": [
+        "server/sim/combat_test.go",
+        "server/sim/telegraph_test.go"
+      ],
+      "fragmentSHA256": "04ecc3ab208a8fe7ee5f40e2aa93ecd1f1eea7fc7c4787f85b8c06cf2f1201c4",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "8896fcab7d3f7fa788216f0eac4298c7bf3f649256be2727b260de4f7108d73c",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/recovery_fence_test.go"
+      ],
+      "fragmentSHA256": "dac98950cc326cc2675e18e3c5126a0f9a5bc13bf63f20761a8aec444e63ac2c",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "8e5d1a56295fe141181f2238fd49d66bb49d9e7248bb11d617f92c0b81f3498e",
+      "format": "go",
+      "files": [
+        "server/nakamalease/store.go",
+        "server/nakamalease/store.go"
+      ],
+      "fragmentSHA256": "b4c0d3c81a60094e2a723244c3370064e9e7a5587623c10acacae701aea12e55",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "902c4f12f6a835d183bab9b548277847d4dcc05b06c3d15463f2455f0e8bf00d",
+      "format": "go",
+      "files": [
+        "server/nakamacharacter/store.go",
+        "server/nakamainventory/store.go"
+      ],
+      "fragmentSHA256": "675ab1273220b26fb867e7760622084c48fc0cddd802e8cc684a8845faf5b15e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9112967131fffa5ba9a3e1fd26146136c76c88857b45102cf9f0e37a1e8bba05",
+      "format": "go",
+      "files": [
+        "server/zonesock/movement_test.go",
+        "server/zonesock/movement_test.go"
+      ],
+      "fragmentSHA256": "9727640dfaababfa6ceca7d20eb625443496f823e3589606beadc09a10853f82",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "93728a01e5dcbd54ca3691d88e5a0c52ac55fdd217fa1123e65a169869f0502a",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/handoff_test.go",
+        "server/internal/allocatoradmission/handoff_test.go"
+      ],
+      "fragmentSHA256": "298ab9827bed271f833b14ff9711f43ebe8b884f8a4800e0bdffc33f69e78954",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9381c5b44e80400127aec2f269f290ae0f131a6366a50dcccffdf8f4d48f2d09",
+      "format": "go",
+      "files": [
+        "server/handoff/service_test.go",
+        "server/handoff/service_test.go"
+      ],
+      "fragmentSHA256": "65ed293b6116e9bbd4b9e76b9da00848f35ece4ac799a6af2d547ad0d505c3af",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9389a3563da109bcae8d427fd7ed6efe8191ec2bc9fa618099d75e6d0556c3a9",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_cas_test.gd",
+        "client/tests/character_cas_test.gd"
+      ],
+      "fragmentSHA256": "b476b5af6ad4e5e3d86b9f886ebc9308e40b9aa78b432cec33e3fb75ba651667",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "94276657e5dedffad6497dd1b4d37c72e58bed549ed93de908eb44a5addf66a4",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/admission_test.go"
+      ],
+      "fragmentSHA256": "56be77800acd4368ca8765a2812c9a1e01b255a06b34fae427d87d60c28a391e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9493d92e9aee2f95f86e97863c1b5e2a882ab52c5b0d5fa10797a0f9eda2b8cc",
+      "format": "gdscript",
+      "files": [
+        "client/tests/exposed_slab_geometry_test.gd",
+        "client/tests/exposed_slab_geometry_test.gd"
+      ],
+      "fragmentSHA256": "91010b27e88d47f8aad921dbf9d03040c759cf2dae0e0de869965d45412bf08e",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "969ddbf66fb317b2268fca7c43baf63b89fdd897ecd77c8e52d24761527d6dc7",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/publication_test.go",
+        "server/internal/gameservercommit/publication_test.go"
+      ],
+      "fragmentSHA256": "a7015fb5a6da060715cfcf9df8665adcb3f14fa4f053cc75faa0c4b592c3c717",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "97f187eb9ad0e80a9255bad93e321350558165c86f50bdcd5b0948fad0451a70",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ground_plate_glancing_test.gd",
+        "client/tools/plate_crossing_sweep.gd"
+      ],
+      "fragmentSHA256": "d921ea4ed04dddc937a7537c5bce148ee65fc88e43a5f6c0de50e7ee11da9e61",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "97fc7b772ee896e87982a0e07f0e54a05a12987b6c846bb91c1ed83f908b3c12",
+      "format": "gdscript",
+      "files": [
+        "client/tools/frame_capture.gd",
+        "client/tools/frame_capture.gd"
+      ],
+      "fragmentSHA256": "61f9013cdd4e1b94b4a3cc2c2cc948c0cba0a6d1dd3e58a0fd1e3ae3aab02bf1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9b75c1cf7891bb8b5f852238a2e39d91f1db13f0578d609e74dc91484d07ba8f",
+      "format": "gdscript",
+      "files": [
+        "client/tests/character_refusal_boot_test.gd",
+        "client/tests/character_revert_boot_test.gd"
+      ],
+      "fragmentSHA256": "b3220077592cf3984d29a4907abb6b476871f4252a6c007db6a6d03363b0bfa2",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9b8ea934c620710f305d723a323c171b60fd8777ea002b180e17c06e7c59dce2",
+      "format": "gdscript",
+      "files": [
+        "client/tests/vault_restore_boot_test.gd",
+        "client/tests/vault_restore_boot_test.gd"
+      ],
+      "fragmentSHA256": "f9b13ad5504c1869db29bd0520bbf899705426b7dfa099d11692604a049c77a1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9d6030eae9a7ed7b4b0171978b4c5ffa48ec67a4a0fe14753b5cb93279444dd2",
+      "format": "go",
+      "files": [
+        "server/internal/nakamacapabilityprobe/handoff.go",
+        "server/internal/nakamacapabilityprobe/probe.go"
+      ],
+      "fragmentSHA256": "62289178a087bef7ec9af3185b2020516e1824bda71c7006012bc4bfdb0ea144",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9de3da006c8f245a4a5b5c55934c24c08d68577e8bbf14107888b9d5e195173a",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal.go",
+        "server/nakamalease/reader.go"
+      ],
+      "fragmentSHA256": "89f73bc7d9019e2cd4b32a32d25e7ba75a959411c9c0f2111ec03acc54310027",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "9e432969342d521779c1388bc1ff2fac06319072e0096ae4ee3320d4215aa482",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/kit_assembly.gd",
+        "client/tests/historical/kit_assembly_v4.gd"
+      ],
+      "fragmentSHA256": "4e13cb146339b7af64f89b408c126be121b6689a5c4e05676861dd8b93be7058",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "a2b001437b8da54d2b01476437508b92c21bf9ff3aa244310bfba9227d5df757",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "b8d3941268124185f8625dfd0ddc929b16921d91b1c7f7d4c1507a0b085e0e8b",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "a34f3c97b2ca909b1c36066f97a403dea29b892181f3d590835aa8120699a006",
+      "format": "go",
+      "files": [
+        "server/agonesresources/handoff_integration_test.go",
+        "server/agonesresources/handoff_integration_test.go"
+      ],
+      "fragmentSHA256": "a3d18f947c16db62ce3e9c541684ab9feb20caeb4bf09ca8ec356977a47f6bdc",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "a35f1485de8c4d88a4b70fe7e3b523f740b444b05880de5f788e52d4980c4730",
+      "format": "go",
+      "files": [
+        "server/allocatordiscovery/transport_test.go",
+        "server/allocatorpeer/transport_test.go"
+      ],
+      "fragmentSHA256": "5566f035260b97c0b6cb1421cb7f9d488eb56bf3cf2058ecafadbd338ac56911",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "a47d36270e11c1211cece68c2d87c999865ffbdeda4e991ef81f3e5be15f02c0",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_cas_test.gd",
+        "client/tests/character_cas_test.gd"
+      ],
+      "fragmentSHA256": "50335f5f34630c76bc0c29cae6f42e9760b3731f61bcf514734c10602efc1399",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "a703bf3706a4b5b9bc08f1bcaadfea9d96a002b7263ee576eb7d395c0caa7a09",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/kit_assembly.gd",
+        "client/tests/equipment_visibility_test.gd"
+      ],
+      "fragmentSHA256": "eec8ba2de7b140310d0e93daa09c7f0ff136be32326d19fb74703d7b98dc95ba",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "a7f9f398eaba09abb945174b00e3491e244a18e259b202f414d478fc944d7cea",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "dc0791e4ad878f47e32f21d8dfb2009e408d91dda17c3380dd27b9e3b015081d",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "aa29bee13dfc7a3d5b0dbc5c6a73895ca417a8b2ce0809c0bfd33cbf25eaa598",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/recovery_fence_test.go",
+        "server/internal/nakamatrial/recovery_owner_test.go"
+      ],
+      "fragmentSHA256": "8bd90f48c3903e922f9d375e5b81bf23d595cf71171e888f32e6b5ce8cc3f572",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "aa79c1619435b4ddab4fedf3dc40b3d4236591e2d5b4b5e6f7e7bfe33a0edca5",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "27d5f9bb195b51b1c589c74b97336797c8f0ea093d699385f1d9b79860557440",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "aac1b5dd6d2ce29dcdc5d522f77fd8cfa6b836185281b348b77122ae2d938763",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_lock_test.gd",
+        "client/tests/vault_lock_test.gd"
+      ],
+      "fragmentSHA256": "c6892e8ce518b1f476e4d87aba2a99a2cab52f02f6ef28498f2403b63c894000",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ab298255788f39672bae285fceb03ddbb066168dd5eb0e50c62c5867a793c833",
+      "format": "gdscript",
+      "files": [
+        "client/tests/planted_feet_test.gd",
+        "client/tests/planted_feet_test.gd"
+      ],
+      "fragmentSHA256": "20d74e1082e9e03ea82ece90b53617fbd68bdc8015275c8e15e60f2da81aca16",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "abbd9d27d1f5c3136f501080f260501cb91da9652acc685aa5364fda4ef0e6f4",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "b2eaaedbf369e217690064a85bc1a6177ac3415f226990c2af6057ca1bf51e96",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "abf1d1343bf3003f34e59a3df249c0269da84ae90c8ab7e7e44e11b730a2dfdd",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "47899f87c35291da9e98744e6fe88f923fa07e1df9afd6d5482950c3763fef03",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ace9ba34a209c93e30004f5d50e7b8a8907e58e4f48321ba572b3728cd3a035d",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "6d8efa31a4cc00841b0e83faa49438f7438047e0b8d3b69ecc6b719c35e244c0",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "ad2dd125cf998d9fd01cfbb17a341d14e50aa55d58c0577e8004bbf27b45c408",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/world_gen.gd",
+        "client/tests/structure_seating_test.gd"
+      ],
+      "fragmentSHA256": "e2fc8c51be97503977bd16e67b6fecfc5e38ddbca4c05c6454a6dd82ebb7d3c0",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "aefa333ec165e26039be1c84755a237f33082caa46e6cb4cf27adb4dcb9ba62e",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/update_decision.gd",
+        "client/tests/devlog_entries_test.gd"
+      ],
+      "fragmentSHA256": "72576b83ea00231716fe7600a83cdf411efba2d2873b28604bbe4717d179d774",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b0aca1d247b8b9ca360fbe29d6573a5f516b437519656f9e02869f58f3c64ec4",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/handoff_test.go"
+      ],
+      "fragmentSHA256": "a1a9da38d2240d75f954339085c42950f6cfea2be1d416f1b60fd0a401e12f60",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b2d8cb637defb14e29a0affc19b8e3394e6b333b0863f60a968f0ef4954c37d9",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/durable_test.go",
+        "server/internal/gameservercommit/durable_test.go"
+      ],
+      "fragmentSHA256": "7217929307f014cdb4b1f01234eb2ec1e7985a58aaaed395b18cc600ab36774d",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b2fd5255052242cd2538bd40bb7174cd82c1ff026d611e48c2733f6b4525da26",
+      "format": "gdscript",
+      "files": [
+        "client/tests/creature_kit_test.gd",
+        "client/tests/humanoid_kit_test.gd"
+      ],
+      "fragmentSHA256": "9d855a25687a23e6f3bd746765f346ab26a1cce67045e6ac2ed549729e1fd8f1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b5c212d1fc6e1ae709371c34e979acd34494376a56d5bfdb7817fb61fafc75ef",
+      "format": "go",
+      "files": [
+        "server/handoffalloc/coordinator_test.go",
+        "server/handoffalloc/coordinator_test.go"
+      ],
+      "fragmentSHA256": "4798e9ffd7e80e2e2b866a401da623f195041ca77c2298cbd8aeb298082cc34d",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b76f6a161a1e4030a3fc2518c04630d07a40261a0c79c83dc027cf6fd9f332a9",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/handoff_test.go",
+        "server/internal/nakamatrial/recovery_fence_test.go"
+      ],
+      "fragmentSHA256": "ffa4d06c6289466b33e943629844f3c184ea9284a3522b18cc2082e41fdee3ed",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b7a948a6a7bd7caff077e37c0870e15bc60d6fb39ddf7a057c9fb1820828d68e",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "tools/gameserver-commit-trial/storage_test.go"
+      ],
+      "fragmentSHA256": "c45a9685ec66e9138f9aa4f3341b86fac541da66d0c562474488901caf6fc4b6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b7b6e54007d93bef5d99c8ba729ab2a45bb93220f15baf8733560a76065970f9",
+      "format": "go",
+      "files": [
+        "server/zonesock/movement_test.go",
+        "server/zonesock/movement_test.go"
+      ],
+      "fragmentSHA256": "4d8e9d5995436430352bac930058d7695f9ad57499b017b94a6bc5a0a98c14f0",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "b83ef00c0832a5a50d31429e61f1054d8786d555f53061c216952ef20bc2c347",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "ec4ab27217eb51c147474b965cff353f0c3f40d4d03ba02c2d209eba4ed67155",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "be3dba76bb2c61401f2f0670ee42e6a1683f53d810d975f9e3c05b24311ed696",
+      "format": "go",
+      "files": [
+        "server/claimrpc/completion_test.go",
+        "server/claimrpc/session_end_test.go"
+      ],
+      "fragmentSHA256": "dc306acde833f89bfaabe4c4e1c974d2417ba6961b8de072319a949d1c6f98a3",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "bfdaa3ab009c4c073d115f3715f231a8d584295f8ba14c724b2db0c40585eb22",
+      "format": "bash",
+      "files": [
+        "tools/repository-trusted-gate-workflow-guard.sh",
+        "tools/repository-trusted-gate-workflow-guard.sh"
+      ],
+      "fragmentSHA256": "737174ee3e8073e91d1af1b52f17c2e30d236869d5b293529d0b0f47d11a47b2",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c0557205ed7a53b52cfb9738ab89e88021216eeda6e535369870788e64dfc42d",
+      "format": "gdscript",
+      "files": [
+        "client/tests/mastery_lock_process_test.gd",
+        "client/tests/mastery_snapshot_test.gd"
+      ],
+      "fragmentSHA256": "d4fa9f25671c23e15fe3602d46712b7f03c03245d18df99bb6a2b79ef81c89c6",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c0c7e78b619dd95f866f0048863b060a352ee7fe2805f080fb0dde8c4948de7f",
+      "format": "gdscript",
+      "files": [
+        "client/tests/discovery_test.gd",
+        "client/tests/quest_log_test.gd"
+      ],
+      "fragmentSHA256": "77f8f4ae1086945374f0942238756f8a2070f61bbe5eea251deb35aa647a7235",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c1c618194648648082f388e00c8a71988308c72b514f9f8c735878858515b30f",
+      "format": "go",
+      "files": [
+        "server/zonesock/hub_test.go",
+        "server/zonesock/hub_test.go"
+      ],
+      "fragmentSHA256": "b56fd3053d6fd7a56b3f358cbbdad2df754e1d47cf2994bef6212e022af8d658",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c3d3458cf8f1aa3219b2fd164c9016a63d56470c8a68775884f0505d8faa1c75",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "2a42c878650b1a778a5ce881cef18c020f326057b0eb3f1fc4317695cbd741b8",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "c413bf47639124c11a0484f7c10b197793e47a26c89a840464b73d0ac0a4a20d",
+      "format": "gdscript",
+      "files": [
+        "client/tools/frame_capture.gd",
+        "client/tools/frame_capture.gd"
+      ],
+      "fragmentSHA256": "2d54443d9bdc6db57dc2a830663a25885004252755011b97d0504199ef1a4cb1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c75616e66f1610b1724fe268ffc5a34387435dd2b556655dc5b7b07e7d572652",
+      "format": "gdscript",
+      "files": [
+        "client/tests/character_cas_test.gd",
+        "client/tests/vault_cas_test.gd"
+      ],
+      "fragmentSHA256": "05a81fd68a3c80d94976385546414007deb56df510f83596c314bf783d744154",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c919635e3c92c55e3c5755a8e66ae8edfdc5dd7dc9efbc222e10dbe86e43a342",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_staging_test.gd",
+        "client/tests/character_lock_test.gd"
+      ],
+      "fragmentSHA256": "2976edbd8177ec013876833cd4f2ca3f8994a405d042c9d5b2e3fc32218962f0",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "c9211d25e17ddc300651ff22f8247e1210a08d5cb248a34d33a0d802eb114fb8",
+      "format": "gdscript",
+      "files": [
+        "client/tests/region_landform_test.gd",
+        "client/tests/terrain_traversal_test.gd"
+      ],
+      "fragmentSHA256": "a05d6cce4b3f9908db4ff27f5761a6cba4d1520dac64603460affc2488a1cf8a",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "cb71e2c9a770d97562d7646d5004655c379a9b2ef77dabed80336e3cb6189b36",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/character_factory.gd",
+        "client/tests/historical/character_factory_v4.gd"
+      ],
+      "fragmentSHA256": "e2b10663ebfaebf06709038b2c6f00b31d7130c314dcbf63c97d50d630d175ca",
+      "occurrences": 1,
+      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+    },
+    {
+      "key": "cc6ad8b23b19c678abc105fd45dec4d5572bc3c655746b718344874c7701a306",
+      "format": "gdscript",
+      "files": [
+        "client/tests/planted_feet_test.gd",
+        "client/tests/walk_locomotion_test.gd"
+      ],
+      "fragmentSHA256": "58d400cab6e9d7d45e1cd05bb5dcc0b87cce530c266f800544a4ad979c493769",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "cda92f11f5af739b53ea7bca8aad64cff977c407b1cae0411288a9744d0d0f14",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/durable_test.go",
+        "server/internal/gameservercommit/handoff_test.go"
+      ],
+      "fragmentSHA256": "d2ca9c1721b991ef9a15978a34328c17fff5c45752cd14f2fe2de4f6256e7e70",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ceace96fc925c047ae943078fae8c0738dadbf4c0e813a97c4514d445fe2fc36",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/handoff_test.go",
+        "server/internal/nakamatrial/recovery_fence_test.go"
+      ],
+      "fragmentSHA256": "a58402b16d0e531abbb00628ebd76ed1512145ecbf876727c18e050b5165f50a",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "cf21056d49edfcb6f71a74533fc2702173dc78ea1a78665719199df42b7ecd5e",
+      "format": "gdscript",
+      "files": [
+        "client/tests/character_cas_test.gd",
+        "client/tests/character_refusal_test.gd"
+      ],
+      "fragmentSHA256": "7628198b67a130ef9a90627082415ec131191911653ddbd11f07a67e69935868",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d022633353decb35adfc85222088eb668335f3227526c765cf7c8d5b6543316d",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/handoff_test.go"
+      ],
+      "fragmentSHA256": "6841415ec604a7cd2b498dde8031f48b5fafb3c3847a444cbceb7f902b6ad710",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d0447d87688ebda5b4c7562d37527a4d41bad3bf1d9d2f62d5c06e18e60d1da3",
+      "format": "go",
+      "files": [
+        "tools/gameserver-commit-trial/storage_test.go",
+        "tools/gameserver-commit-trial/storage_test.go"
+      ],
+      "fragmentSHA256": "67865e434c398dc0f871726c30628110a101e85c4ea7ef4e7d962379780e90ed",
+      "occurrences": 2,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d28b54b7c6876583bbfceea7cb5c4f1bdf73ca7047c0e7ad8d1bfc763102f300",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_guard_test.gd",
+        "client/tests/character_persistence_test.gd"
+      ],
+      "fragmentSHA256": "d48b86e1530fde82710af91bae39779700290a98bd2a0ba7aac027c6a9fffc04",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d3961e15aa8569caff8ad8762bf331e169ca2275f54100b2936f4e581bbad6b6",
+      "format": "go",
+      "files": [
+        "server/nakamalease/store_test.go",
+        "server/nakamalease/store_test.go"
+      ],
+      "fragmentSHA256": "4d8f2d4252bd7bfcd6bba9de7fd4cc5ccff6e512caf76fd0e6fa41f54bd1f911",
+      "occurrences": 3,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d41a2893c094a54af8f2c394d26fd24e52176f28789ec505e1cd867193729c92",
+      "format": "gdscript",
+      "files": [
+        "client/tests/mob_chase_replay_test.gd",
+        "client/tools/frame_capture.gd"
+      ],
+      "fragmentSHA256": "d34ea810bf73fe9c2aaa104ba96634de0f4095750442721b957441de69b7aaa5",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d49f3349fe33b035ae166eca13e6b45babd52947ba59ece6589432580e7eb76d",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission.go",
+        "server/internal/allocatoradmission/recovery_owner.go"
+      ],
+      "fragmentSHA256": "c6bd6fb03eec7855646bd9432d25b1c466ac6068a222c78f3f36a27b50395c61",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d4b4dbadcf4c9e89e9d19dfd52e6e40a2b5ddda801084261e4fb89af0b160801",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal_test.go",
+        "server/internal/gameservercommit/journal_test.go"
+      ],
+      "fragmentSHA256": "5d9586bf68a58cc0066ce5f2fa23ad0065782e45b5e7ba74633a57e9a4a3f064",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d6f9713b1d13976844275ebf97ea0e75915cdb8e0a468da382481a6b5c2735f5",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/world_gen.gd",
+        "client/tests/structure_seating_test.gd"
+      ],
+      "fragmentSHA256": "1e74aec7ba82a706adfca28ac50744a0dac630b6dd2f97df043c2c6933df8c20",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d719c4aafeef4eead52f6bd9037536b858266aa8cfdaed4d1296bd83f8ad3d53",
+      "format": "go",
+      "files": [
+        "server/agonesresources/adapter_test.go",
+        "server/gameserverapi/client_test.go"
+      ],
+      "fragmentSHA256": "14a3ca564f40d22da9c2a7b936b46d565cd80d13984edf0f711b036cb00f9c1c",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "d86df42026d233415edc96426b870f0ec58aded71520d650e009a9030bfdf528",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission.go",
+        "server/internal/allocatorjournal/journal.go"
+      ],
+      "fragmentSHA256": "c6bd6fb03eec7855646bd9432d25b1c466ac6068a222c78f3f36a27b50395c61",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "db0c5a6174bd3c8606765ff52a4c06b68ef0898cee34307aa83c6fd759f6c378",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/handoff_test.go",
+        "server/internal/nakamatrial/recovery_owner_test.go"
+      ],
+      "fragmentSHA256": "0ad78c2042afb0ae1119fa5b92bca427d3ac8c75d56beb002622b66fa0b9b562",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "db1a835db2cc5aee256c76ba5638e1dc639ef76951e4aa2ea1f44052b952dd28",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "25c79fe1e280e73cdce47826a15e78ad0809b9b4d4808f28a1f9cdd800ba0108",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "dcf34878266cdebc5e73298f31122aae8a38352cef8516d1b0131cad70f270ce",
+      "format": "go",
+      "files": [
+        ".github/scripts/release-credential-boundary/cd_prerelease_test.go",
+        "tools/deploy-manifests/main_test.go"
+      ],
+      "fragmentSHA256": "b7f906d2910604a857a28b52b14b9fdd68bd74e0dbf638427a1fcf8f69f52526",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ddc1078b12dc37860aba36aa1153665ffd0089d14829f9d565d87ee7fba01a5b",
+      "format": "gdscript",
+      "files": [
+        "client/tests/save_fixture_guard_test.gd",
+        "client/tests/save_vault_guard_test.gd"
+      ],
+      "fragmentSHA256": "91a0ae92193486741d90cb5086d84ce3deb76c61ad3398f16aa4ec8f80be97af",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ddd52a7fd7372d6392d972c9961edc41f3cf67f4ad84c2bfefb0a0f926d20968",
+      "format": "go",
+      "files": [
+        "server/sim/combat_test.go",
+        "server/sim/world.go"
+      ],
+      "fragmentSHA256": "c1de0c356390c4f32e645b5280514e28b038c6b9cdb28092487250812237dd48",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "dde2afb21f1e96fd715cc942d05f32454dcdc501d86a839786900299ea62d57c",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/durable_test.go",
+        "server/internal/gameservercommit/generation_test.go"
+      ],
+      "fragmentSHA256": "af2efa0ec1ce8621fa8ed67fcee79ab922863b4af8e18d1dfd3eeb3875b00915",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "de99fd7103ed38fbd92bc9136ef003db2bcf1e03aeb19fefe0319c5a4ef42e14",
+      "format": "gdscript",
+      "files": [
+        "client/tests/zone_startup_boot_test.gd",
+        "client/tests/zone_trial_boot_test.gd"
+      ],
+      "fragmentSHA256": "c9a41b85b46d7e08adb10a4c32bac0caec423a63f45b38170b51eddcc2775ec3",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "dfd00a1292a3510b57a32ac94fc10f67b03e7bc3a70c6970e1c2605d4db263c3",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission.go",
+        "server/internal/allocatoradmission/handoff.go"
+      ],
+      "fragmentSHA256": "3d75fac9b60af3bc4a23e140000064856ec9ede0f5ee8cfaa90a271cdaaef51f",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e1078da5933e6c6815dcc63b2adb7f529695e78c9a0b655f62851a5e2a3b4e9d",
+      "format": "go",
+      "files": [
+        "server/internal/nakamacapabilityprobe/handoff.go",
+        "server/internal/nakamacapabilityprobe/recovery_fence.go"
+      ],
+      "fragmentSHA256": "62289178a087bef7ec9af3185b2020516e1824bda71c7006012bc4bfdb0ea144",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e143989cc7076ce7ac3aecb726b5e88ee129dd6c6ca2a9efe47cb25c99a89376",
+      "format": "bash",
+      "files": [
+        "tools/google-binding-durability-guard.test.sh",
+        "tools/server-reader-contract.test.sh"
+      ],
+      "fragmentSHA256": "60187bae2a9d874e770f7651b68e09e9bd45602a968d2c04247a3e03363e2fe2",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e19e9adeaeb3c69a8f69ca2ad7bd4a06f2047a15b7bfb51cab69f8247d158efd",
+      "format": "gdscript",
+      "files": [
+        "client/tests/zone_connection_test.gd",
+        "client/tools/mob_chase_replay.gd"
+      ],
+      "fragmentSHA256": "bac9c59ea4df402939281f69396aac1490759238b2dfb83c2492bb9d72855aac",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e34a19d52bb73208789bbeff6725fbfd10c2b0d5b831fb249df9a3ef914de534",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/client_test.go",
+        "server/internal/gameservercommit/client_test.go"
+      ],
+      "fragmentSHA256": "d7a08c803d4a7b7576e53c34bbe63b66b953fb8ae2467bce3765d1364d9c6c3f",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e6ef1643aa51a1d8e9a1f7a1f3837f63d819b8b13e9599fa60f9addde58eca77",
+      "format": "gdscript",
+      "files": [
+        "client/tests/plate_junction_test.gd",
+        "client/tests/plate_junction_test.gd"
+      ],
+      "fragmentSHA256": "41e290ac576dbb02d359bb0e4576c1e9da21339ae4840aff6c0e20f309cd73e7",
+      "occurrences": 2,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e7115ede7bb67fb6fc906dbe86fe2e2eb930076c190050ae7a8f8921a1ce8d52",
+      "format": "go",
+      "files": [
+        "server/internal/nakamacapabilityprobe/handoff.go",
+        "server/internal/nakamacapabilityprobe/probe.go"
+      ],
+      "fragmentSHA256": "2cdfd6f090c30a5818918f20f0cfab033e392f4f4a04c2d2828b0aa2d2cb8847",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "e7d570bc4e4da52b9d915ddb75c36204278b4cec7fcdbfab1f51edd552cc7dce",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ability_registry_test.gd",
+        "client/tests/shipped_piece_slots_test.gd"
+      ],
+      "fragmentSHA256": "a7dcea31f63153f8af6715d8de9da11c040c959d82da00f0bbd305139d7b54e4",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ea95fa1d7a85c3d495b08ef9d0c3d38806bfc6d95705cba943b861d9d9c9f0ed",
+      "format": "go",
+      "files": [
+        "server/internal/allocatorjournal/journal.go",
+        "server/nakamageneration/document.go"
+      ],
+      "fragmentSHA256": "c4292acd4762af2e5f82575cee53a5c2f127d6bef2a334b16e45d52b8d5070bb",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "eabae1ce1f45304d38f72a99f6bba6ac90296ee809a5d6a35c86bd067891ac05",
+      "format": "go",
+      "files": [
+        "server/zonesock/movement_test.go",
+        "server/zonesock/movement_test.go"
+      ],
+      "fragmentSHA256": "99e502db67fc736471a1fc596ddf7b017f7aed8df59f4837a73a6bb49789798b",
+      "occurrences": 2,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "eadc8ff448312909f9dcb05788efbf05824af6654a0b315599dab8cdff9b060e",
+      "format": "gdscript",
+      "files": [
+        "client/tests/character_revert_boot_test.gd",
+        "client/tests/character_revert_boot_test.gd"
+      ],
+      "fragmentSHA256": "d77c5038fd7bfc0fd61f3b636ece77360aa4036a2459734084b07112e965ca0b",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "eb64d52035019d3c56271f7fb9b08465dd81cfb68cc89365736d9ed4a59a58b8",
+      "format": "go",
+      "files": [
+        "server/agonesresources/adapter_test.go",
+        "server/agonesresources/adapter_test.go"
+      ],
+      "fragmentSHA256": "125c28463357a1cc122bdb78b68cc27b18985ccf93f130d55992d5336712a69f",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ebf994a8a1f23e30af60079d91c4c61599e2cffabc1deabe93a7d0e9b568b406",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/publication_test.go",
+        "server/internal/gameservercommit/publication_test.go"
+      ],
+      "fragmentSHA256": "0366ca547fe967fc38b0a15dcf236421f7969c060eb442b08a9e4a613b51384d",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ec92bcae16c0fc9a864aa07e7c1447aa3ae98e287853c2516bcb95324e1ba256",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/fixture_test.go",
+        "server/nakamaruntime/orphan_http_test.go"
+      ],
+      "fragmentSHA256": "58b6dfff4dcc32e5bda36a09207d98d1769d421620adc50a5f02a81a665e2775",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "efe40fbc6371bd91b4d28b62508173e083ec82738f42a54253878870a362adb5",
+      "format": "csv",
+      "files": [
+        "docs/evidence/issue-895-896-slab-crossings/after.csv",
+        "docs/evidence/issue-895-896-slab-crossings/before.csv"
+      ],
+      "fragmentSHA256": "430b3b14ff9592b297f7ee06379f387d53e5f15a9690903b8e3553fd4f8721a1",
+      "occurrences": 1,
+      "reason": "Before/after measurement records preserve the original observations, including unchanged rows."
+    },
+    {
+      "key": "f24c739832ad39d3b04f5c359e71f5a2594fc9d4616396ff3843a910f3d4cd11",
+      "format": "gdscript",
+      "files": [
+        "client/tests/plate_junction_test.gd",
+        "client/tests/plate_junction_test.gd"
+      ],
+      "fragmentSHA256": "1e1bfe36cb504233cf79fc9d0066bda36f2d93d9db1af2782d6034dae069d35b",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f27d784a225d6a23afb511e541e822eff1555c37b7b60b3dbd52238d47aaf130",
+      "format": "go",
+      "files": [
+        "server/internal/nakamatrial/capability_test.go",
+        "server/internal/nakamatrial/recovery_fence_test.go"
+      ],
+      "fragmentSHA256": "c7bb19e9a6cb6e32a56dc05a36b8261b75385e14c84de9680797225715bf5b78",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f2fbe7ea67e5c0429ed664ce51ac97fe1336b8b2a59bd33afd6a6ddcdab8c846",
+      "format": "go",
+      "files": [
+        "server/playerstate/store_test.go",
+        "server/playerstate/store_test.go"
+      ],
+      "fragmentSHA256": "7a134fdb553101a5ed699af1bdf44ebb132a88877e01b7f497db8b17ff805efb",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f31dc95e8a40bfecd4a1e876204865e97ca3f661c268f212db5c989dd065a852",
+      "format": "go",
+      "files": [
+        "server/nakamageneration/reader_expansion_test.go",
+        "server/nakamageneration/reader_expansion_test.go"
+      ],
+      "fragmentSHA256": "0c85cb2b4d830c200d92790305dc338fb43bcb7100e17cab3353c2c2d3068154",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f3b5d8a43caaf86aa0269adaaaefe386c0fbe79adf32bdaeb244e7ea03d85ce5",
+      "format": "go",
+      "files": [
+        "server/zonesock/movement_test.go",
+        "server/zonesock/movement_test.go"
+      ],
+      "fragmentSHA256": "c9e639ff879594cedeb55331508448488a76c838fa75ca657a7fef5fe81c2d5a",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f3ef748c4449f4cc94a9750961c53f0a20c58aa00a592604b95f3a5699bd9710",
+      "format": "gdscript",
+      "files": [
+        "client/tests/durable_fixture_support_test.gd",
+        "client/tests/maintenance_fixture_support_test.gd"
+      ],
+      "fragmentSHA256": "4e9ab0bae73be7bc2a498fd54849726f5548e45d10e2ab816e30832891673c38",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f5803cab0ab554db9e88e746f4e03faba7404da5c7806d6e1eab09424b743d14",
+      "format": "go",
+      "files": [
+        "server/internal/allocatoradmission/admission_test.go",
+        "server/internal/allocatoradmission/handoff_test.go"
+      ],
+      "fragmentSHA256": "7e5b28ba93083f05c59f4fa87a60d49837e4bb38fa9f87f07cb9e22023370ebb",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f60efdb98ac501fe1997d620a910edff16856fca9a733d8466ee93ed217c02c1",
+      "format": "go",
+      "files": [
+        "server/cmd/zone/main_test.go",
+        "server/cmd/zone/main_test.go"
+      ],
+      "fragmentSHA256": "11f484d7c5d570dad95048382e642eea5f8cf0a44f30f4cd2d4c92ca73f88642",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "f6f74b758d9de207590d554a15ae2c75b1cc89888511a1905c18f811329eceec",
+      "format": "go",
+      "files": [
+        "server/nakamacharacter/store.go",
+        "server/nakamainventory/store.go"
+      ],
+      "fragmentSHA256": "94e2dbc59ff590cc4cbd5c6df95c906297f08c50f7fa73de8f827be98f48b2e3",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "fc48b9b6f0d4a07816c42f08e76b7de8b30e99f5dc09dbf6ef21521e3458c80f",
+      "format": "gdscript",
+      "files": [
+        "client/tools/frame_capture.gd",
+        "client/tools/frame_capture.gd"
+      ],
+      "fragmentSHA256": "865760cfee59f2d3e2ffa9249a09528248a5dd4fb8ecb2ffd79a10ec4e4b44e8",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "fc7283b3d8c1dc91c13329385b02ad8b33d95691c670d3ce3257356f665e9925",
+      "format": "go",
+      "files": [
+        "server/internal/gameservercommit/publication_test.go",
+        "server/internal/gameservercommit/publication_test.go"
+      ],
+      "fragmentSHA256": "1865879ede49b14e0a456d04ad1bbf9ffbd6812766e9196068ae3969d782ec61",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "fe65d363be8a9cbb9e3f94877358ab389449ead5bfd0a1298d41b9b00b8c0348",
+      "format": "go",
+      "files": [
+        "server/internal/fencereference/rpc_test.go",
+        "server/internal/fencereference/rpc_test.go"
+      ],
+      "fragmentSHA256": "caeb7e90bb617bdd9611a7633df7032f36745d411b62f80dee4f4481b2277835",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "fedf731fc8de9fb88969c7d5a0d39cdd114ace94cdf4e2093dc15d9729b65b0b",
+      "format": "go",
+      "files": [
+        "tools/gameserver-commit-trial/cmd/nativefixture/main.go",
+        "tools/gameserver-commit-trial/storage_test.go"
+      ],
+      "fragmentSHA256": "c752b9ca49c6fffecac9554f3151707d5f9e7de644c4f9da1329bbc5c1535957",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "fef304010bc84bd141cf656994b7df1d5e395b7af6e9248cf49c993f804ae730",
+      "format": "gdscript",
+      "files": [
+        "client/scripts/creature_gen.gd",
+        "client/scripts/npc_gen.gd"
+      ],
+      "fragmentSHA256": "91b43520516d28654d2d1721ab420d3f943a3a5c07e5939147ec94db45c0bef1",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ff104ac20f6330cf17e90bce0cd932b30ff490d391c1e28924b80ed36c8a8030",
+      "format": "go",
+      "files": [
+        "server/claimrpc/expiry_test.go",
+        "server/claimrpc/handler_test.go"
+      ],
+      "fragmentSHA256": "1bd26498323753df983c60f2ce079702afbfc4828cfd23090a30d47aea2b6eb3",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ff3aaae5eba9d30f9c9fd6f7285b0391608bcb0b6d54b8823e320607301c6ddb",
+      "format": "gdscript",
+      "files": [
+        "client/tests/ragged_drape_test.gd",
+        "client/tests/ragged_refinement_flag_test.gd"
+      ],
+      "fragmentSHA256": "c21d3f81df842c94321e43bdf6b78454e2cc6a9d30582d8f209e2368a439fd55",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    },
+    {
+      "key": "ff3de83d0100a53182e1de448fa751308fc4a9f8f8a6e3fa662a4e1508a61198",
+      "format": "gdscript",
+      "files": [
+        "client/tests/boot_recovery_cas_test.gd",
+        "client/tests/vault_cas_test.gd"
+      ],
+      "fragmentSHA256": "50335f5f34630c76bc0c29cae6f42e9760b3731f61bcf514734c10602efc1399",
+      "occurrences": 1,
+      "cleanupIssue": 276
+    }
+  ]
+}

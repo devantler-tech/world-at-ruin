@@ -78,14 +78,16 @@ DISABLE_LINTERS:
   - MARKDOWN_MARKDOWN_TABLE_FORMATTER
 
 DISABLE_ERRORS_LINTERS:
-  # jscpd reports 66 pre-existing duplicated GDScript blocks, concentrated between
-  # character_factory.gd and creature_factory.gd. Clearing them is a behaviour-preserving
-  # refactor that must not ride along with this CI change, so it is tracked in #276.
-  # NOT-BLOCKING IS TEMPORARY AND DELIBERATELY VISIBLE: the linter still runs and still
-  # reports every clone on every pull request — nothing is thresholded and nothing is
-  # hidden. Remove this entry as part of #276 so duplication becomes blocking and cannot
-  # regress.
+  # The zero-threshold scan remains visible while #276 owns existing copies.
+  # The required duplication-gate job blocks every unaccepted copy and stale
+  # catalog entry with the same pinned scanner/settings (ADR 0042). The catalog
+  # is the permanent blocking policy, including deliberate historical copies;
+  # this plain zero-threshold warning can become blocking only at actual zero.
   - COPYPASTE_JSCPD
+
+# Ignore edits cannot hide copied tracked source as if it had been cleaned up.
+# Match the required gate; explicit detection exclusions stay in .jscpd.json.
+COPYPASTE_JSCPD_ARGUMENTS: --no-gitignore
 
 MARKDOWN_MARKDOWNLINT_CONFIG_FILE: .markdownlint.yaml
 

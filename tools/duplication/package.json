@@ -1,0 +1,9 @@
+{
+  "name": "world-at-ruin-duplication-check",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The exact scanner used by MegaLinter 10.1.0",
+  "devDependencies": {
+    "jscpd": "5.0.16"
+  }
+}

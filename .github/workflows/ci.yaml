@@ -1186,6 +1186,48 @@ jobs:
       # ERRORS — invalid JSON, shellcheck failures — still fail the job.
       apply-fixes: false
 
+  duplication-gate:
+    name: Block new code duplication
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Install the scanner used by MegaLinter
+        run: npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund
+      - name: Prove added clones and stale entries fail
+        run: bash tools/duplication-guard.test.sh
+      - name: Compare complete scan with the shrinking catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          DUPLICATION_BASE_REVISION="$(tools/pr-diff-base.sh "$PR_HEAD" "$EVENT_BASE")"
+          export DUPLICATION_BASE_REVISION
+          bash tools/duplication-guard.sh
+      - name: Keep complete duplication evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: duplication-gate
+          path: megalinter-reports/duplication-gate/**/*.json
+          if-no-files-found: error
+
   gdscript-lint:
     name: GDScript lint
     runs-on: ubuntu-latest
@@ -3146,6 +3188,7 @@ jobs:
         client-export-macos,
         license-guard,
         lint,
+        duplication-gate,
         gdscript-lint,
         go-vulnerability-scan,
         server-ci,
@@ -3174,6 +3217,7 @@ jobs:
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}
+            ${{ needs.duplication-gate.result }}
             ${{ needs.gdscript-lint.result }}
             ${{ needs.go-vulnerability-scan.result }}
             ${{ needs.server-ci.result }}
