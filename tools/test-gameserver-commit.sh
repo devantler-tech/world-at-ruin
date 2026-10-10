@@ -119,7 +119,8 @@ helm template commit-trial "${agones_dir}/install/helm/agones" \
 export KUBEBUILDER_ASSETS="${scratch}/controller-tools/envtest"
 export WAR_GAMESERVER_CRD="${scratch}/gameserver.yaml"
 go -C "${root}/tools/gameserver-commit-trial" vet ./...
-go -C "${root}/tools/gameserver-commit-trial" test -race -c -o "${scratch}/commit-trial.test" ./...
+go -C "${root}/tools/gameserver-commit-trial" test -race ./cmd/nativefixture
+go -C "${root}/tools/gameserver-commit-trial" test -race -c -o "${scratch}/commit-trial.test" .
 "${scratch}/commit-trial.test" -test.timeout="${test_timeout}" -test.v &
 trial_pid=$!
 wait "${trial_pid}"

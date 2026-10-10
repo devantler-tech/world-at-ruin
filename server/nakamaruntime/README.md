@@ -271,7 +271,7 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-seven named mandatory scenarios use
+The image refuses a default invocation. Twenty-eight named mandatory scenarios use
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
 Eleven scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.
@@ -371,7 +371,41 @@ Two required native scenarios cover disabled startup and all four enabled
 controls on Linux amd64 and arm64. Database readback independently checks the
 private row, immutable generation binding and complete inventory. No public RPC,
 GameServer request, capability or receipt is introduced. Production authority,
-serving-reader and actual retained rollback-artifact compatibility, capability
-exposure ordering and independent barrier recovery remain #793/#1314/#1315.
+serving-reader and actual retained rollback-artifact compatibility and independent
+barrier recovery remain #793/#1315.
 Flag retirement is tracked by #1316. See
 [ADR 0036](../../docs/adr/0036-serialize-durable-grant-registration-and-drain.md).
+
+## Disposable durable capability composition
+
+The native-only startup probe additionally requires
+`WAR_DURABLE_GENERATION_PROBE_ENABLED=true`. Absent or `false` returns before
+reading fixture material or storage. Ordinary plugin builds exclude the probe
+and its capability imports. It has no public RPC or production activation path.
+
+The fixed `WAR_DURABLE_GENERATION_PROBE_SCENARIO` controls are `unfenced`, `held-put`,
+`late-ack`, `lost-ack`, `cancel-after-write`, and the paired
+`crash-before-exposure`/`restart` arms. The trial supplies a private 0600 material file through
+`WAR_DURABLE_GENERATION_PROBE_MATERIAL` and an owned loopback synchronization
+endpoint through `WAR_DURABLE_GENERATION_PROBE_CONTROL`. No ambient cluster,
+kubeconfig, external executable authentication or service-account discovery is used.
+An owned fixture helper starts pinned kube-apiserver/etcd binaries and the rendered
+Agones CRD; stdin closure retires that helper and its private state. Both Linux
+architectures verify the downloaded fixture checksums before building the image.
+
+The native parent independently reads the actual PostgreSQL registration while
+its acknowledgment is held and verifies that no capability or allocation escaped.
+After exposure, it captures the original allocation PUT, drains through actual
+Nakama StorageWrite, observes a real GameServer barrier, and releases the old PUT
+to require HTTP 409 without changing the barrier.
+The same captured frozen mutation succeeds through the unfenced positive control.
+The late-ack control proves local closure before acknowledgment release and barriers
+the unexposed registered grant.
+The lost-reply control retains the committed row but cannot expose a grant, fence,
+or recreate the generation root in a new owner. Post-write cancellation also
+refuses exposure and prevents an already waiting fence from producing a receipt.
+A killed process leaves its registered-but-unexposed entry;
+the restarted native incarnation cannot adopt it or mutate the GameServer.
+These diagnostics do not authorize
+production quarantine release. See
+[ADR 0037](../../docs/adr/0037-register-frozen-capabilities-before-exposure.md).

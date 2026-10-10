@@ -338,8 +338,8 @@ func (f *fixture) writeConfig(env map[string]string, modules string, grace int) 
 	}
 }
 
-// launch starts the built binary; readiness requires its actual HTTP health API.
-func (f *fixture) launch(env map[string]string, modules string, grace int, healthy bool) *nativeProcess {
+// start owns the child before allowing tests to coordinate held startup writes.
+func (f *fixture) start(env map[string]string, modules string, grace int) *nativeProcess {
 	f.t.Helper()
 	if f.process != nil {
 		f.process.stop(f.t)
@@ -353,6 +353,17 @@ func (f *fixture) launch(env map[string]string, modules string, grace int, healt
 	}
 	f.process = p
 	go func() { p.err = p.cmd.Wait(); close(p.done) }()
+	return p
+}
+
+// launch starts the built binary; readiness requires its actual HTTP health API.
+func (f *fixture) launch(env map[string]string, modules string, grace int, healthy bool) *nativeProcess {
+	f.t.Helper()
+	return f.awaitStartup(f.start(env, modules, grace), healthy)
+}
+
+func (f *fixture) awaitStartup(p *nativeProcess, healthy bool) *nativeProcess {
+	f.t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		select {

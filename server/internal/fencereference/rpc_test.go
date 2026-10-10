@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -424,6 +425,29 @@ func checkProductionComposition(root string) error {
 		if _, expected := entrypoints[relative]; expected {
 			entrypoints[relative] = true
 		}
+		// Only the exact exclusive native-trial constraint admits experimental
+		// composition. An OR expression, a package name, or a filename cannot
+		// exempt a source file that might enter an ordinary production build.
+		fset := token.NewFileSet()
+		source, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly|parser.ParseComments)
+		if err != nil {
+			return err
+		}
+		if len(source.Comments) > 0 && len(source.Comments[0].List) > 0 && source.Comments[0].List[0].Text == "//go:build war_native_trial" && fset.Position(source.Comments[0].Pos()).Line == 1 {
+			if _, expected := entrypoints[relative]; expected {
+				return fmt.Errorf("production entrypoint is trial-only: %s", relative)
+			}
+			ordinary := build.Default
+			ordinary.BuildTags = nil
+			included, err := ordinary.MatchFile(filepath.Dir(path), filepath.Base(path))
+			if err != nil {
+				return err
+			}
+			if included {
+				return errors.New("trial source entered ordinary build selection")
+			}
+			return nil
+		}
 		return rejectReferenceImport(path, nil)
 	})
 	if err != nil {
@@ -467,6 +491,37 @@ func TestCompositionGuardRequiresTheActualProductionEntrypoints(t *testing.T) {
 	}
 }
 
+func TestCompositionGuardOnlyExemptsExclusiveNativeTrialSources(t *testing.T) {
+	for _, sample := range []struct {
+		header, imported string
+		allowed          bool
+	}{
+		{"//go:build war_native_trial\n\n", "gameservercommit", true},
+		{"//go:build war_native_trial || !war_native_trial\n\n", "gameservercommit", false},
+		{"//go:build !war_native_trial\n\n", "gameservercommit", false},
+		{"", "nakamacapabilityprobe", false},
+	} {
+		root := t.TempDir()
+		for _, path := range []string{"cmd/zone/main.go", "cmd/nakama/main.go", "nakamaruntime/module.go", "agonesresources/adapter.go"} {
+			target := filepath.Join(root, filepath.FromSlash(path))
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("package fixture\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		value := sample.header + "package fixture\nimport _ \"github.com/devantler-tech/world-at-ruin/server/internal/" + sample.imported + "\"\n"
+		if err := os.WriteFile(filepath.Join(root, "experiment.go"), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+		err := checkProductionComposition(root)
+		if (err == nil) != sample.allowed {
+			t.Fatalf("build constraint %q: %v", sample.header, err)
+		}
+	}
+}
+
 func rejectReferenceImport(path string, text any) error {
 	source, err := parser.ParseFile(token.NewFileSet(), path, text, parser.ImportsOnly)
 	if err != nil {
@@ -478,7 +533,8 @@ func rejectReferenceImport(path string, text any) error {
 			return err
 		}
 		if decoded == "github.com/devantler-tech/world-at-ruin/server/internal/fencereference" ||
-			decoded == "github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit" {
+			decoded == "github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit" ||
+			decoded == "github.com/devantler-tech/world-at-ruin/server/internal/nakamacapabilityprobe" {
 			return errors.New("reference commit authority imported into production")
 		}
 	}
@@ -490,6 +546,7 @@ func TestCompositionGuardRecognizesEveryImportSpelling(t *testing.T) {
 	for _, path := range []string{
 		"github.com/devantler-tech/world-at-ruin/server/internal/fencereference",
 		"github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit",
+		"github.com/devantler-tech/world-at-ruin/server/internal/nakamacapabilityprobe",
 	} {
 		for _, literal := range []string{strconv.Quote(path), "`" + path + "`", "\"\\x67" + path[1:] + "\""} {
 			for _, alias := range []string{"", "renamed ", ". ", "_ "} {
