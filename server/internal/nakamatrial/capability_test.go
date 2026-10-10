@@ -94,13 +94,18 @@ func ownedControlPlane(t *testing.T) *rest.Config {
 			}
 			// Only a successful helper join establishes component retirement. Its
 			// private port cache may then be removed; every other residue still fails.
-			portCache, cacheErr := os.Stat(filepath.Join(cacheRoot, "kubebuilder-envtest"))
+			portCachePath := filepath.Join(cacheRoot, "kubebuilder-envtest")
+			portCache, cacheErr := os.Lstat(portCachePath)
 			if cacheErr != nil || !portCache.IsDir() {
 				t.Error("owned API fixture did not use its private port cache")
 				return
 			}
-			if err := os.RemoveAll(cacheRoot); err != nil {
+			if err := os.RemoveAll(portCachePath); err != nil {
 				t.Error("retired helper port cache not removed")
+				return
+			}
+			if err := os.Remove(cacheRoot); err != nil {
+				t.Error("retired helper retained unexpected cache state")
 				return
 			}
 			if files, err := os.ReadDir(stateRoot); err != nil || len(files) != 0 {
