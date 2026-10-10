@@ -61,6 +61,10 @@ func environment(assets, crd, state string) *envtest.Environment {
 	// The disposable internal network deliberately has no default route. Do
 	// not let API advertisement infer an address from the host's routing table.
 	e.ControlPlane.GetAPIServer().Configure().Set("advertise-address", "127.0.0.1")
+	// All fixture clients use the explicit TLS endpoint. There are no in-cluster
+	// Service clients or nodes, so no kubernetes Service endpoint is advertised.
+	// Its reconciler rejects loopback even though the owned listener accepts it.
+	e.ControlPlane.GetAPIServer().Configure().Set("endpoint-reconciler-type", "none")
 	e.ControlPlane.Etcd = &envtest.Etcd{Path: filepath.Join(assets, "etcd"), DataDir: filepath.Join(state, "etcd")}
 	e.ControlPlane.KubectlPath = filepath.Join(assets, "kubectl")
 	return e
