@@ -73,6 +73,8 @@ it writes evidence below the ignored `megalinter-reports/duplication-gate`.
 
 Run the catalog generator after removing copies; review the diff and commit its
 removed entries with the cleanup. New entries cannot pass the base comparison.
+Retained identities keep their reviewed cleanup ownership or deliberate-copy
+reason when the catalog is regenerated; cleanup does not erase annotations.
 Use the following with a fresh complete scan. Generation proposes data;
 only the required check against the trusted base decides acceptance.
 

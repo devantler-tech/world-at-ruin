@@ -196,6 +196,24 @@ func TestBootstrapIsExactRevisionOnly(t *testing.T) {
 	}
 }
 
+func TestGenerationPreservesReviewedJustification(t *testing.T) {
+	r, c, b, s, o := fixture(t)
+	for _, path := range []string{c, b} {
+		alter(t, path, func(value map[string]any) {
+			e := value["entries"].([]any)[0].(map[string]any)
+			delete(e, "cleanupIssue")
+			e["reason"] = "Independent compatibility oracle must retain its original implementation."
+		})
+	}
+	alter(t, o, func(value map[string]any) { value["state"] = "closed" })
+	if err := generate(r, s, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(r, c, b, s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatalf("regeneration erased the reviewed justification: %v", err)
+	}
+}
+
 func TestScannerCompletionBoundary(t *testing.T) {
 	for _, test := range []struct{ name, mode, want string }{
 		{"complete threshold report", "complete", ""},

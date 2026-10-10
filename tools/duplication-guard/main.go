@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -227,6 +228,10 @@ func generate(reportPath, configPath, catalogPath string) error {
 	if err != nil {
 		return err
 	}
+	_, previous, err := readCatalog(catalogPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("existing catalog annotations: %w", err)
+	}
 	entries := make(map[string]entry)
 	for _, copy := range *r.Duplicates {
 		e := identity(copy)
@@ -240,6 +245,9 @@ func generate(reportPath, configPath, catalogPath string) error {
 		} else if e.Format == "csv" && strings.HasPrefix(e.Files[0], "docs/evidence/") && strings.HasPrefix(e.Files[1], "docs/evidence/") {
 			e.CleanupIssue = 0
 			e.Reason = "Before/after measurement records preserve the original observations, including unchanged rows."
+		}
+		if old, ok := previous[e.Key]; ok {
+			e.CleanupIssue, e.Reason = old.CleanupIssue, old.Reason
 		}
 		entries[e.Key] = e
 	}
