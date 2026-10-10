@@ -912,7 +912,7 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-five
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-seven
   named scenarios against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
   authoritative movement and complete read-only journal observations. Both native Linux
@@ -1063,6 +1063,16 @@ everything shipped afterwards is held to.
   keeps journal writers and serving-reader/retained-artifact activation separate.
   [ADR 0035](docs/adr/0035-observe-journals-through-the-packaged-nakama-candidate.md)
   adds native candidate readback while preserving those activation gates.
+- **Durable admission experiment:** `server/internal/allocatoradmission/` uses one
+  private generation-wide conditional document for registration and irreversible drain.
+  Snapshots are diagnostic and cannot release quarantine or restore capabilities.
+  Only the explicitly built native trial plugin composes the startup writer;
+  normal plugin artifacts have no writer import or activation path. Run `go -C server
+  test -race ./internal/allocatoradmission ./internal/nakamaadmissionprobe` and the
+  amd64/arm64 native acceptance for actual Nakama CAS, competing incarnations,
+  registration/drain races and committed writes with lost replies. See
+  [ADR 0036](docs/adr/0036-serialize-durable-grant-registration-and-drain.md).
+  Production authority, retained-reader adoption and real barrier recovery remain #793 gates.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

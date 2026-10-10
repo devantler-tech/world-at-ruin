@@ -271,7 +271,7 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-five named mandatory scenarios use
+The image refuses a default invocation. Twenty-seven named mandatory scenarios use
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
 Eleven scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.
@@ -336,11 +336,42 @@ verify their bundle hashes and architecture, and separately prove default-off
 startup, complete zero/one/two-grant observations, and eleven unknown controls.
 Fixture writes happen only in fresh disposable PostgreSQL setup. Reads leave
 object bytes, version and privacy unchanged and make no allocation requests.
-No helper plugin, journal writer, allocation capability, receipt, admission
-closure, barrier or quarantine authority is introduced. Existing generation
+This journal observation introduces no journal writer, allocation capability,
+receipt, admission closure, barrier or quarantine authority. Existing generation
 and lease compatibility trials remain mandatory.
 
 This is candidate-reader evidence for #1293. Every serving reader and the
 actual retained rollback artifact still require compatibility proof before
 future journal writers or recovery are activated under #793/#569. See
 [ADR 0035](../../docs/adr/0035-observe-journals-through-the-packaged-nakama-candidate.md).
+
+## Disposable durable admission experiment
+
+The explicitly experimental native bundle additionally compiles the
+`war_native_trial` admission startup experiment. Normal runtime plugin builds
+do not import the admission writer or expose an activation path. In the trial
+bundle, `WAR_ALLOCATOR_ADMISSION_PROBE_ENABLED` must be `true`; absent or `false`
+returns before dependency or subsetting validation and performs no reads or writes.
+
+`WAR_ALLOCATOR_ADMISSION_PROBE_JOURNAL` supplies an empty strict schema-1 journal,
+and `WAR_ALLOCATOR_ADMISSION_PROBE_GRANT` supplies one frozen grant as JSON.
+`WAR_ALLOCATOR_ADMISSION_PROBE_SCENARIO` is one of `sequence`, `incarnation-race`,
+`drain-race`, or `lost-ack`. A five-second bound covers all operations. The
+experiment publishes a private generation-scoped admission root through the
+actual runtime StorageWrite API; it never seeds that row through SQL.
+
+Registration and irreversible open-to-draining closure compete on the same
+exact storage version. Concurrent incarnations compete on the same create-only
+key. The lost-reply control discards the acknowledgment after the native
+transaction commits. Stale or uncertain transitions return no snapshot and
+never retry or refresh a version. Race and lost-reply reports explicitly retain
+an unknown outcome; a persisted diagnostic record is not recovered authority.
+
+Two required native scenarios cover disabled startup and all four enabled
+controls on Linux amd64 and arm64. Database readback independently checks the
+private row, immutable generation binding and complete inventory. No public RPC,
+GameServer request, capability or receipt is introduced. Production authority,
+serving-reader and actual retained rollback-artifact compatibility, capability
+exposure ordering and independent barrier recovery remain #793/#1314/#1315.
+Flag retirement is tracked by #1316. See
+[ADR 0036](../../docs/adr/0036-serialize-durable-grant-registration-and-drain.md).

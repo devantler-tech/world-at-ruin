@@ -1,0 +1,1 @@
+TestAdmissionKeepsEveryShippedSchemaReadable admission.go decodeAdmission
