@@ -251,12 +251,35 @@ func TestNativeRecoveryOwner(t *testing.T) {
 			killJoinedSource(t, source)
 			stages["handoff"].allow()
 			assertOwnerRowsAbsent(t, f)
+			// Settle the old request immediately after the joined owner death (or
+			// first refused handoff). Independent restart controls must not consume
+			// the proxy's fixed ten-second hold budget.
+			settleOriginal := func() {
+				if traffic.barriers.Load() != 0 || traffic.allocations.Load() != 1 || traffic.gets.Load() != 1 {
+					t.Fatal("reservation issued an allocation or barrier")
+				}
+				held.allow()
+				select {
+				case code := <-status:
+					if code != 200 {
+						t.Fatalf("unfenced original PUT status %d", code)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("held old write did not settle")
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				after, e := api.Get(ctx, original.Name, metav1.GetOptions{})
+				if e != nil || after.UID != original.UID || after.ResourceVersion == original.ResourceVersion || after.Status.State != agonesv1.GameServerStateAllocated || after.Annotations[capabilityBarrier] != "" || traffic.allocations.Load() != 1 || traffic.barriers.Load() != 0 {
+					t.Fatal("owner-only positive control did not allocate without a fence")
+				}
+			}
 			if scenario == "changed-handoff" {
 				var base, root string
 				if f.db.QueryRowContext(t.Context(), "SELECT value::text FROM storage WHERE collection=$1", allocatoradmission.HandoffCollection).Scan(&base) != nil || f.db.QueryRowContext(t.Context(), "SELECT value::text FROM storage WHERE collection=$1", allocatoradmission.Collection).Scan(&root) != nil {
 					t.Fatal("disposable original rows unavailable")
 				}
-				for _, fault := range []string{"stale-handoff", "changed-root", "omitted-inventory", "public-handoff", "missing-handoff"} {
+				for i, fault := range []string{"stale-handoff", "changed-root", "omitted-inventory", "public-handoff", "missing-handoff"} {
 					switch fault {
 					case "stale-handoff":
 						_, err = f.db.ExecContext(t.Context(), "UPDATE storage SET version='changed' WHERE collection=$1", allocatoradmission.HandoffCollection)
@@ -275,6 +298,9 @@ func TestNativeRecoveryOwner(t *testing.T) {
 					rejected := f.start(ownerEnv(t, pins, "a", "reserve", control.URL), filepath.Join(*bundle, "modules"), 10)
 					assertOwnerRefused(t, rejected)
 					assertOwnerRowsAbsent(t, f)
+					if i == 0 {
+						settleOriginal()
+					}
 					if fault != "missing-handoff" {
 						if _, err = f.db.ExecContext(t.Context(), "UPDATE storage SET value=$1::text::jsonb,version=$2,read=0 WHERE collection=$3", base, pins.Version, allocatoradmission.HandoffCollection); err != nil {
 							t.Fatal(err)
@@ -365,29 +391,16 @@ func TestNativeRecoveryOwner(t *testing.T) {
 				}
 				// A new process with the SAME owner ID cannot resume even a visible exact
 				// row. A different ID also competes on the same generation-wide key.
+				settleOriginal()
 				for _, id := range []string{"a", "b"} {
 					stages[id+"-before-write"].allow()
 					rejected := f.start(ownerEnv(t, pins, id, "reserve", control.URL), filepath.Join(*bundle, "modules"), 10)
 					assertOwnerRefused(t, rejected)
 				}
 			}
-			// Election has issued no Kubernetes request. Release the exact old write
-			// after both the source and reservation owner have died: it still allocates.
+			// Restart and changed-row refusals also acquire no mutation authority.
 			if traffic.barriers.Load() != 0 || traffic.allocations.Load() != 1 || traffic.gets.Load() != 1 {
 				t.Fatal("reservation issued an allocation or barrier")
-			}
-			held.allow()
-			select {
-			case code := <-status:
-				if code != 200 {
-					t.Fatalf("unfenced original PUT status %d", code)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("held old write did not settle")
-			}
-			after, err := api.Get(context.Background(), original.Name, metav1.GetOptions{})
-			if err != nil || after.UID != original.UID || after.ResourceVersion == original.ResourceVersion || after.Status.State != agonesv1.GameServerStateAllocated || after.Annotations[capabilityBarrier] != "" || traffic.allocations.Load() != 1 || traffic.barriers.Load() != 0 {
-				t.Fatal("owner-only positive control did not allocate without a fence")
 			}
 			t.Logf("RECOVERY OWNER JOIN PASS: scenario=%s original_put_http=200 barrier_puts=0 restored_authority=0", scenario)
 		})
