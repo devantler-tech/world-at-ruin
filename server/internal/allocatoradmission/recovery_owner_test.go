@@ -16,6 +16,41 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestRecoveryReservationConsumesOneCompleteInventoryAcrossCopies(t *testing.T) {
+	_, cfg := recoveryFixture(t)
+	owner, err := NewRecoveryOwner(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := owner.Reserve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	type consumer interface {
+		Consume() (RecoveryOwnerObservation, error)
+	}
+	consume, ok := any(reservation).(consumer)
+	if !ok {
+		t.Fatal("acknowledged reservation cannot consume its recovery attempt")
+	}
+	got, err := consume.Consume()
+	if err != nil || got.OwnerID != "recoverer-a" || got.Version != "owner-ack-1" || got.HandoffVersion != cfg.HandoffVersion || got.Handoff.Journal.Binding.Version != "v4" || len(got.Handoff.Journal.Grants) != 2 || got.Handoff.Journal.Grants[0] != grantA || got.Handoff.Journal.Grants[1] != grantB {
+		t.Fatalf("complete inventory lost: %+v %v", got, err)
+	}
+	copy := reservation
+	if _, err = copy.Consume(); !errors.Is(err, ErrClosed) {
+		t.Fatal("copied reservation spent the same recovery attempt twice")
+	}
+	got.Handoff.Journal.Grants[0].Name = "changed"
+	diagnostic, err := owner.Accept(reservation)
+	if err != nil || diagnostic.Handoff.Journal.Grants[0] != grantA {
+		t.Fatal("consume diagnostics changed original inventory")
+	}
+	if _, err = (RecoveryReservation{}).Consume(); !errors.Is(err, ErrClosed) {
+		t.Fatal("zero reservation restored recovery authority")
+	}
+}
+
 // Bypassing pinned handoff validation or accepting an incomplete ACK would
 // manufacture a reservation; replacing create-only with CAS would elect twice.
 func TestRecoveryOwnerRequiresPinnedHandoffAndExactAcknowledgment(t *testing.T) {
