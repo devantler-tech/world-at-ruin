@@ -393,8 +393,13 @@ func TestNativeRecoveryFence(t *testing.T) {
 				settlePairWrite(t, traffic, api, b, 200)
 			}
 			if scenario == "omitted" {
-				if _, err = f.db.ExecContext(t.Context(), "UPDATE storage SET value=jsonb_set(value,'{admission,journal,grants}',value#>'{admission,journal,grants}' - 1) WHERE collection=$1", allocatoradmission.HandoffCollection); err != nil {
-					t.Fatal("omitted inventory control failed")
+				if _, err = f.db.ExecContext(t.Context(), "UPDATE storage SET value=jsonb_set(value,'{admission,journal,grants}',(value#>'{admission,journal,grants}') - 1) WHERE collection=$1 AND key=$2", allocatoradmission.HandoffCollection, allocatoradmission.HandoffKey("generation-1")); err != nil {
+					t.Fatalf("omitted inventory control failed: %v", err)
+				}
+				var retained int
+				var retainedVersion string
+				if err = f.db.QueryRowContext(t.Context(), "SELECT jsonb_array_length(value#>'{admission,journal,grants}'),version FROM storage WHERE collection=$1 AND key=$2", allocatoradmission.HandoffCollection, allocatoradmission.HandoffKey("generation-1")).Scan(&retained, &retainedVersion); err != nil || retained != 1 || retainedVersion != pins.Version {
+					t.Fatal("omitted inventory control did not retain exactly one grant at the original version")
 				}
 			}
 			for name, stage := range stages {
