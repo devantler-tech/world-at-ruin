@@ -26,12 +26,17 @@ func TestNativeAdmissionDefaultOff(t *testing.T) {
 	for _, flag := range []string{"", "false"} {
 		t.Run("flag="+flag, func(t *testing.T) {
 			f := newFixture(t)
-			env := map[string]string{"WAR_ALLOCATOR_ADMISSION_PROBE_ENABLED": flag, "WAR_ALLOCATOR_ADMISSION_PROBE_JOURNAL": "invalid", "WAR_ALLOCATOR_ADMISSION_PROBE_SCENARIO": "invalid", "WAR_DURABLE_GENERATION_PROBE_ENABLED": flag, "WAR_DURABLE_GENERATION_PROBE_MATERIAL": "/invalid", "WAR_DURABLE_GENERATION_PROBE_SCENARIO": "invalid"}
+			// All native writer probes must remain inert before fixture inspection.
+			env := map[string]string{"WAR_ALLOCATOR_ADMISSION_PROBE_ENABLED": flag, "WAR_ALLOCATOR_ADMISSION_PROBE_JOURNAL": "invalid", "WAR_ALLOCATOR_ADMISSION_PROBE_SCENARIO": "invalid", "WAR_DURABLE_GENERATION_PROBE_ENABLED": flag, "WAR_DURABLE_GENERATION_PROBE_MATERIAL": "/invalid", "WAR_DURABLE_GENERATION_PROBE_SCENARIO": "invalid",
+				"WAR_DURABLE_RECOVERY_HANDOFF_PROBE_ENABLED": flag, "WAR_DURABLE_RECOVERY_HANDOFF_PROBE_MATERIAL": "/invalid", "WAR_DURABLE_RECOVERY_HANDOFF_PROBE_PINS": "invalid"}
 			p := f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
-			if strings.Contains(p.log.String(), "NAKAMA ADMISSION PROBE") || strings.Contains(p.log.String(), "NAKAMA CAPABILITY PROBE") {
+			if strings.Contains(p.log.String(), "NAKAMA ADMISSION PROBE") || strings.Contains(p.log.String(), "NAKAMA CAPABILITY PROBE") || strings.Contains(p.log.String(), "NAKAMA HANDOFF PROBE") {
 				t.Fatal("disabled write experiment ran")
 			}
 			var count int
+			if f.db.QueryRow("SELECT count(*) FROM storage WHERE collection='world_at_ruin_allocator_recovery_handoffs'").Scan(&count) != nil || count != 0 {
+				t.Fatal("disabled handoff wrote storage")
+			}
 			if f.db.QueryRow("SELECT count(*) FROM storage WHERE collection='world_at_ruin_allocator_admissions'").Scan(&count) != nil || count != 0 {
 				t.Fatal("disabled experiment wrote storage")
 			}

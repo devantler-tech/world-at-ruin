@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "admission_version": "root-version-4",
+  "admission": {
+    "schema": 1,
+    "phase": "draining",
+    "journal": {
+      "schema": 1,
+      "generation_id": "generation-1",
+      "generation_source_version": "source-version-1",
+      "member_pod_uids": [
+        "pod-a",
+        "pod-b"
+      ],
+      "member_set_digest": "5452b4d6f907967c5ef74179a64c12ea48755828ccea8fc9aac8092faa3bfe0d",
+      "authority_incarnation": "incarnation-1",
+      "namespace": "trial",
+      "fleet": "fleet",
+      "grant_count": 2,
+      "grant_set_digest": "4febaec6be92e850b2d08dd58cf55bb7e368994f597c35915286be3278f79226",
+      "grants": [
+        {
+          "actor_uid": "pod-a",
+          "attempt_id": "attempt-a",
+          "name": "zone-a",
+          "uid": "uid-a",
+          "source_version": "resource-a"
+        },
+        {
+          "actor_uid": "pod-b",
+          "attempt_id": "attempt-b",
+          "name": "zone-b",
+          "uid": "uid-b",
+          "source_version": "resource-b"
+        }
+      ]
+    }
+  }
+}

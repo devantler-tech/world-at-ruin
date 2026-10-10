@@ -271,7 +271,7 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-eight named mandatory scenarios use
+The image refuses a default invocation. Twenty-nine named mandatory scenarios use
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
 Eleven scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.
@@ -409,3 +409,28 @@ the restarted native incarnation cannot adopt it or mutate the GameServer.
 These diagnostics do not authorize
 production quarantine release. See
 [ADR 0037](../../docs/adr/0037-register-frozen-capabilities-before-exposure.md).
+
+## Disposable acknowledged recovery handoff
+
+The native-only `WAR_DURABLE_RECOVERY_HANDOFF_PROBE_ENABLED=true` probe
+publishes a private create-only generation handoff after acknowledged drain.
+Absent or `false` is inert before dependency access. Its scenario, private 0600
+material, owned loopback control and independently retained pins are supplied
+through the corresponding `WAR_DURABLE_RECOVERY_HANDOFF_PROBE_*` inputs.
+Normal plugin builds exclude this probe; retirement is tracked by #1316.
+
+The supervisor receives acknowledged pins over its private control channel,
+checks the actual private PostgreSQL rows, kills and joins the original process,
+then starts a fresh packaged reader with those retained pins. The complete
+original inventory and exact drain version must survive. A held original
+allocation PUT returns HTTP 200/Allocated after fresh readback with zero barrier
+PUTs: the handoff has no fencing authority.
+
+Mandatory controls include registered-but-unexposed late acknowledgment,
+lost drain and publication replies, post-write cancellation, source death after
+drain but before publication, competing create-only publication, and refused
+stale/changed/missing/public/omitted-inventory rows. Visible committed rows cannot
+replace a missing acknowledgment or independent pin retention.
+Barrier-only recovery, competing recoverer ownership, complete proof publication
+and production quarantine release remain #1315/#793.
+See [ADR 0038](../../docs/adr/0038-retain-an-acknowledged-drain-handoff.md).

@@ -52,6 +52,7 @@ type Writer struct {
 	key     string
 	created atomic.Bool
 	failed  atomic.Bool
+	handoff atomic.Bool
 }
 
 // Key arbitrates the generation independently of authority incarnation.
