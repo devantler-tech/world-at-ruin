@@ -100,7 +100,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 	if _, err := run(binary...); err != nil {
 		return err
 	}
-	plugin := append(append([]string{}, common...), "-buildmode=plugin", "-o", filepath.Join(output, "modules", "world_at_ruin.so"), "./cmd/nakama")
+	plugin := append(append([]string{}, common...), "-tags=war_native_trial", "-buildmode=plugin", "-o", filepath.Join(output, "modules", "world_at_ruin.so"), "./cmd/nakama")
 	if _, err := run(plugin...); err != nil {
 		return err
 	}

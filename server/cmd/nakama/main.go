@@ -16,6 +16,9 @@ func InitModule(ctx context.Context, logger runtime.Logger, _ *sql.DB, nk runtim
 	}); err != nil {
 		return err
 	}
+	if err := admissionTrial(ctx, logger, nk); err != nil {
+		return err
+	}
 	return nakamaruntime.InitializeWithLogger(ctx, logger, nk, initializer)
 }
 
