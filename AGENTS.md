@@ -912,7 +912,7 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-five
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-seven
   named scenarios against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
   authoritative movement and complete read-only journal observations. Both native Linux

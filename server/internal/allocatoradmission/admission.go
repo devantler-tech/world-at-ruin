@@ -60,6 +60,9 @@ func Key(generationID string) string {
 	digest := sha256.Sum256(append([]byte("world-at-ruin/allocator-admission-key/v1\n"), encoded...))
 	return hex.EncodeToString(digest[:])
 }
+
+// NewWriter validates an empty strict journal without accessing storage.
+// Disabled construction returns before inspecting any dependency or input.
 func NewWriter(cfg Config) (*Writer, error) {
 	if !cfg.Enabled {
 		return nil, ErrDisabled
@@ -138,6 +141,8 @@ func (w *Writer) write(ctx context.Context, next Observation, version string) (*
 	next.Journal.Binding.Version = acks[0].GetVersion()
 	return &Snapshot{owner: w, observation: next}, nil
 }
+
+// Observation returns detached diagnostic data without the private writer origin.
 func (s *Snapshot) Observation() Observation {
 	got := s.observation
 	got.Journal.Binding.MemberPodUIDs = slices.Clone(got.Journal.Binding.MemberPodUIDs)

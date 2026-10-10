@@ -271,7 +271,7 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-five named mandatory scenarios use
+The image refuses a default invocation. Twenty-seven named mandatory scenarios use
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
 Eleven scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.

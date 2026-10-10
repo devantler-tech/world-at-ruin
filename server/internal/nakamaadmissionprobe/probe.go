@@ -8,6 +8,8 @@ import (
 	"errors"
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatoradmission"
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatorjournal"
+	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
+	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
 	"github.com/heroiclabs/nakama-common/api"
 	"github.com/heroiclabs/nakama-common/runtime"
 	"io"
@@ -27,6 +29,8 @@ type Report struct {
 	GrantCount int
 }
 
+// Run exercises one disposable storage scenario only after explicit enablement.
+// A report records diagnostic behavior and never exports allocation authority.
 func Run(ctx context.Context, storage Storage, report func(Report)) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
 	flag := env["WAR_ALLOCATOR_ADMISSION_PROBE_ENABLED"]
@@ -123,6 +127,19 @@ func Run(ctx context.Context, storage Storage, report func(Report)) error {
 		}
 		if failures < 1 || held.arrived.Load() != 2 || ctx.Err() != nil {
 			return errors.New("admission probe: competing transitions not rejected")
+		}
+		// Both results may be unknown when the losing CAS poisons the writer
+		// before the winner's reply. Independently prove that storage advanced:
+		// transport arrival and an errored read cannot establish a committed CAS.
+		binding := head.Observation().Journal.Binding
+		key := allocatoradmission.Key(binding.GenerationID)
+		rows, readErr := storage.StorageRead(ctx, []*runtime.StorageRead{{Collection: allocatoradmission.Collection, Key: key, UserID: ""}})
+		if readErr != nil || ctx.Err() != nil || len(rows) != 1 || rows[0] == nil {
+			return errors.New("admission probe: committed race readback unknown")
+		}
+		row := rows[0]
+		if row.GetCollection() != allocatoradmission.Collection || row.GetKey() != key || row.GetUserId() != nakamastorage.SystemOwnerID || row.GetPermissionRead() != 0 || row.GetPermissionWrite() != 0 || row.GetVersion() == binding.Version || row.GetVersion() == "*" || !handoffidentity.OpaqueUTF8(row.GetVersion(), 1024) {
+			return errors.New("admission probe: neither competing transition persisted")
 		}
 		report(Report{Scenario: scenario, Phase: "unknown", GrantCount: -1})
 		return nil
