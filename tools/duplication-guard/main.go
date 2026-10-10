@@ -26,7 +26,7 @@ const scannerVersion = "cpd 5.0.16"
 
 // Hash of the generated catalog from the independently measured adoption tree.
 // Neither an absent base file nor the adoption SHA permits an invented baseline.
-const adoptionCatalogSHA = "e5bea7775b8ba1bb3e979f12fd06f5be0b2600bab46d24a7201aa9961dc54c00"
+const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e32ccb6d4889d7"
 
 //go:embed formats.json
 var formatData []byte
@@ -65,7 +65,7 @@ type report struct {
 }
 
 type entry struct {
-	Key          string    `json:"key"`
+	Key          string    `json:"identitySHA256"`
 	Format       string    `json:"format"`
 	Files        [2]string `json:"files"`
 	FragmentSHA  string    `json:"fragmentSHA256"`
@@ -498,17 +498,15 @@ func stageSources(ctx context.Context, configPath string) (stage string, counts 
 		if filepath.IsAbs(name) || filepath.ToSlash(filepath.Clean(name)) != name || strings.HasPrefix(name, "../") {
 			return stage, nil, fmt.Errorf("invalid tracked path")
 		}
-		ignored := false
+		ignored, directoryExcluded := false, false
 		for i, pattern := range ignores {
 			if pattern.MatchString(name) {
-				if strings.HasSuffix(config.Ignore[i], "/**") && formats[strings.TrimPrefix(filepath.Ext(name), ".")] != "" {
-					return stage, nil, fmt.Errorf("tracked source in excluded directory: %s; keep source outside generated/cache directories", name)
-				}
 				ignored = true
+				directoryExcluded = strings.HasSuffix(config.Ignore[i], "/**")
 				break
 			}
 		}
-		if ignored {
+		if ignored && !directoryExcluded {
 			continue
 		}
 		base := filepath.Base(name)
@@ -555,6 +553,9 @@ func stageSources(ctx context.Context, configPath string) (stage string, counts 
 		}
 		if format == "" {
 			continue
+		}
+		if directoryExcluded {
+			return stage, nil, fmt.Errorf("tracked source in excluded directory: %s; keep source outside generated/cache directories", name)
 		}
 		if len(data) > 1048576 {
 			return stage, nil, fmt.Errorf("oversize tracked source: %s", name)

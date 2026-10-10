@@ -249,6 +249,17 @@ func TestIndependentSourceInventory(t *testing.T) {
 		change     func(*testing.T)
 	}{
 		{name: "complete"},
+		{name: "tracked shebang source in excluded directory", want: "excluded directory", change: func(t *testing.T) {
+			if err := os.Mkdir("source-cache", 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("source-cache/run", []byte("#!/usr/bin/env bash\nprintf 'tracked source must stay visible\\n'\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := exec.Command("git", "add", "source-cache/run").Run(); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{name: "tracked code in excluded directory", want: "excluded directory", change: func(t *testing.T) {
 			if err := os.Mkdir("source-cache", 0o700); err != nil {
 				t.Fatal(err)
