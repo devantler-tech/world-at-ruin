@@ -249,6 +249,21 @@ func TestIndependentSourceInventory(t *testing.T) {
 		change     func(*testing.T)
 	}{
 		{name: "complete"},
+		{name: "tracked code in excluded directory", want: "excluded directory", change: func(t *testing.T) {
+			if err := os.Mkdir("source-cache", 0o700); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile("b.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile("source-cache/c.go", data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := exec.Command("git", "add", "source-cache/c.go").Run(); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{name: "unreadable", want: "unreadable", change: func(t *testing.T) {
 			if err := os.Chmod("b.go", 0); err != nil {
 				t.Fatal(err)

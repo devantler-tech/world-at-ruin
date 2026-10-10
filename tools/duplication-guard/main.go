@@ -499,8 +499,11 @@ func stageSources(ctx context.Context, configPath string) (stage string, counts 
 			return stage, nil, fmt.Errorf("invalid tracked path")
 		}
 		ignored := false
-		for _, pattern := range ignores {
+		for i, pattern := range ignores {
 			if pattern.MatchString(name) {
+				if strings.HasSuffix(config.Ignore[i], "/**") && formats[strings.TrimPrefix(filepath.Ext(name), ".")] != "" {
+					return stage, nil, fmt.Errorf("tracked source in excluded directory: %s; keep source outside generated/cache directories", name)
+				}
 				ignored = true
 				break
 			}

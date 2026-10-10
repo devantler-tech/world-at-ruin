@@ -46,7 +46,9 @@ extension/shebang inventory and explicit detection globs, verifies readability,
 regular files, UTF-8 and the scanner's size limit, and rejects inline suppression.
 It copies those sources into an owned Git-free directory, omitting ignore-control
 files. Thus `.ignore`, `.git/info/exclude` and user/global ignore configuration
-cannot hide tracked copies. A disappearing file, symlink, oversized source or
+cannot hide tracked copies. Tracked language source inside a generated/cache
+directory exclusion is rejected rather than treated as cleanup. A disappearing
+file, symlink, oversized source or
 unreadable input fails before scanning. The independent selected-source counts
 are retained with the report; analyzed counts cannot name another language or
 exceed that inventory. jscpd statistics deliberately omit files below its
