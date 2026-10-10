@@ -34,6 +34,8 @@ type RecoveryObservation struct {
 	Grants []GenerationGrantObservation
 }
 
+// NewRecovery applies the opt-in transport configuration without consuming the
+// reservation. Fence alone spends the originating owner's shared attempt.
 func NewRecovery(cfg Config, reservation allocatoradmission.RecoveryReservation) (*Recovery, error) {
 	c, err := New(cfg)
 	if err != nil {
@@ -41,6 +43,9 @@ func NewRecovery(cfg Config, reservation allocatoradmission.RecoveryReservation)
 	}
 	return &Recovery{state: &recoveryState{client: c, reservation: reservation}}, nil
 }
+
+// Fence consumes the complete acknowledged inventory before any read and returns
+// authority only after every metadata barrier has its exact ACK and readback.
 func (r *Recovery) Fence(ctx context.Context) (RecoveryResult, error) {
 	if r == nil || r.state == nil {
 		return RecoveryResult{}, ErrClosed
@@ -71,6 +76,8 @@ func (r *Recovery) Fence(ctx context.Context) (RecoveryResult, error) {
 	return RecoveryResult{state: r.state, observation: &got}, nil
 }
 
+// Accept returns detached diagnostics from this live client's exact complete
+// result; the observation cannot reconstruct a result or durable publication.
 func (r *Recovery) Accept(result RecoveryResult) (RecoveryObservation, error) {
 	if r == nil || r.state == nil || result.state != r.state || result.observation == nil || r.state.accepted.Load() != result.observation {
 		return RecoveryObservation{}, ErrClosed
@@ -82,6 +89,8 @@ func (r *Recovery) Accept(result RecoveryResult) (RecoveryObservation, error) {
 	return got, nil
 }
 
+// fenceRecovered distinguishes original Ready history from matching allocation,
+// then preserves that observation through one metadata-only CAS and readback.
 func (c *Client) fenceRecovered(ctx context.Context, original allocatorjournal.JournalGrant) (Observation, error) {
 	attempt, err := agones.CorrelationLabel(original.AttemptID)
 	if err != nil {

@@ -144,6 +144,8 @@ func heldPairAPI(t *testing.T, cfg *rest.Config, scenario, first string) *pairAP
 	return p
 }
 
+// pairExpected binds original source ACK pins to both real targets in canonical
+// UID order, independently of which target the fixture created first.
 func pairExpected(t *testing.T, originals []*agonesv1.GameServer, pins retainedHandoffPins) allocatoradmission.Observation {
 	t.Helper()
 	grants := []allocatorjournal.JournalGrant{{ActorUID: "pod-a", AttemptID: "attempt-original-a", Name: "zone-a", UID: string(originals[0].UID), SourceVersion: originals[0].ResourceVersion}, {ActorUID: "pod-b", AttemptID: "attempt-original-b", Name: "zone-b", UID: string(originals[1].UID), SourceVersion: originals[1].ResourceVersion}}
@@ -160,6 +162,8 @@ func pairExpected(t *testing.T, originals []*agonesv1.GameServer, pins retainedH
 	return allocatoradmission.Observation{Phase: "draining", Journal: allocatorjournal.JournalObservation{Binding: b, Grants: grants}}
 }
 
+// assertPairHandoff checks persisted private rows as evidence while the retained
+// source ACK pins remain the recoverer's sole handoff input.
 func assertPairHandoff(t *testing.T, f *fixture, originals []*agonesv1.GameServer, pins retainedHandoffPins) {
 	t.Helper()
 	want := pairExpected(t, originals, pins)
@@ -192,6 +196,8 @@ func assertPairHandoff(t *testing.T, f *fixture, originals []*agonesv1.GameServe
 	}
 }
 
+// assertFenceRefused joins the real failed process and requires its specific
+// recovery refusal, so an unrelated crash cannot pass a negative control.
 func assertFenceRefused(t *testing.T, p *nativeProcess, reason string) {
 	t.Helper()
 	select {
@@ -206,6 +212,8 @@ func assertFenceRefused(t *testing.T, p *nativeProcess, reason string) {
 	}
 }
 
+// settlePairWrite forwards the held original PUT once and checks the real target;
+// a conflict must preserve the complete acknowledged barrier observation.
 func settlePairWrite(t *testing.T, p *pairAPI, api typed.GameServerInterface, original *agonesv1.GameServer, code int) {
 	t.Helper()
 	before, err := api.Get(t.Context(), original.Name, metav1.GetOptions{})
@@ -237,6 +245,8 @@ func settlePairWrite(t *testing.T, p *pairAPI, api typed.GameServerInterface, or
 	}
 }
 
+// awaitFenceReady binds health and the complete-proof marker to the elected
+// process's own endpoint, including when the second native process wins.
 func awaitFenceReady(t *testing.T, p *nativeProcess, port string) {
 	t.Helper()
 	waitFor(t, 20*time.Second, "winning native recovery health", func() bool {

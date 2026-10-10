@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// Disabled native probes never inspect storage; enabled probes need all private
+// inputs before they can begin a reservation or contact the supervisor.
 func TestRecoveryFenceProbeDefaultOffAndInvalidInputs(t *testing.T) {
 	for _, flag := range []string{"", "false", "true", "invalid"} {
 		ctx := context.WithValue(context.Background(), runtime.RUNTIME_CTX_ENV, map[string]string{"WAR_DURABLE_RECOVERY_FENCE_PROBE_ENABLED": flag})

@@ -25,6 +25,7 @@ import (
 
 type recoveryTransportFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip injects a fault at the actual HTTP request boundary of a fixture.
 func (f recoveryTransportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // Refusing uncertain history and changed ACK/readback bytes is what separates
@@ -269,6 +270,7 @@ func TestFreshRecoveryCompleteMixedInventory(t *testing.T) {
 	}
 }
 
+// Even a failed first GET must exclude a later independently constructed client.
 func TestFreshRecoveryPartialFailureConsumesBeforeRead(t *testing.T) {
 	var gets atomic.Int32
 	var failing atomic.Bool
@@ -299,6 +301,8 @@ func TestFreshRecoveryPartialFailureConsumesBeforeRead(t *testing.T) {
 	}
 }
 
+// Copied handles and separate wrappers race the same originating reservation,
+// rather than each owning an independent per-client consumption bit.
 func TestFreshRecoveryIndependentClientsRaceOneReservation(t *testing.T) {
 	r, reservation, cfg := recoveryPair(t, generationAPI(t, ""), false)
 	other, err := NewRecovery(cfg, reservation)
@@ -327,6 +331,8 @@ func TestFreshRecoveryIndependentClientsRaceOneReservation(t *testing.T) {
 	}
 }
 
+// Default-off construction avoids dependencies; cancellation spends a live
+// reservation without exporting or restoring the complete result.
 func TestFreshRecoveryDisabledAndCanceled(t *testing.T) {
 	if r, err := NewRecovery(Config{}, allocatoradmission.RecoveryReservation{}); r != nil || !errors.Is(err, ErrDisabled) {
 		t.Fatal("disabled recovery inspected dependencies")

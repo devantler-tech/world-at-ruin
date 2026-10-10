@@ -31,6 +31,8 @@ type fenceProbeTransport struct {
 	reads                 map[string]int
 }
 
+// RoundTrip places loss/cancellation after actual target responses and exposes
+// the seam between the decoded mutation ACK and its second GET readback.
 func (p *fenceProbeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	name := path.Base(req.URL.Path)
 	p.mu.Lock()
@@ -138,6 +140,8 @@ func RunRecoveryFence(ctx context.Context, storage handoffStorage, report func(s
 	return nil
 }
 
+// recoveryMaterial confines bounded, private fixture credentials to their root
+// and accepts only the disposable supervisor's local API endpoint.
 func recoveryMaterial(filename string) (material, error) {
 	if !filepath.IsAbs(filename) {
 		return material{}, errors.New("recovery fence probe: private material required")

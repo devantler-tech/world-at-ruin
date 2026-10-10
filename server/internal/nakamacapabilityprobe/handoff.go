@@ -39,6 +39,8 @@ type handoffBoundary struct {
 	cancel            context.CancelFunc
 }
 
+// StorageWrite brackets the actual private writes with native crash seams;
+// pair registration waits until both original grants are acknowledged.
 func (b *handoffBoundary) StorageWrite(ctx context.Context, writes []*runtime.StorageWrite) ([]*api.StorageObjectAck, error) {
 	if len(writes) != 1 {
 		return nil, errors.New("handoff probe: unexpected write")
