@@ -7,10 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -27,6 +29,16 @@ import (
 type retainedHandoffPins struct {
 	Binding allocatorjournal.JournalBinding `json:"binding"`
 	Version string                          `json:"version"`
+}
+
+// A missing PASS is insufficient: an unrelated startup failure never proves
+// the reader examined and refused the supplied recovery expectations.
+func assertHandoffRefused(t *testing.T, p *nativeProcess) {
+	t.Helper()
+	var exit *exec.ExitError
+	if !errors.As(p.err, &exit) || exit.ExitCode() != 1 || !strings.Contains(p.log.String(), "handoff probe: pinned readback unknown") || strings.Contains(p.log.String(), "NAKAMA HANDOFF PROBE PASS") {
+		t.Fatal("native reader did not produce its specific fail-closed refusal")
+	}
 }
 
 func killJoinedSource(t *testing.T, p *nativeProcess) {
@@ -201,9 +213,7 @@ func TestNativeRecoveryHandoff(t *testing.T) {
 				killJoinedSource(t, source)
 				stages["before-publish"].allow()
 				rejected := f.launch(handoffReadEnv(t, retainedHandoffPins{}), filepath.Join(*bundle, "modules"), 10, false)
-				if strings.Contains(rejected.log.String(), "NAKAMA HANDOFF PROBE PASS") {
-					t.Fatal("draining root restored missing handoff pins")
-				}
+				assertHandoffRefused(t, rejected)
 				assertNoHandoffAuthority(t, f, 0, traffic)
 				t.Log("HANDOFF JOIN PASS: scenario=crash-after-drain retained_pins=0 restored_authority=0")
 				return
@@ -237,9 +247,7 @@ func TestNativeRecoveryHandoff(t *testing.T) {
 				}
 				source.stop(t)
 				rejected := f.launch(handoffReadEnv(t, retainedHandoffPins{}), filepath.Join(*bundle, "modules"), 10, false)
-				if strings.Contains(rejected.log.String(), "NAKAMA HANDOFF PROBE PASS") {
-					t.Fatal("visible row restored unacknowledged pins")
-				}
+				assertHandoffRefused(t, rejected)
 				assertNoHandoffAuthority(t, f, rows, traffic)
 				t.Logf("HANDOFF JOIN PASS: scenario=%s committed_handoff=%d retained_pins=0 restored_authority=0", scenario, rows)
 				return
@@ -312,9 +320,7 @@ func TestNativeRecoveryHandoff(t *testing.T) {
 						t.Fatal("disposable refusal control failed")
 					}
 					rejected := f.launch(handoffReadEnv(t, pins), filepath.Join(*bundle, "modules"), 10, false)
-					if strings.Contains(rejected.log.String(), "NAKAMA HANDOFF PROBE PASS") {
-						t.Fatal("fresh reader accepted changed handoff")
-					}
+					assertHandoffRefused(t, rejected)
 					if fault != "missing-handoff" {
 						if _, e = f.db.ExecContext(t.Context(), "UPDATE storage SET value=$1::text::jsonb,version=$2,read=0 WHERE collection=$3", originalValue, pins.Version, allocatoradmission.HandoffCollection); e != nil {
 							t.Fatal(e)
