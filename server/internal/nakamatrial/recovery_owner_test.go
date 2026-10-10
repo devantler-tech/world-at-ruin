@@ -18,6 +18,7 @@ import (
 	"time"
 
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
+	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatoradmission"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -231,7 +232,8 @@ func TestNativeRecoveryOwner(t *testing.T) {
 			stages["exposed"].allow()
 			stageReached(t, held)
 			captured := <-traffic.frozen
-			if captured.UID != original.UID || captured.ResourceVersion != original.ResourceVersion {
+			attempt, e := agones.CorrelationLabel("attempt-original")
+			if e != nil || captured.UID != original.UID || captured.ResourceVersion != original.ResourceVersion || captured.Namespace != original.Namespace || captured.Name != original.Name || captured.Labels[agones.AttemptLabel] != attempt || captured.Annotations[capabilityBarrier] != "" || !reflect.DeepEqual(captured.Spec, original.Spec) {
 				t.Fatal("original PUT target changed")
 			}
 			stageReached(t, stages["close"])
@@ -270,7 +272,7 @@ func TestNativeRecoveryOwner(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 				after, e := api.Get(ctx, original.Name, metav1.GetOptions{})
-				if e != nil || after.UID != original.UID || after.ResourceVersion == original.ResourceVersion || after.Status.State != agonesv1.GameServerStateAllocated || after.Annotations[capabilityBarrier] != "" || traffic.allocations.Load() != 1 || traffic.barriers.Load() != 0 {
+				if e != nil || after.UID != original.UID || after.ResourceVersion == original.ResourceVersion || after.Status.State != agonesv1.GameServerStateAllocated || after.Labels[agones.AttemptLabel] != attempt || after.Annotations[capabilityBarrier] != "" || traffic.allocations.Load() != 1 || traffic.barriers.Load() != 0 {
 					t.Fatal("owner-only positive control did not allocate without a fence")
 				}
 			}
