@@ -912,7 +912,7 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-nine
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires thirty
   named scenarios against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
   authoritative movement, complete read-only journal observations and the joined
@@ -1097,6 +1097,19 @@ everything shipped afterwards is held to.
   PUT that still returns HTTP 200 with zero barriers. Handoff readback does not
   restore grants, receipts or quarantine release; barrier recovery remains #1315.
   See [ADR 0038](docs/adr/0038-retain-an-acknowledged-drain-handoff.md).
+- **Recovery-owner experiment:** `allocatoradmission.NewRecoveryOwner` freezes independently
+  retained original pins. One read-and-create attempt has a shared deadline; a private
+  generation-wide create-only row arbitrates all owner IDs. Only its exact ACK produces
+  a process-local reservation; detached diagnostics and the permanent schema-1 reader
+  cannot reconstruct it. Copies share the same consumed attempt. Unknown replies or
+  owner death never permit retry, refresh, expiry, takeover, deletion or resumption.
+  The native-only `WAR_DURABLE_RECOVERY_OWNER_PROBE_ENABLED` defaults off and is retired
+  by #1316 with its ID, scenario, control and retained-pin inputs. Both architectures
+  exercise two actual competing Nakama processes, source/owner death cuts, lost/canceled
+  ACKs and changed original documents. The held old PUT still allocates with zero
+  barriers. Production authenticated pin custody and independent barrier recovery
+  remain #1315/#793 gates. See
+  [ADR 0039](docs/adr/0039-reserve-one-acknowledged-recovery-owner.md).
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

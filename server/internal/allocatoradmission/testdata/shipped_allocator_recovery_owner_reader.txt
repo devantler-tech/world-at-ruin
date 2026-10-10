@@ -1,0 +1,1 @@
+TestRecoveryOwnerKeepsEveryShippedSchemaReadable recovery_owner.go DecodeRecoveryOwner

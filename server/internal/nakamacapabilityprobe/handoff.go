@@ -86,11 +86,14 @@ func (b *handoffBoundary) StorageWrite(ctx context.Context, writes []*runtime.St
 	return acks, nil
 }
 func deliverPins(ctx context.Context, control string, pins handoffPins) error {
+	return deliverControl(ctx, control, "/pins", pins)
+}
+func deliverControl(ctx context.Context, control, path string, pins any) error {
 	raw, err := json.Marshal(pins)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, control+"/pins", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, control+path, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
