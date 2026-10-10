@@ -37,9 +37,10 @@ type RecoveryOwnerConfig struct {
 // consumes that attempt; another process must still create the same durable row.
 type RecoveryOwner struct{ state *recoveryOwnerState }
 type recoveryOwnerState struct {
-	cfg       RecoveryOwnerConfig
-	attempted atomic.Bool
-	accepted  atomic.Pointer[RecoveryOwnerObservation]
+	cfg              RecoveryOwnerConfig
+	attempted        atomic.Bool
+	accepted         atomic.Pointer[RecoveryOwnerObservation]
+	recoveryConsumed atomic.Bool
 }
 
 // RecoveryReservation requires the originating live process's complete ACK.
@@ -109,10 +110,24 @@ func (o *RecoveryOwner) Accept(r RecoveryReservation) (RecoveryOwnerObservation,
 	if o == nil || o.state == nil || r.owner != o.state || r.observation == nil || o.state.accepted.Load() != r.observation {
 		return RecoveryOwnerObservation{}, ErrClosed
 	}
-	got := *r.observation
+	return cloneRecoveryObservation(r.observation), nil
+}
+
+// Consume grants one barrier-only attempt from the originating live ACK.
+// Copies and independently constructed recovery clients share this terminal
+// decision. Detached diagnostics and persisted owner rows cannot reconstruct it.
+func (r RecoveryReservation) Consume() (RecoveryOwnerObservation, error) {
+	if r.owner == nil || r.observation == nil || r.owner.accepted.Load() != r.observation || !r.owner.recoveryConsumed.CompareAndSwap(false, true) {
+		return RecoveryOwnerObservation{}, ErrClosed
+	}
+	return cloneRecoveryObservation(r.observation), nil
+}
+
+func cloneRecoveryObservation(observation *RecoveryOwnerObservation) RecoveryOwnerObservation {
+	got := *observation
 	got.Handoff.Journal.Binding.MemberPodUIDs = slices.Clone(got.Handoff.Journal.Binding.MemberPodUIDs)
 	got.Handoff.Journal.Grants = slices.Clone(got.Handoff.Journal.Grants)
-	return got, nil
+	return got
 }
 
 func encodeRecoveryOwner(got RecoveryOwnerObservation) (string, error) {

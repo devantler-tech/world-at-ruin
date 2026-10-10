@@ -44,7 +44,7 @@ for ((attempt=1;attempt<=30;attempt++)); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'disposable native database did not become ready' >&2; exit 1; fi
-# Eight minutes bounds the full 30-scenario suite, including fresh-process
+# Eight minutes bounds the full 31-scenario suite, including fresh-process
 # recovery-owner cuts; individual RPC, stage and process limits stay fixed.
 trial_id=$(docker create --network "$network" --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 256 --memory 2g --cpus 2 \
@@ -72,6 +72,7 @@ scenarios=(
   "TestNativeDurableCapabilityComposition"
   "TestNativeRecoveryHandoff"
   "TestNativeRecoveryOwner"
+  "TestNativeRecoveryFence"
   "TestNativeJournalDefaultOff"
   "TestNativeJournalReadback"
   "TestNativeJournalRefusals"
@@ -90,11 +91,11 @@ scenarios=(
   "TestClosedLoopAuthoritativeMovement"
 )
 if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
-  echo 'native Nakama acceptance did not execute all thirty scenarios' >&2; exit 1
+  echo 'native Nakama acceptance did not execute all thirty-one scenarios' >&2; exit 1
 fi
 for scenario in "${scenarios[@]}"; do
   if ! grep -qE "^--- PASS: ${scenario} \\(" "$state/trial.log"; then
     echo "native Nakama acceptance omitted required scenario: ${scenario}" >&2; exit 1
   fi
 done
-echo 'NAKAMA NATIVE PASS: thirty scenarios; native plugin; complete journal readback; durable recovery owner; durable capability storage join; real API barriers; built sealed zone; TLS movement; disposable PostgreSQL; non-root'
+echo 'NAKAMA NATIVE PASS: thirty-one scenarios; native plugin; complete journal readback; durable recovery owner; fresh complete recovery barriers; durable capability storage join; real API barriers; built sealed zone; TLS movement; disposable PostgreSQL; non-root'

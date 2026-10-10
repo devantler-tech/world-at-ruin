@@ -10,6 +10,9 @@ import (
 )
 
 func admissionTrial(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
+	if err := nakamacapabilityprobe.RunRecoveryFence(ctx, nk, func(s string) { logger.Info("NAKAMA RECOVERY FENCE PROBE PASS: owner=%s", s) }); err != nil {
+		return err
+	}
 	if err := nakamacapabilityprobe.RunRecoveryOwner(ctx, nk, func(s string) { logger.Info("NAKAMA RECOVERY OWNER PROBE PASS: owner=%s", s) }); err != nil {
 		return err
 	}

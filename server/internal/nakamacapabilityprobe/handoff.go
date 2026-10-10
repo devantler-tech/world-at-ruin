@@ -70,6 +70,17 @@ func (b *handoffBoundary) StorageWrite(ctx context.Context, writes []*runtime.St
 		}
 		switch doc.Phase {
 		case "open":
+			if b.scenario == "pair-held" {
+				var admission struct {
+					Journal struct{ Grants []json.RawMessage }
+				}
+				if json.Unmarshal([]byte(w.Value), &admission) != nil {
+					return nil, errors.New("handoff probe: pair inventory unavailable")
+				}
+				if len(admission.Journal.Grants) < 2 {
+					return acks, nil
+				}
+			}
 			close(b.registered)
 			if err = event(ctx, b.control, "registered"); err != nil {
 				return nil, err
@@ -142,7 +153,7 @@ func RunHandoff(ctx context.Context, storage handoffStorage, report func(string)
 		report("read observation_sha256=" + hex.EncodeToString(digest[:]))
 		return nil
 	}
-	if scenario != "held-put" && scenario != "late-ack" && scenario != "lost-drain-ack" && scenario != "lost-handoff-ack" && scenario != "cancel-handoff-ack" && scenario != "crash-after-drain" && scenario != "competing-handoff" {
+	if scenario != "pair-held" && scenario != "held-put" && scenario != "late-ack" && scenario != "lost-drain-ack" && scenario != "lost-handoff-ack" && scenario != "cancel-handoff-ack" && scenario != "crash-after-drain" && scenario != "competing-handoff" {
 		return errors.New("handoff probe: invalid scenario")
 	}
 	control := env["WAR_DURABLE_RECOVERY_HANDOFF_PROBE_CONTROL"]
@@ -176,6 +187,9 @@ func RunHandoff(ctx context.Context, storage handoffStorage, report func(string)
 		Commit: gameservercommit.Config{Namespace: "trial", Fleet: "fleet", REST: &rest.Config{Host: m.Host, TLSClientConfig: rest.TLSClientConfig{CAData: m.CA, CertData: m.Cert, KeyData: m.Key}, Timeout: 10 * time.Second}}})
 	if err != nil {
 		return errors.New("handoff probe: creation unknown")
+	}
+	if scenario == "pair-held" {
+		return runPairHandoff(ctx, g, control, report)
 	}
 	type prepared struct {
 		grant gameservercommit.GenerationGrant
@@ -281,5 +295,38 @@ func RunHandoff(ctx context.Context, storage handoffStorage, report func(string)
 		}
 	}
 	report(scenario)
+	return nil
+}
+
+// The second registration ACK is held independently before either capability
+// escapes. The supervisor captures both original writes before closing source.
+func runPairHandoff(ctx context.Context, g *gameservercommit.Generation, control string, report func(string)) error {
+	a, err := g.Prepare(ctx, "pod-a", "zone-a", "attempt-original-a")
+	if err != nil {
+		return errors.New("handoff probe: pair preparation unknown")
+	}
+	b, err := g.Prepare(ctx, "pod-b", "zone-b", "attempt-original-b")
+	if err != nil {
+		return errors.New("handoff probe: pair preparation unknown")
+	}
+	if err = event(ctx, control, "exposed"); err != nil {
+		return err
+	}
+	go func() { _ = a.Commit(ctx) }()
+	go func() { _ = b.Commit(ctx) }()
+	if err = event(ctx, control, "close"); err != nil {
+		return err
+	}
+	binding, version, err := g.CloseForRecovery(ctx)
+	if err != nil {
+		return errors.New("handoff probe: pair publication unknown")
+	}
+	if err = deliverPins(ctx, control, handoffPins{binding, version}); err != nil {
+		return err
+	}
+	if err = event(ctx, control, "handoff"); err != nil {
+		return err
+	}
+	report("pair-held")
 	return nil
 }

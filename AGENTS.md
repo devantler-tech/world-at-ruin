@@ -1110,6 +1110,21 @@ everything shipped afterwards is held to.
   barriers. Production authenticated pin custody and independent barrier recovery
   remain #1315/#793 gates. See
   [ADR 0039](docs/adr/0039-reserve-one-acknowledged-recovery-owner.md).
+- **Fresh recovery barriers:** `gameservercommit.NewRecovery` accepts only an opaque
+  live acknowledged reservation. Copies and independent wrappers share one terminal
+  consumption before the first Kubernetes read. One bounded attempt derives every
+  target from the complete original handoff and emits only metadata barriers; exact
+  ACKs and readbacks preserve observed Spec/Status and original actor/attempt/UID.
+  Only complete success exports a process-local result. Unknown or partial results
+  cannot retry, resume, reconstruct receipts or release quarantine. The native-only
+  `WAR_DURABLE_RECOVERY_FENCE_PROBE_ENABLED` defaults off, with ID, scenario, control,
+  material and original-pin inputs; #1316 owns retirement. Both native architectures
+  exercise two actual targets, mixed outcomes, competing owners, omitted inventory,
+  lost/canceled replies, death after submission/ACK and death after final accepted
+  readback before supervisor export. Durable complete-proof publication and production
+  authenticated custody remain independent #1315/#793 gates. Run the capability race
+  suite, native probe tests, normal-artifact import guards and full native acceptance.
+  See [ADR 0040](docs/adr/0040-fence-the-complete-acknowledged-recovery-inventory.md).
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
