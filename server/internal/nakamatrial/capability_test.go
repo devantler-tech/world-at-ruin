@@ -77,13 +77,14 @@ func ownedControlPlane(t *testing.T) *rest.Config {
 		_ = os.RemoveAll(stateRoot)
 		t.Fatal("owned API fixture unavailable")
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	done := make(chan struct{})
+	var retirementErr error
+	go func() { retirementErr = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
 		_ = stdin.Close()
 		select {
-		case err := <-done:
-			if err != nil {
+		case <-done:
+			if retirementErr != nil {
 				t.Error("owned API fixture did not retire cleanly")
 				return
 			}
@@ -102,6 +103,11 @@ func ownedControlPlane(t *testing.T) *rest.Config {
 	})
 	var material controlMaterial
 	waitFor(t, 55*time.Second, "private owned API manifest", func() bool {
+		select {
+		case <-done:
+			t.Fatalf("owned API fixture exited before its manifest (%v): %s", retirementErr, log.String())
+		default:
+		}
 		value, e := os.ReadFile(file)
 		return e == nil && json.Unmarshal(value, &material) == nil && material.Host != "" && len(material.CA) > 0 && len(material.Cert) > 0 && len(material.Key) > 0
 	})

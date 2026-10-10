@@ -4,8 +4,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestStartupDiagnosticKeepsBoundedLatestFailure(t *testing.T) {
+	d := &diagnosticTail{}
+	large := strings.Repeat("old", 16<<10)
+	if n, err := d.Write([]byte(large)); n != len(large) || err != nil {
+		t.Fatal("diagnostic writer interrupted child output")
+	}
+	_, _ = d.Write([]byte("new startup failure"))
+	if value := d.String(); len(value) != 8<<10 || !strings.HasSuffix(value, "new startup failure") {
+		t.Fatal("startup diagnostic lost latest cause or exceeded bound")
+	}
+}
 
 func TestRetirementPreservesLiveStateUntilStopSucceeds(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "private")

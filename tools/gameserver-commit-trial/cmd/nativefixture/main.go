@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,6 +20,35 @@ import (
 type manifest struct {
 	Host          string
 	CA, Cert, Key []byte
+}
+
+// Only disposable component diagnostics enter this bounded tail. Credentials
+// and the manifest are never logged.
+type diagnosticTail struct {
+	mu    sync.Mutex
+	value []byte
+}
+
+func (d *diagnosticTail) Write(p []byte) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	const limit = 8 << 10
+	n := len(p)
+	if n >= limit {
+		d.value = append(d.value[:0], p[n-limit:]...)
+	} else {
+		if len(d.value)+n > limit {
+			d.value = d.value[len(d.value)+n-limit:]
+		}
+		d.value = append(d.value, p...)
+	}
+	return n, nil
+}
+
+func (d *diagnosticTail) String() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return string(d.value)
 }
 
 func environment(assets, crd, state string) *envtest.Environment {
@@ -51,6 +81,9 @@ func run(assets, crd, output string) (err error) {
 		return errors.New("private state unavailable")
 	}
 	e := environment(assets, crd, state)
+	diagnostics := &diagnosticTail{}
+	e.ControlPlane.GetAPIServer().Out, e.ControlPlane.GetAPIServer().Err = diagnostics, diagnostics
+	e.ControlPlane.Etcd.Out, e.ControlPlane.Etcd.Err = diagnostics, diagnostics
 	defer func() {
 		err = errors.Join(err, retire(state, e.Stop))
 	}()
@@ -61,7 +94,7 @@ func run(assets, crd, output string) (err error) {
 	}
 	cfg, err := e.Start()
 	if err != nil {
-		return errors.New("owned control plane did not start")
+		return fmt.Errorf("owned control plane did not start: %w\n%s", err, diagnostics.String())
 	}
 	value, err := json.Marshal(manifest{cfg.Host, cfg.CAData, cfg.CertData, cfg.KeyData})
 	if err != nil {
@@ -96,7 +129,7 @@ func main() {
 	output := flag.String("output", "", "new private manifest")
 	flag.Parse()
 	if err := run(*assets, *crd, *output); err != nil {
-		fmt.Fprintln(os.Stderr, "owned native control-plane fixture failed")
+		fmt.Fprintf(os.Stderr, "owned native control-plane fixture failed: %v\n", err)
 		os.Exit(1)
 	}
 }
