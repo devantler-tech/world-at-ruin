@@ -1123,10 +1123,26 @@ everything shipped afterwards is held to.
   material and original-pin inputs; #1316 owns retirement. Both native architectures
   exercise two actual targets, mixed outcomes, competing owners, omitted inventory,
   lost/canceled replies, death after submission/ACK and death after final accepted
-  readback before supervisor export. Durable complete-proof publication and production
-  authenticated custody remain independent #1315/#793 gates. Run the capability race
+  readback before supervisor export. Complete-proof publication uses the separate
+  experiment below; production authenticated custody remains a #1315/#793 gate. Run the capability race
   suite, native probe tests, normal-artifact import guards and full native acceptance.
   See [ADR 0040](docs/adr/0040-fence-the-complete-acknowledged-recovery-inventory.md).
+- **Complete recovery publication:** `gameservercommit.NewRecoveryPublisher` accepts
+  only the live originating complete result. Copies and independent wrappers consume
+  one shared publication attempt before storage I/O. One private generation-scoped
+  create-only proof needs exact ACK and private same-version readback of complete
+  evidence, with original owner/handoff/root pins verified. Ambiguous replies and
+  restart never restore publication or allocation authority. The permanent strict
+  reader returns diagnostics only from independently retained complete pins.
+  `WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_ENABLED` defaults off; its ID, scenario,
+  control, private material, original pins and publication-pin inputs are retired by
+  #1316. Both native architectures join two actual targets, mixed results, independent
+  publisher races, changed proof contents, reply loss, cancellation and four actual
+  process-death seams through native storage. Production authenticated durable custody,
+  exclusive authorization, serving/retained reader adoption and quarantine release
+  remain #1315/#793 gates. Run the full capability race suite, native probe tests,
+  fourteen-family storage-history guard and all thirty-two native scenarios.
+  See [ADR 0041](docs/adr/0041-publish-an-acknowledged-complete-recovery-proof.md).
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

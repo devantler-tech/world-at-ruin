@@ -431,6 +431,32 @@ lost drain and publication replies, post-write cancellation, source death after
 drain but before publication, competing create-only publication, and refused
 stale/changed/missing/public/omitted-inventory rows. Visible committed rows cannot
 replace a missing acknowledgment or independent pin retention.
-Barrier-only recovery, competing recoverer ownership, complete proof publication
-and production quarantine release remain #1315/#793.
+Barrier-only recovery and owner exclusion use the separate default-off experiments
+in ADRs 0039/0040. Production quarantine release remains #1315/#793.
 See [ADR 0038](../../docs/adr/0038-retain-an-acknowledged-drain-handoff.md).
+
+## Disposable complete recovery publication
+
+`WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_ENABLED=true` enables only the native trial.
+Absent or `false` is inert before storage, pin or material access. The corresponding
+`*_ID`, `*_SCENARIO`, `*_CONTROL`, `*_MATERIAL`, `*_PINS` and `*_PUBLICATION_PINS`
+inputs remain private disposable fixture inputs. Normal plugin builds exclude this
+entrypoint and its writer; #1316 tracks retirement.
+
+The originating complete opaque result spends one shared publication attempt across
+copies and independent publisher wrappers. One generation-scoped private create-only
+row requires exact native storage ACK, same-version private proof readback and the
+unchanged original owner/handoff/root. Only that live accepted result delivers pins
+to the supervisor. A fresh read-only process validates those independently retained
+pins after publisher death, without restoring publication or allocation authority.
+
+Both native architectures join two frozen targets, original HTTP-409 barrier controls,
+complete/mixed outcomes, competing owners and same-result publishers, omitted/changed
+proof contents, lost/canceled storage replies and actual killed/joined processes before
+submission, after commit before ACK, after ACK before readback and after complete
+readback before pin export. Visible rows never repair missing acknowledgment or pins.
+All thirty-two mandatory native scenarios must pass. This supervisor does not establish
+authenticated durable production custody or database rollback survival. Exclusive
+mutation authority, serving/retained reader adoption and quarantine release remain
+separate #1315/#793 gates. See
+[ADR 0041](../../docs/adr/0041-publish-an-acknowledged-complete-recovery-proof.md).

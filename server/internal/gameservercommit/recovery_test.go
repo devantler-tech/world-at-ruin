@@ -183,6 +183,13 @@ func TestFreshRecoveryPreservesOneDeadlineAndMetadataOnlyWrites(t *testing.T) {
 func recoveryPair(t *testing.T, handler http.HandlerFunc, allocated bool) (*Recovery, allocatoradmission.RecoveryReservation, Config) {
 	t.Helper()
 	s := nakamastoragetest.New()
+	return recoveryPairWithStorage(t, handler, allocated, s)
+}
+
+// recoveryPairWithStorage retains independently observable storage for joined
+// publication assertions without replacing the original authority protocol.
+func recoveryPairWithStorage(t *testing.T, handler http.HandlerFunc, allocated bool, s allocatoradmission.RecoveryStorage) (*Recovery, allocatoradmission.RecoveryReservation, Config) {
+	t.Helper()
 	_, cfg := generationFixture(t, handler)
 	g, err := NewDurableGeneration(context.Background(), DurableGenerationConfig{Enabled: true, Storage: s, IncarnationID: "original-incarnation", Record: cfg.Record, Commit: cfg.Commit})
 	if err != nil {

@@ -68,9 +68,16 @@ func (p *fenceProbeTransport) RoundTrip(req *http.Request) (*http.Response, erro
 
 // RunRecoveryFence composes only the live originating reservation. The local
 // supervisor and its material/pin channel are disposable native-test inputs.
-// No durable complete proof or production pin authentication is implemented.
+// This entrypoint exports process-local diagnostics only. The separate
+// publication entrypoint consumes the same live result before storage I/O.
 func RunRecoveryFence(ctx context.Context, storage handoffStorage, report func(string)) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
+	return runRecoveryFence(ctx, storage, report, env, false)
+}
+
+// runRecoveryFence keeps the actual owner/barrier composition shared, while
+// only the separately enabled publication entrypoint persists complete proof.
+func runRecoveryFence(ctx context.Context, storage handoffStorage, report func(string), env map[string]string, publication bool) error {
 	flag := env["WAR_DURABLE_RECOVERY_FENCE_PROBE_ENABLED"]
 	if flag == "" || flag == "false" {
 		return nil
@@ -132,6 +139,9 @@ func RunRecoveryFence(ctx context.Context, storage handoffStorage, report func(s
 	// This is after all accepted target readbacks, before any complete export.
 	if err = event(ctx, control, id+"-complete"); err != nil {
 		return err
+	}
+	if publication {
+		return publishRecoveryResult(ctx, storage, report, env, result)
 	}
 	if err = deliverControl(ctx, control, "/recovery-result", complete); err != nil {
 		return err

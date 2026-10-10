@@ -91,7 +91,7 @@ func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error
 		return RecoveryReservation{}, unknown(ctx, err)
 	}
 	got := RecoveryOwnerObservation{OwnerID: cfg.OwnerID, HandoffVersion: cfg.HandoffVersion, Handoff: handoff}
-	value, err := encodeRecoveryOwner(got)
+	value, err := EncodeRecoveryOwner(got)
 	if err != nil || ctx.Err() != nil {
 		return RecoveryReservation{}, unknown(ctx, err)
 	}
@@ -130,7 +130,9 @@ func cloneRecoveryObservation(observation *RecoveryOwnerObservation) RecoveryOwn
 	return got
 }
 
-func encodeRecoveryOwner(got RecoveryOwnerObservation) (string, error) {
+// EncodeRecoveryOwner serializes diagnostics through the permanent reader. It
+// neither reconstructs a reservation nor authorizes any storage mutation.
+func EncodeRecoveryOwner(got RecoveryOwnerObservation) (string, error) {
 	handoff, err := encodeHandoff(got.Handoff)
 	if err != nil {
 		return "", err

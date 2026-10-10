@@ -4,6 +4,7 @@ package nakamatrial
 
 import (
 	"encoding/json"
+	"github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +29,8 @@ func TestNativeAdmissionDefaultOff(t *testing.T) {
 			f := newFixture(t)
 			// All native writer probes must remain inert before fixture inspection.
 			env := map[string]string{"WAR_ALLOCATOR_ADMISSION_PROBE_ENABLED": flag, "WAR_ALLOCATOR_ADMISSION_PROBE_JOURNAL": "invalid", "WAR_ALLOCATOR_ADMISSION_PROBE_SCENARIO": "invalid", "WAR_DURABLE_GENERATION_PROBE_ENABLED": flag, "WAR_DURABLE_GENERATION_PROBE_MATERIAL": "/invalid", "WAR_DURABLE_GENERATION_PROBE_SCENARIO": "invalid",
-				"WAR_DURABLE_RECOVERY_HANDOFF_PROBE_ENABLED": flag, "WAR_DURABLE_RECOVERY_HANDOFF_PROBE_MATERIAL": "/invalid", "WAR_DURABLE_RECOVERY_HANDOFF_PROBE_PINS": "invalid"}
+				"WAR_DURABLE_RECOVERY_HANDOFF_PROBE_ENABLED": flag, "WAR_DURABLE_RECOVERY_HANDOFF_PROBE_MATERIAL": "/invalid", "WAR_DURABLE_RECOVERY_HANDOFF_PROBE_PINS": "invalid",
+				"WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_ENABLED": flag, "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_PINS": "invalid", "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_PUBLICATION_PINS": "invalid", "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_MATERIAL": "/invalid"}
 			p := f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
 			if strings.Contains(p.log.String(), "NAKAMA ADMISSION PROBE") || strings.Contains(p.log.String(), "NAKAMA CAPABILITY PROBE") || strings.Contains(p.log.String(), "NAKAMA HANDOFF PROBE") {
 				t.Fatal("disabled write experiment ran")
@@ -39,6 +41,9 @@ func TestNativeAdmissionDefaultOff(t *testing.T) {
 			}
 			if f.db.QueryRow("SELECT count(*) FROM storage WHERE collection='world_at_ruin_allocator_admissions'").Scan(&count) != nil || count != 0 {
 				t.Fatal("disabled experiment wrote storage")
+			}
+			if strings.Contains(p.log.String(), "NAKAMA RECOVERY PUBLICATION PROBE") || f.db.QueryRowContext(t.Context(), "SELECT count(*) FROM storage WHERE collection=$1", gameservercommit.RecoveryProofCollection).Scan(&count) != nil || count != 0 {
+				t.Fatal("disabled publication wrote or ran")
 			}
 			if allocations, requests := f.counts(); allocations != 0 || requests != 0 {
 				t.Fatal("disabled experiment touched GameServer path")

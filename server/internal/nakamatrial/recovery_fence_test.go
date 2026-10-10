@@ -200,6 +200,13 @@ func assertPairHandoff(t *testing.T, f *fixture, originals []*agonesv1.GameServe
 // recovery refusal, so an unrelated crash cannot pass a negative control.
 func assertFenceRefused(t *testing.T, p *nativeProcess, reason string) {
 	t.Helper()
+	assertRecoveryRefused(t, p, "fence", reason)
+}
+
+// assertRecoveryRefused requires the protocol's exact refusal from the joined
+// native process; an unrelated crash cannot satisfy a negative control.
+func assertRecoveryRefused(t *testing.T, p *nativeProcess, kind, reason string) {
+	t.Helper()
 	select {
 	case <-p.done:
 	case <-time.After(20 * time.Second):
@@ -207,7 +214,7 @@ func assertFenceRefused(t *testing.T, p *nativeProcess, reason string) {
 		t.Fatal("refused fence process not joined")
 	}
 	var exit *exec.ExitError
-	if !errors.As(p.err, &exit) || exit.ExitCode() != 1 || !strings.Contains(p.log.String(), "recovery fence probe: "+reason+" unknown") || strings.Contains(p.log.String(), "NAKAMA RECOVERY FENCE PROBE PASS") {
+	if !errors.As(p.err, &exit) || exit.ExitCode() != 1 || !strings.Contains(p.log.String(), "recovery "+kind+" probe: "+reason+" unknown") || strings.Contains(p.log.String(), "NAKAMA RECOVERY "+strings.ToUpper(kind)+" PROBE PASS") {
 		t.Fatalf("fresh fence did not produce specific refusal: %s", p.log.String())
 	}
 }
@@ -247,8 +254,12 @@ func settlePairWrite(t *testing.T, p *pairAPI, api typed.GameServerInterface, or
 
 // awaitFenceReady binds health and the complete-proof marker to the elected
 // process's own endpoint, including when the second native process wins.
-func awaitFenceReady(t *testing.T, p *nativeProcess, port string) {
+func awaitFenceReady(t *testing.T, p *nativeProcess, port string, publication bool) {
 	t.Helper()
+	marker := "NAKAMA RECOVERY FENCE PROBE PASS: owner="
+	if publication {
+		marker = "NAKAMA RECOVERY PUBLICATION PROBE PASS: owner="
+	}
 	waitFor(t, 20*time.Second, "winning native recovery health", func() bool {
 		select {
 		case <-p.done:
@@ -260,15 +271,28 @@ func awaitFenceReady(t *testing.T, p *nativeProcess, port string) {
 			return false
 		}
 		_ = response.Body.Close()
-		return response.StatusCode == 200 && strings.Contains(p.log.String(), "NAKAMA RECOVERY FENCE PROBE PASS: owner=")
+		return response.StatusCode == 200 && strings.Contains(p.log.String(), marker)
 	})
 }
 
 // The supervisor accepts only original-source ACK pins; SQL supplies evidence,
 // never recovery input. All cuts kill/join the actual packaged native process.
 func TestNativeRecoveryFence(t *testing.T) {
+	runNativeRecoveryPair(t, false, []string{"unfenced", "complete", "mixed", "competing", "omitted", "partial", "lost-barrier-ack", "cancel-barrier-ack", "lost-readback", "cancel-readback", "crash-after-submission", "crash-after-ack", "crash-before-export"})
+}
+
+// Publication adds actual native storage ACK/readback and process-death cuts
+// after the unchanged two-target recovery protocol has completed.
+func TestNativeRecoveryPublication(t *testing.T) {
+	runNativeRecoveryPair(t, true, []string{"complete", "mixed", "competing", "competing-publishers", "omitted", "omitted-proof", "changed-proof", "lost-proof-ack", "cancel-proof-ack", "lost-proof-readback", "cancel-proof-readback", "crash-before-proof-submit", "crash-after-proof-commit", "crash-after-proof-ack", "crash-before-proof-export"})
+}
+
+// runNativeRecoveryPair preserves the full source/owner/barrier fixture while
+// the publication mode adds independent supervisor-retained proof pins.
+func runNativeRecoveryPair(t *testing.T, publication bool, scenarios []string) {
+	t.Helper()
 	verifyJournalArtifact(t)
-	for _, scenario := range []string{"unfenced", "complete", "mixed", "competing", "omitted", "partial", "lost-barrier-ack", "cancel-barrier-ack", "lost-readback", "cancel-readback", "crash-after-submission", "crash-after-ack", "crash-before-export"} {
+	for _, scenario := range scenarios {
 		t.Run(scenario, func(t *testing.T) {
 			cfg := ownedControlPlane(t)
 			api, a := actualReadyServer(t, cfg)
@@ -287,8 +311,15 @@ func TestNativeRecoveryFence(t *testing.T) {
 			for _, name := range []string{"registered", "exposed", "close", "drained", "published", "handoff", "a-before-write", "a-written", "a-owner", "a-before-readback-zone-a", "a-before-readback-zone-b", "a-complete", "b-before-write", "b-written", "b-owner", "b-before-readback-zone-a", "b-before-readback-zone-b", "b-complete"} {
 				stages[name] = newStage()
 			}
+			for _, id := range []string{"a", "b"} {
+				for _, seam := range []string{"before-proof-submit", "proof-written", "before-proof-readback", "proof-complete"} {
+					stages[id+"-"+seam] = newStage()
+				}
+			}
 			pinsReceived := make(chan retainedHandoffPins, 1)
 			results := make(chan gameservercommit.RecoveryObservation, 2)
+			publications := make(chan gameservercommit.PublicationPins, 2)
+			var retainedPublication gameservercommit.PublicationPins
 			written := make(chan string, 2)
 			control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost {
@@ -319,6 +350,19 @@ func TestNativeRecoveryFence(t *testing.T) {
 						default:
 							w.WriteHeader(409)
 						}
+					case "/publication-pins":
+						var pins gameservercommit.PublicationPins
+						if !publication || decoder.Decode(&pins) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+							w.WriteHeader(400)
+							return
+						}
+						select {
+						case publications <- pins:
+							results <- pins.Recovery
+							w.WriteHeader(204)
+						default:
+							w.WriteHeader(409)
+						}
 					default:
 						w.WriteHeader(404)
 					}
@@ -332,7 +376,7 @@ func TestNativeRecoveryFence(t *testing.T) {
 				}
 				stage.arrival.Do(func() {
 					close(stage.entered)
-					if strings.HasSuffix(name, "-written") {
+					if name == "a-written" || name == "b-written" {
 						written <- strings.TrimSuffix(name, "-written")
 					}
 				})
@@ -413,8 +457,14 @@ func TestNativeRecoveryFence(t *testing.T) {
 				}
 			}
 			for name, stage := range stages {
-				if strings.Contains(name, "-written") || (strings.Contains(name, "-before-readback") && !(scenario == "crash-after-ack" && name == "a-before-readback-"+first.Name)) {
+				if name == "a-written" || name == "b-written" || (strings.Contains(name, "-before-readback") && (scenario != "crash-after-ack" || name != "a-before-readback-"+first.Name)) {
 					stage.allow()
+				}
+				if strings.Contains(name, "proof") {
+					hold := (scenario == "crash-before-proof-submit" && strings.HasSuffix(name, "before-proof-submit")) || ((scenario == "crash-after-proof-commit" || scenario == "omitted-proof" || scenario == "changed-proof") && strings.HasSuffix(name, "proof-written")) || (scenario == "crash-after-proof-ack" && strings.HasSuffix(name, "before-proof-readback")) || (scenario == "crash-before-proof-export" && strings.HasSuffix(name, "proof-complete"))
+					if !hold {
+						stage.allow()
+					}
 				}
 			}
 			// All stage pointers are fixed before any recovery process requests them.
@@ -427,7 +477,16 @@ func TestNativeRecoveryFence(t *testing.T) {
 				if strings.HasPrefix(scenario, "lost-") || strings.HasPrefix(scenario, "cancel-") {
 					probeScenario = scenario
 				}
-				return map[string]string{"WAR_DURABLE_RECOVERY_FENCE_PROBE_ENABLED": "true", "WAR_DURABLE_RECOVERY_FENCE_PROBE_ID": id, "WAR_DURABLE_RECOVERY_FENCE_PROBE_SCENARIO": probeScenario, "WAR_DURABLE_RECOVERY_FENCE_PROBE_PINS": string(raw), "WAR_DURABLE_RECOVERY_FENCE_PROBE_MATERIAL": materialPath, "WAR_DURABLE_RECOVERY_FENCE_PROBE_CONTROL": control.URL}
+				prefix := "WAR_DURABLE_RECOVERY_FENCE_PROBE_"
+				if publication {
+					prefix = "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_"
+					if scenario == "competing-publishers" || strings.HasPrefix(scenario, "lost-proof-") || strings.HasPrefix(scenario, "cancel-proof-") {
+						probeScenario = scenario
+					} else {
+						probeScenario = "complete"
+					}
+				}
+				return map[string]string{prefix + "ENABLED": "true", prefix + "ID": id, prefix + "SCENARIO": probeScenario, prefix + "PINS": string(raw), prefix + "MATERIAL": materialPath, prefix + "CONTROL": control.URL}
 			}
 			traffic.recovering.Store(true)
 			recoverer := f.start(envFor("a"), filepath.Join(*bundle, "modules"), 10)
@@ -469,40 +528,69 @@ func TestNativeRecoveryFence(t *testing.T) {
 					t.Fatal("omitted inventory exported complete proof")
 				default:
 				}
+				if publication {
+					var count int
+					if f.db.QueryRowContext(t.Context(), "SELECT count(*) FROM storage WHERE collection=$1", gameservercommit.RecoveryProofCollection).Scan(&count) != nil || count != 0 {
+						t.Fatal("omitted original inventory wrote a proof")
+					}
+					select {
+					case <-publications:
+						t.Fatal("omitted inventory exported publication pins")
+					default:
+					}
+					t.Log("RECOVERY PUBLICATION JOIN PASS: scenario=omitted targets=2 proof_rows=0 independent_pin_export=false original_puts=200,200 barrier_puts=0 source_joined=1 publisher_joined=1")
+				}
 				t.Log("RECOVERY FENCE JOIN PASS: scenario=omitted targets=2 original_puts=200,200 barrier_puts=0 complete_exports=0")
 				return
 			}
 			stageReached(t, stages[winnerID+"-owner"])
 			stages[winnerID+"-owner"].allow()
-			success := scenario == "complete" || scenario == "mixed" || scenario == "competing"
+			success := scenario == "complete" || scenario == "mixed" || scenario == "competing" || scenario == "competing-publishers"
 			expectedBarriers := 1
-			switch scenario {
-			case "crash-after-submission":
-				stageReached(t, traffic.barrierWritten)
-				killJoinedSource(t, recoverer)
-				traffic.barrierWritten.allow()
-			case "crash-after-ack":
-				stageReached(t, stages["a-before-readback-"+first.Name])
-				killJoinedSource(t, recoverer)
-				stages["a-before-readback-"+first.Name].allow()
-			case "crash-before-export":
-				stageReached(t, stages["a-complete"])
-				killJoinedSource(t, recoverer)
-				stages["a-complete"].allow()
+			if publication {
+				stageReached(t, stages[winnerID+"-complete"])
+				stages[winnerID+"-complete"].allow()
 				expectedBarriers = 2
-			default:
-				if success {
-					stageReached(t, stages[winnerID+"-complete"])
-					stages[winnerID+"-complete"].allow()
+				runPublicationCut(t, f, recoverer, stages, scenario, winnerID, success)
+			} else {
+				switch scenario {
+				case "crash-after-submission":
+					stageReached(t, traffic.barrierWritten)
+					killJoinedSource(t, recoverer)
+					traffic.barrierWritten.allow()
+				case "crash-after-ack":
+					stageReached(t, stages["a-before-readback-"+first.Name])
+					killJoinedSource(t, recoverer)
+					stages["a-before-readback-"+first.Name].allow()
+				case "crash-before-export":
+					stageReached(t, stages["a-complete"])
+					killJoinedSource(t, recoverer)
+					stages["a-complete"].allow()
 					expectedBarriers = 2
-				} else {
-					assertFenceRefused(t, recoverer, "barrier outcome")
+				default:
+					if success {
+						stageReached(t, stages[winnerID+"-complete"])
+						stages[winnerID+"-complete"].allow()
+						expectedBarriers = 2
+					} else {
+						assertFenceRefused(t, recoverer, "barrier outcome")
+					}
 				}
 			}
 			if traffic.barriers.Load() != int32(expectedBarriers) || traffic.allocations.Load() != 2 {
 				t.Fatal("recovery omitted/replayed mutation inventory")
 			}
 			if success {
+				if publication {
+					var pins gameservercommit.PublicationPins
+					select {
+					case pins = <-publications:
+					case <-time.After(time.Second):
+						t.Fatal("acknowledged publication pins not retained independently")
+					}
+					assertPublishedPair(t, f, pins, winnerID)
+					retainedPublication = pins
+				}
 				var complete gameservercommit.RecoveryObservation
 				select {
 				case complete = <-results:
@@ -560,8 +648,22 @@ func TestNativeRecoveryFence(t *testing.T) {
 				if winnerID == "b" {
 					port = "7360"
 				}
-				awaitFenceReady(t, recoverer, port)
+				awaitFenceReady(t, recoverer, port, publication)
 				killJoinedSource(t, recoverer)
+			}
+			if publication && success {
+				// Only the joined publisher's independently retained ACK pins are
+				// input. SQL/visible proof rows never supply or repair those pins.
+				raw, e := json.Marshal(retainedPublication)
+				if e != nil {
+					t.Fatal(e)
+				}
+				readerEnv := map[string]string{"WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_ENABLED": "true", "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_ID": winnerID, "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_SCENARIO": "read", "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_CONTROL": control.URL, "WAR_DURABLE_RECOVERY_PUBLICATION_PROBE_PUBLICATION_PINS": string(raw)}
+				reader := f.launch(readerEnv, filepath.Join(*bundle, "modules"), 10, true)
+				if !strings.Contains(reader.log.String(), "NAKAMA RECOVERY PUBLICATION PROBE PASS: owner="+winnerID) {
+					t.Fatal("fresh pinned reader did not validate complete proof")
+				}
+				killJoinedSource(t, reader)
 			}
 			for _, id := range []string{"a", "b"} {
 				stages[id+"-before-write"].allow()
@@ -573,6 +675,22 @@ func TestNativeRecoveryFence(t *testing.T) {
 				t.Fatal("restart restored complete export")
 			default:
 			}
+			if publication {
+				select {
+				case <-publications:
+					t.Fatal("uncertain or restarted publisher exported proof pins")
+				default:
+				}
+				var count int
+				want := 1
+				if scenario == "crash-before-proof-submit" {
+					want = 0
+				}
+				if f.db.QueryRowContext(t.Context(), "SELECT count(*) FROM storage WHERE collection=$1", gameservercommit.RecoveryProofCollection).Scan(&count) != nil || count != want {
+					t.Fatalf("proof row inventory=%d want=%d", count, want)
+				}
+				t.Logf("RECOVERY PUBLICATION JOIN PASS: scenario=%s targets=2 proof_rows=%d independent_pin_export=%t source_joined=1 publisher_joined=1 restart_refusals=2", scenario, count, success)
+			}
 			if traffic.allocations.Load() != 2 || traffic.barriers.Load() != int32(expectedBarriers) {
 				t.Fatal("restart replayed original allocation/barrier")
 			}
@@ -582,5 +700,77 @@ func TestNativeRecoveryFence(t *testing.T) {
 			}
 			t.Logf("RECOVERY FENCE JOIN PASS: scenario=%s targets=2 barrier_puts=%d complete_export=%t source_joined=1 recovery_joined=1 restart_refusals=2", scenario, expectedBarriers, success)
 		})
+	}
+}
+
+// runPublicationCut kills and joins the actual native publisher at each owned
+// storage seam, or joins its exact uncertainty refusal after a real reply cut.
+func runPublicationCut(t *testing.T, f *fixture, p *nativeProcess, stages map[string]*capabilityStage, scenario, id string, success bool) {
+	t.Helper()
+	seam := ""
+	switch scenario {
+	case "crash-before-proof-submit":
+		seam = "before-proof-submit"
+	case "crash-after-proof-commit":
+		seam = "proof-written"
+	case "crash-after-proof-ack":
+		seam = "before-proof-readback"
+	case "crash-before-proof-export":
+		seam = "proof-complete"
+	}
+	if seam != "" {
+		stageReached(t, stages[id+"-"+seam])
+		killJoinedSource(t, p)
+		stages[id+"-"+seam].allow()
+		return
+	}
+	if scenario == "omitted-proof" || scenario == "changed-proof" {
+		stageReached(t, stages[id+"-proof-written"])
+		var before string
+		key := gameservercommit.RecoveryProofKey("generation-1")
+		if f.db.QueryRowContext(t.Context(), "SELECT version FROM storage WHERE collection=$1 AND key=$2", gameservercommit.RecoveryProofCollection, key).Scan(&before) != nil || before == "" {
+			t.Fatal("proof mutation control lacks actual committed row")
+		}
+		query := "UPDATE storage SET value=jsonb_set(value,'{grants}',(value->'grants') - 1) WHERE collection=$1 AND key=$2"
+		if scenario == "changed-proof" {
+			query = "UPDATE storage SET value=jsonb_set(value,'{grants,0,outcome}','\"allocated-before-barrier\"'::jsonb) WHERE collection=$1 AND key=$2"
+		}
+		if _, err := f.db.ExecContext(t.Context(), query, gameservercommit.RecoveryProofCollection, key); err != nil {
+			t.Fatal("proof mutation control failed", err)
+		}
+		var value, after string
+		if f.db.QueryRowContext(t.Context(), "SELECT value::text,version FROM storage WHERE collection=$1 AND key=$2", gameservercommit.RecoveryProofCollection, key).Scan(&value, &after) != nil || after != before {
+			t.Fatal("proof mutation control changed the storage version")
+		}
+		got, err := gameservercommit.DecodeRecoveryProof(value)
+		if scenario == "omitted-proof" && !errors.Is(err, gameservercommit.ErrUnknown) {
+			t.Fatal("omitted actual proof remained complete")
+		}
+		if scenario == "changed-proof" && (err != nil || got.Grants[0].Outcome != gameservercommit.Allocated) {
+			t.Fatal("changed valid proof control did not change its complete outcome")
+		}
+		stages[id+"-proof-written"].allow()
+	}
+	if !success {
+		assertRecoveryRefused(t, p, "publication", "publication")
+	}
+}
+
+// assertPublishedPair independently joins retained live ACK pins with the exact
+// actual private PostgreSQL row; the row supplies evidence, never trusted input.
+func assertPublishedPair(t *testing.T, f *fixture, pins gameservercommit.PublicationPins, id string) {
+	t.Helper()
+	var value, version, user string
+	var read, write, count int
+	key := gameservercommit.RecoveryProofKey("generation-1")
+	if pins.Version == "" || pins.Recovery.Owner.OwnerID != id || len(pins.Recovery.Grants) != 2 || f.db.QueryRowContext(t.Context(), "SELECT value::text,version,user_id::text,read,write FROM storage WHERE collection=$1 AND key=$2", gameservercommit.RecoveryProofCollection, key).Scan(&value, &version, &user, &read, &write) != nil || version != pins.Version || user != zeroOwner || read != 0 || write != 0 {
+		t.Fatal("publication lacks exact private actual ACK row")
+	}
+	got, err := gameservercommit.DecodeRecoveryProof(value)
+	if err != nil || !reflect.DeepEqual(got, pins.Recovery) {
+		t.Fatal("actual proof row lost complete originating recovery")
+	}
+	if f.db.QueryRowContext(t.Context(), "SELECT count(*) FROM storage WHERE collection=$1", gameservercommit.RecoveryProofCollection).Scan(&count) != nil || count != 1 {
+		t.Fatal("competing publisher created multiple proofs")
 	}
 }
