@@ -58,6 +58,9 @@ func environment(assets, crd, state string) *envtest.Environment {
 		ControlPlaneStartTimeout: 45 * time.Second, ControlPlaneStopTimeout: 15 * time.Second}
 	e.ControlPlane.GetAPIServer().Path = filepath.Join(assets, "kube-apiserver")
 	e.ControlPlane.GetAPIServer().CertDir = filepath.Join(state, "certs")
+	// The disposable internal network deliberately has no default route. Do
+	// not let API advertisement infer an address from the host's routing table.
+	e.ControlPlane.GetAPIServer().Configure().Set("advertise-address", "127.0.0.1")
 	e.ControlPlane.Etcd = &envtest.Etcd{Path: filepath.Join(assets, "etcd"), DataDir: filepath.Join(state, "etcd")}
 	e.ControlPlane.KubectlPath = filepath.Join(assets, "kubectl")
 	return e
