@@ -28,6 +28,7 @@ type generationState struct {
 	closed  bool
 	grants  []*generationGrantState
 	receipt *generationReceiptState
+	durable *durableState
 }
 
 // NewGeneration requires a bounded, canonical writable-schema open observation.
@@ -83,9 +84,17 @@ func (g *Generation) Prepare(ctx context.Context, actorUID, name, attemptID stri
 		return GenerationGrant{}, ErrInvalid
 	}
 	s.mu.Unlock()
+	if s.durable != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, requestLimit)
+		defer cancel()
+	}
 	grant, err := s.client.Prepare(ctx, name, attemptID)
 	if err != nil {
 		return GenerationGrant{}, err
+	}
+	if s.durable != nil {
+		return s.register(ctx, grant, actorUID, attemptID)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,10 +162,28 @@ func (g *Generation) Fence(ctx context.Context) (GenerationReceipt, error) {
 		return GenerationReceipt{}, ErrClosed
 	}
 	s.closed = true
-	issued := slices.Clone(s.grants)
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, requestLimit)
 	defer cancel()
+	if s.durable != nil {
+		d := s.durable
+		if err := d.lock(ctx); err != nil {
+			return GenerationReceipt{}, err
+		}
+		next, err := d.writer.Drain(ctx, d.head)
+		if err == nil {
+			d.head = next
+		}
+		d.unlock()
+		if err != nil {
+			return GenerationReceipt{}, durableUnknown(ctx, err)
+		}
+	}
+	// A pending successful registration may enter the conservative issued set
+	// after local closure. Snapshot only after its acknowledgment is accounted.
+	s.mu.Lock()
+	issued := slices.Clone(s.grants)
+	s.mu.Unlock()
 	got := GenerationObservation{GenerationID: s.record.GenerationID, SourceVersion: s.record.Version,
 		MemberSetDigest: s.record.MemberSetDigest, MemberPodUIDs: slices.Clone(s.record.MemberPodUIDs),
 		Grants: make([]GenerationGrantObservation, 0, len(issued))}

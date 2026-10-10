@@ -10,3 +10,4 @@ server/nakamamastery/store.go|Store.Apply|RecordWrite|1 server/nakamamastery/tes
 server/internal/allocatoradmission/admission.go|Writer.write|StorageWrite|1 server/internal/allocatoradmission/testdata/shipped_allocator_admission_versions.txt
 server/internal/nakamaadmissionprobe/probe.go|lostStorage.StorageWrite|StorageWrite|1 server/internal/allocatoradmission/testdata/shipped_allocator_admission_versions.txt
 server/internal/nakamaadmissionprobe/probe.go|raceStorage.StorageWrite|StorageWrite|1 server/internal/allocatoradmission/testdata/shipped_allocator_admission_versions.txt
+server/internal/nakamacapabilityprobe/probe.go|boundary.StorageWrite|StorageWrite|1 server/internal/allocatoradmission/testdata/shipped_allocator_admission_versions.txt

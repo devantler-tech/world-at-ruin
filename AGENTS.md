@@ -912,10 +912,11 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-seven
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-eight
   named scenarios against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
-  authoritative movement and complete read-only journal observations. Both native Linux
+  authoritative movement, complete read-only journal observations and the joined
+  durable registration/real API barrier controls. Both native Linux
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
   and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
@@ -1073,6 +1074,19 @@ everything shipped afterwards is held to.
   registration/drain races and committed writes with lost replies. See
   [ADR 0036](docs/adr/0036-serialize-durable-grant-registration-and-drain.md).
   Production authority, retained-reader adoption and real barrier recovery remain #793 gates.
+- **Durable capability composition:** `gameservercommit.NewDurableGeneration` derives
+  registration from its private frozen grant, retains the original actor/attempt/UID/version,
+  and exports only after the native admission acknowledgment while still locally open.
+  A separate bounded storage gate never delays local closure. Registered-but-unexposed
+  grants enter the complete drained/barriered set; unknown writes close the owner without
+  retry, refresh or restoration. The native-only `nakamacapabilityprobe` requires
+  `WAR_DURABLE_GENERATION_PROBE_ENABLED=true` and private local fixture inputs.
+  Normal builds exclude both the probe and capability composition. Run the capability
+  race suite, the production import guards and the amd64/arm64 native acceptance.
+  The latter joins actual Nakama transactions and held real kube-apiserver/etcd writes,
+  including late acknowledgments and committed registrations with lost replies.
+  [ADR 0037](docs/adr/0037-register-frozen-capabilities-before-exposure.md) preserves
+  independent recovery #1315 and production authority #793 as separate gates.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
