@@ -112,6 +112,7 @@ func TestRecoveryProofRejectsMalformedOrIncompleteDocuments(t *testing.T) {
 		strings.Replace(base, `"owner_version": "owner-ack-1"`, `"owner_version": "*"`, 1),
 		strings.Replace(base, `"owner_version": "owner-ack-1",`, ``, 1),
 		strings.Replace(base, `"barrier_version": "barrier-uid-a"`, `"barrier_version": "resource-a"`, 1),
+		strings.Replace(base, `"barrier_version": "barrier-uid-b"`, `"barrier_version": "barrier-uid-a"`, 1),
 		strings.Replace(base, `"barrier_version": "barrier-uid-a"`, `"barrier_version": "*"`, 1),
 		strings.Replace(base, `"barrier_version": "barrier-uid-a"`, `"barrier_version": null`, 1),
 		strings.Replace(base, `"barrier_version": "barrier-uid-a"`, `"barrier_version": "barrier-uid-a", "barrier_version": "barrier-uid-a"`, 1),

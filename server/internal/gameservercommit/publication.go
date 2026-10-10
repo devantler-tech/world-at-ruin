@@ -240,15 +240,17 @@ func DecodeRecoveryProof(value string) (RecoveryObservation, error) {
 	}
 	parsed.Version = version
 	got := RecoveryObservation{Owner: parsed, Grants: make([]GenerationGrantObservation, 0, len(grants))}
+	barriers := make(map[string]bool, len(grants))
 	for i, raw := range grants {
 		var g recoveryProofGrant
 		if decodePublicationObject(string(raw), map[string]any{"actor_uid": &g.ActorUID, "attempt_id": &g.AttemptID, "namespace": &g.Namespace, "name": &g.Name, "uid": &g.UID, "source_version": &g.SourceVersion, "barrier_version": &g.BarrierVersion, "outcome": &g.Outcome}) != nil {
 			return RecoveryObservation{}, ErrUnknown
 		}
 		original := parsed.Handoff.Journal.Grants[i]
-		if g.ActorUID != original.ActorUID || g.AttemptID != original.AttemptID || g.Name != original.Name || g.UID != original.UID || g.SourceVersion != original.SourceVersion || g.Namespace != parsed.Handoff.Journal.Binding.Namespace || !publicationVersion(g.BarrierVersion) || g.BarrierVersion == g.SourceVersion || (g.Outcome != Uncommitted && g.Outcome != Allocated) {
+		if g.ActorUID != original.ActorUID || g.AttemptID != original.AttemptID || g.Name != original.Name || g.UID != original.UID || g.SourceVersion != original.SourceVersion || g.Namespace != parsed.Handoff.Journal.Binding.Namespace || !publicationVersion(g.BarrierVersion) || g.BarrierVersion == g.SourceVersion || barriers[g.BarrierVersion] || (g.Outcome != Uncommitted && g.Outcome != Allocated) {
 			return RecoveryObservation{}, ErrUnknown
 		}
+		barriers[g.BarrierVersion] = true
 		got.Grants = append(got.Grants, GenerationGrantObservation{ActorUID: g.ActorUID, AttemptID: g.AttemptID, Observation: Observation{Namespace: g.Namespace, Name: g.Name, UID: g.UID, SourceVersion: g.SourceVersion, BarrierVersion: g.BarrierVersion, Outcome: g.Outcome}})
 	}
 	return got, nil
