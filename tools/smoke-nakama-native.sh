@@ -68,6 +68,7 @@ scenarios=(
   "TestNativeAdmissionDefaultOff"
   "TestNativeAdmissionConditionalTransitions"
   "TestNativeDurableCapabilityComposition"
+  "TestNativeRecoveryHandoff"
   "TestNativeJournalDefaultOff"
   "TestNativeJournalReadback"
   "TestNativeJournalRefusals"
@@ -86,11 +87,11 @@ scenarios=(
   "TestClosedLoopAuthoritativeMovement"
 )
 if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
-  echo 'native Nakama acceptance did not execute all twenty-eight scenarios' >&2; exit 1
+  echo 'native Nakama acceptance did not execute all twenty-nine scenarios' >&2; exit 1
 fi
 for scenario in "${scenarios[@]}"; do
   if ! grep -qE "^--- PASS: ${scenario} \\(" "$state/trial.log"; then
     echo "native Nakama acceptance omitted required scenario: ${scenario}" >&2; exit 1
   fi
 done
-echo 'NAKAMA NATIVE PASS: twenty-eight scenarios; native plugin; complete journal readback; durable capability storage join; real API barriers; built sealed zone; TLS movement; disposable PostgreSQL; non-root'
+echo 'NAKAMA NATIVE PASS: twenty-nine scenarios; native plugin; complete journal readback; durable capability storage join; real API barriers; built sealed zone; TLS movement; disposable PostgreSQL; non-root'

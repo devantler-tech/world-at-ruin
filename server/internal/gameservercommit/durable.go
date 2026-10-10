@@ -86,6 +86,48 @@ func (d *durableState) lock(ctx context.Context) error {
 }
 func (d *durableState) unlock() { <-d.gate }
 
+// drain accounts for every pending registration before freezing the inventory.
+func (d *durableState) drain(ctx context.Context) (*allocatoradmission.Snapshot, error) {
+	if err := d.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer d.unlock()
+	if d.uncertain {
+		return nil, unknown(ctx)
+	}
+	next, err := d.writer.Drain(ctx, d.head)
+	if err != nil {
+		d.uncertain = true
+		return nil, durableUnknown(ctx, err)
+	}
+	d.head = next
+	return next, nil
+}
+
+// CloseForRecovery selects handoff instead of barrier execution. It closes
+// local admission before waiting for pending durable registration and returns
+// only acknowledged diagnostic pins. It cannot issue a fencing receipt.
+func (g *Generation) CloseForRecovery(ctx context.Context) (allocatorjournal.JournalBinding, string, error) {
+	if g == nil || g.state == nil || g.state.durable == nil {
+		return allocatorjournal.JournalBinding{}, "", ErrInvalid
+	}
+	if err := g.closeAdmission(); err != nil {
+		return allocatorjournal.JournalBinding{}, "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestLimit)
+	defer cancel()
+	d := g.state.durable
+	head, err := d.drain(ctx)
+	if err != nil {
+		return allocatorjournal.JournalBinding{}, "", err
+	}
+	binding, version, err := d.writer.PublishHandoff(ctx, head)
+	if err != nil {
+		return allocatorjournal.JournalBinding{}, "", durableUnknown(ctx, err)
+	}
+	return binding, version, nil
+}
+
 func (s *generationState) register(ctx context.Context, grant Grant, actor, attempt string) (GenerationGrant, error) {
 	d := s.durable
 	if err := d.lock(ctx); err != nil {

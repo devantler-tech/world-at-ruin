@@ -162,8 +162,8 @@ func actualReadyServer(t *testing.T, cfg *rest.Config) (typed.GameServerInterfac
 // Forward the held original PUT to real storage using an independent context.
 // Canceling its submitting client cannot erase a request already captured here.
 type capabilityTraffic struct {
-	allocations, gets atomic.Int32
-	frozen            chan *agonesv1.GameServer
+	allocations, gets, barriers atomic.Int32
+	frozen                      chan *agonesv1.GameServer
 }
 
 func heldActualAPI(t *testing.T, cfg *rest.Config) (controlMaterial, *capabilityStage, *capabilityTraffic, chan int) {
@@ -192,6 +192,9 @@ func heldActualAPI(t *testing.T, cfg *rest.Config) (controlMaterial, *capability
 		}
 		var obj agonesv1.GameServer
 		allocation := r.Method == http.MethodPut && json.Unmarshal(body, &obj) == nil && obj.Status.State == agonesv1.GameServerStateAllocated && obj.Annotations[capabilityBarrier] == ""
+		if r.Method == http.MethodPut && obj.Annotations[capabilityBarrier] != "" {
+			traffic.barriers.Add(1)
+		}
 		if allocation {
 			traffic.allocations.Add(1)
 			traffic.frozen <- obj.DeepCopy()

@@ -912,7 +912,7 @@ everything shipped afterwards is held to.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-eight
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires twenty-nine
   named scenarios against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
   authoritative movement, complete read-only journal observations and the joined
@@ -1087,6 +1087,16 @@ everything shipped afterwards is held to.
   including late acknowledgments and committed registrations with lost replies.
   [ADR 0037](docs/adr/0037-register-frozen-capabilities-before-exposure.md) preserves
   independent recovery #1315 and production authority #793 as separate gates.
+- **Durable handoff experiment:** `Generation.CloseForRecovery` selects handoff
+  instead of barriers, closes before networking and accounts for pending registration.
+  Only the originating writer's acknowledged drain can publish once; lost replies
+  export no pins. `ReadHandoff` uses a StorageRead-only interface with independently
+  retained original root binding and handoff version. Its default-off native probe,
+  `WAR_DURABLE_RECOVERY_HANDOFF_PROBE_ENABLED`, is retired by #1316. Both native
+  architectures exercise source termination, fresh readback and an original held
+  PUT that still returns HTTP 200 with zero barriers. Handoff readback does not
+  restore grants, receipts or quarantine release; barrier recovery remains #1315.
+  See [ADR 0038](docs/adr/0038-retain-an-acknowledged-drain-handoff.md).
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

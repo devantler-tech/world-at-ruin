@@ -10,6 +10,9 @@ import (
 )
 
 func admissionTrial(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
+	if err := nakamacapabilityprobe.RunHandoff(ctx, nk, func(s string) { logger.Info("NAKAMA HANDOFF PROBE PASS: scenario=%s", s) }); err != nil {
+		return err
+	}
 	if err := nakamacapabilityprobe.Run(ctx, nk, func(scenario string) { logger.Info("NAKAMA CAPABILITY PROBE PASS: scenario=%s", scenario) }); err != nil {
 		return err
 	}

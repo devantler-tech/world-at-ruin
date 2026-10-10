@@ -1,0 +1,1 @@
+TestHandoffKeepsEveryShippedSchemaReadable handoff.go decodeHandoff

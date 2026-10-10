@@ -152,37 +152,38 @@ type generationReceiptState struct {
 // grant needs an acknowledged exact barrier. One unknown outcome prevents any
 // complete receipt; partial barriers are never replayed or admission reopened.
 func (g *Generation) Fence(ctx context.Context) (GenerationReceipt, error) {
+	if err := g.closeAdmission(); err != nil {
+		return GenerationReceipt{}, err
+	}
+	s := g.state
+	ctx, cancel := context.WithTimeout(ctx, requestLimit)
+	defer cancel()
+	if s.durable != nil {
+		if _, err := s.durable.drain(ctx); err != nil {
+			return GenerationReceipt{}, err
+		}
+	}
+	return g.fenceClosed(ctx)
+}
+
+// closeAdmission selects exactly one terminal operation before networking.
+func (g *Generation) closeAdmission() error {
 	if g == nil || g.state == nil {
-		return GenerationReceipt{}, ErrInvalid
+		return ErrInvalid
 	}
 	s := g.state
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return GenerationReceipt{}, ErrClosed
+		return ErrClosed
 	}
 	s.closed = true
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, requestLimit)
-	defer cancel()
-	if s.durable != nil {
-		d := s.durable
-		if err := d.lock(ctx); err != nil {
-			return GenerationReceipt{}, err
-		}
-		if d.uncertain {
-			d.unlock()
-			return GenerationReceipt{}, unknown(ctx)
-		}
-		next, err := d.writer.Drain(ctx, d.head)
-		if err == nil {
-			d.head = next
-		}
-		d.unlock()
-		if err != nil {
-			return GenerationReceipt{}, durableUnknown(ctx, err)
-		}
-	}
+	return nil
+}
+
+func (g *Generation) fenceClosed(ctx context.Context) (GenerationReceipt, error) {
+	s := g.state
 	// A pending successful registration may enter the conservative issued set
 	// after local closure. Snapshot only after its acknowledgment is accounted.
 	s.mu.Lock()
