@@ -92,6 +92,10 @@ separate temporary character; shared controls and online progression remain in d
 has a runnable TLS allocation proof for requests that outlive their deadline.
 Production handoff still retains uncertain allocations until the real allocator
 can prove that they cannot commit later.
+The disabled [recovery-owner experiment](docs/adr/0039-reserve-one-acknowledged-recovery-owner.md)
+reserves a complete acknowledged drain for one fresh process. Lost replies and
+dead owners remain quarantined; this reservation does not yet recover barriers
+or release uncertain allocations.
 
 ## What this is (and isn't)
 
