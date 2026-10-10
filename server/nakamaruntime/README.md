@@ -403,7 +403,8 @@ The late-ack control proves local closure before acknowledgment release and barr
 the unexposed registered grant.
 The lost-reply control retains the committed row but cannot expose a grant, fence,
 or recreate the generation root in a new owner. Post-write cancellation also
-refuses exposure. A killed process leaves its registered-but-unexposed entry;
+refuses exposure and prevents an already waiting fence from producing a receipt.
+A killed process leaves its registered-but-unexposed entry;
 the restarted native incarnation cannot adopt it or mutate the GameServer.
 These diagnostics do not authorize
 production quarantine release. See

@@ -68,6 +68,9 @@ type durableState struct {
 	writer *allocatoradmission.Writer
 	head   *allocatoradmission.Snapshot
 	gate   chan struct{}
+	// Protected by gate; closure alone also describes a healthy in-progress
+	// Fence, so uncertainty needs a separate permanent terminal state.
+	uncertain bool
 }
 
 func (d *durableState) lock(ctx context.Context) error {
@@ -106,6 +109,7 @@ func (s *generationState) register(ctx context.Context, grant Grant, actor, atte
 		// An uncertain registered entry survives conservatively in storage. No
 		// existing handle can submit after uncertainty, and no receipt can form.
 		s.closed = true
+		d.uncertain = true
 		return GenerationGrant{}, durableUnknown(ctx, err)
 	}
 	d.head = next
@@ -113,6 +117,7 @@ func (s *generationState) register(ctx context.Context, grant Grant, actor, atte
 	s.grants = append(s.grants, issued)
 	if ctx.Err() != nil {
 		s.closed = true
+		d.uncertain = true
 		return GenerationGrant{}, unknown(ctx)
 	}
 	if s.closed {

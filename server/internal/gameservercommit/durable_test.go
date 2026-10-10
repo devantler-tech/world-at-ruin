@@ -494,15 +494,84 @@ type postAckStorage struct {
 	*nakamastoragetest.Fake
 	owner     *generationState
 	committed atomic.Bool
+	beforeAck chan struct{}
+	resumeAck chan struct{}
 }
 
 func (s *postAckStorage) StorageWrite(ctx context.Context, writes []*runtime.StorageWrite) ([]*api.StorageObjectAck, error) {
 	acks, err := s.Fake.StorageWrite(ctx, writes)
 	if err == nil && len(acks) == 1 && acks[0].GetVersion() == "v3" {
+		if s.beforeAck != nil {
+			close(s.beforeAck)
+			<-s.resumeAck
+		}
 		s.owner.mu.Lock()
 		s.committed.Store(true)
 	}
 	return acks, err
+}
+
+func TestDurableConcurrentFenceCannotRecoverCanceledRegistration(t *testing.T) {
+	s := &postAckStorage{Fake: nakamastoragetest.New(), beforeAck: make(chan struct{}), resumeAck: make(chan struct{})}
+	g := durableFixture(t, s, generationAPI(t, ""))
+	s.owner = g.state
+	prior := generationPrepare(t, g, "pod-a", "zone-a")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checked := &ackContext{Context: ctx, storage: s, checked: make(chan struct{})}
+	raw, err := g.state.client.Prepare(context.Background(), "zone-b", "original-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := make(chan error, 1)
+	go func() { _, err := g.state.register(checked, raw, "pod-b", "original-b"); prepared <- err }()
+	select {
+	case <-s.beforeAck:
+	case <-time.After(time.Second):
+		t.Fatal("committed registration not held")
+	}
+	type fenced struct {
+		receipt GenerationReceipt
+		err     error
+	}
+	fences := make(chan fenced, 1)
+	go func() { r, err := g.Fence(context.Background()); fences <- fenced{r, err} }()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		_, err := g.Prepare(context.Background(), "non-member", "unused", "unused")
+		if errors.Is(err, ErrClosed) {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatal("pending fence did not close admission")
+		}
+	}
+	close(s.resumeAck)
+	select {
+	case <-checked.checked:
+	case <-time.After(time.Second):
+		t.Fatal("acknowledgment check not reached")
+	}
+	cancel()
+	s.owner.mu.Unlock()
+	if err := <-prepared; !errors.Is(err, ErrUnknown) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled preparation lost uncertainty: %v", err)
+	}
+	f := <-fences
+	if !errors.Is(f.err, ErrUnknown) || f.receipt.state != nil {
+		t.Fatalf("pending fence restored uncertain authority: %v", f.err)
+	}
+	if durableRow(t, s.Fake).Phase != "open" || len(g.state.grants) != 2 {
+		t.Fatal("uncertain registration was omitted or drained")
+	}
+	if err := prior.Commit(context.Background()); !errors.Is(err, ErrClosed) {
+		t.Fatal("uncertain owner reopened prior capability")
+	}
 }
 
 type ackContext struct {

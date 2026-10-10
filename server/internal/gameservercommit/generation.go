@@ -170,6 +170,10 @@ func (g *Generation) Fence(ctx context.Context) (GenerationReceipt, error) {
 		if err := d.lock(ctx); err != nil {
 			return GenerationReceipt{}, err
 		}
+		if d.uncertain {
+			d.unlock()
+			return GenerationReceipt{}, unknown(ctx)
+		}
 		next, err := d.writer.Drain(ctx, d.head)
 		if err == nil {
 			d.head = next

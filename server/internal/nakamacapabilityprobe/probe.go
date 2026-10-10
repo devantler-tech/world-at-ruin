@@ -153,7 +153,7 @@ func Run(ctx context.Context, storage allocatoradmission.Storage, report func(st
 	case <-ctx.Done():
 		return errors.New("capability probe: registration not reached")
 	}
-	if scenario == "late-ack" {
+	if scenario == "late-ack" || scenario == "cancel-after-write" {
 		type fenced struct {
 			receipt gameservercommit.GenerationReceipt
 			err     error
@@ -180,22 +180,23 @@ func Run(ctx context.Context, storage allocatoradmission.Storage, report func(st
 			return err
 		}
 		p := <-preparations
-		if !errors.Is(p.err, gameservercommit.ErrClosed) {
-			return errors.New("capability probe: late grant exposed")
-		}
 		f := <-fences
 		got, e := g.Accept(f.receipt)
-		if f.err != nil || e != nil || len(got.Grants) != 1 || got.Grants[0].Outcome != gameservercommit.Uncommitted {
-			return errors.New("capability probe: late registered grant omitted")
+		if scenario == "cancel-after-write" {
+			if !errors.Is(p.err, gameservercommit.ErrUnknown) || !errors.Is(p.err, context.Canceled) || !errors.Is(f.err, gameservercommit.ErrUnknown) || e == nil {
+				return errors.New("capability probe: pending fence restored canceled owner")
+			}
+			if _, e := gameservercommit.NewDurableGeneration(ctx, config); !errors.Is(e, gameservercommit.ErrUnknown) {
+				return errors.New("capability probe: restart restored canceled root")
+			}
+		} else if !errors.Is(p.err, gameservercommit.ErrClosed) || f.err != nil || e != nil || len(got.Grants) != 1 || got.Grants[0].Outcome != gameservercommit.Uncommitted {
+			return errors.New("capability probe: late registered grant omitted or exposed")
 		}
 	} else {
 		p := <-preparations
-		if scenario == "lost-ack" || scenario == "cancel-after-write" {
+		if scenario == "lost-ack" {
 			if !errors.Is(p.err, gameservercommit.ErrUnknown) {
 				return errors.New("capability probe: lost reply exposed grant")
-			}
-			if scenario == "cancel-after-write" && !errors.Is(p.err, context.Canceled) {
-				return errors.New("capability probe: post-write cancellation lost")
 			}
 			if _, e := g.Fence(ctx); !errors.Is(e, gameservercommit.ErrClosed) {
 				return errors.New("capability probe: unknown owner restored")

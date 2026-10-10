@@ -308,7 +308,7 @@ func TestNativeDurableCapabilityComposition(t *testing.T) {
 				t.Log("DURABLE CAPABILITY JOIN PASS: scenario=crash-before-exposure committed_registration=1 restarted_authority=0 allocation_puts=0")
 				return
 			}
-			if scenario == "late-ack" {
+			if scenario == "late-ack" || scenario == "cancel-after-write" {
 				stageReached(t, stages["closing"])
 				stages["closing"].allow()
 			}
