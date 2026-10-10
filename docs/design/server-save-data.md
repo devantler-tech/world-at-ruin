@@ -85,6 +85,20 @@ they do not prove every field or every shape within an array. The registered tes
 independently specified expected fields and meaningful
 loss/refusal assertions. Reader or test renames update the registration together with that evidence.
 
+## Experimental complete recovery proof
+
+The default-off `gameservercommit` recovery publication experiment owns
+`allocator_recovery_proof` schema 1. Its permanent fixture retains complete,
+mixed, all-allocated and empty inventories through `DecodeRecoveryProof`.
+Every barrier outcome is bound to the unchanged complete original owner/handoff
+inventory; neither decoding nor diagnostic readback reconstructs opaque authority.
+The writer and native forwarding boundary are registered separately in the
+persisted-write inventory. Exact private proof, owner, handoff and root readback
+uses independently retained ACK pins. This is experimental evidence, not serving
+reader rollout, compatibility of a retained rollback artifact or production writer
+activation. Those gates remain #1315/#793. See
+[ADR 0041](../adr/0041-publish-an-acknowledged-complete-recovery-proof.md).
+
 ## Expanding a server schema
 
 1. Add read support for the new version while retaining all historical reader paths. Keep the

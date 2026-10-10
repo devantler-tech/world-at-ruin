@@ -12,6 +12,9 @@ import (
 // admissionTrial composes native-only probes whose individual enablement flags
 // keep ordinary startup free of experimental admission and recovery writes.
 func admissionTrial(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule) error {
+	if err := nakamacapabilityprobe.RunRecoveryPublication(ctx, nk, func(s string) { logger.Info("NAKAMA RECOVERY PUBLICATION PROBE PASS: owner=%s", s) }); err != nil {
+		return err
+	}
 	if err := nakamacapabilityprobe.RunRecoveryFence(ctx, nk, func(s string) { logger.Info("NAKAMA RECOVERY FENCE PROBE PASS: owner=%s", s) }); err != nil {
 		return err
 	}

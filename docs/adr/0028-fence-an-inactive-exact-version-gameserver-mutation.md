@@ -64,4 +64,4 @@ production deployment is introduced here.
 
 References: [Kubernetes API concurrency](https://kubernetes.io/docs/reference/using-api/api-concepts/#resource-versions),
 [Agones GameServer allocation](https://agones.dev/site/docs/reference/gameserverallocation/),
-[controller-tools assets](https://github.com/kubernetes-sigs/controller-tools/blob/HEAD/envtest-releases.yaml).
+[controller-tools assets](https://github.com/kubernetes-sigs/controller-tools/blob/main/envtest-releases.yaml).

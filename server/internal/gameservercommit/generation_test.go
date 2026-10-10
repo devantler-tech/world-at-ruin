@@ -76,7 +76,8 @@ func generationAPI(t *testing.T, failName string) http.HandlerFunc {
 				_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Conflict","code":409}`))
 				return
 			}
-			next.ResourceVersion = obj.ResourceVersion + "-next"
+			// Distinct object writes receive distinct opaque versions, as etcd does.
+			next.ResourceVersion = obj.ResourceVersion + "-" + name + "-next"
 			obj = next.DeepCopy()
 			objects[name] = obj
 		}

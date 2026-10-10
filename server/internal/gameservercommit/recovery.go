@@ -18,13 +18,15 @@ import (
 // Its sole inventory input is a live owner's opaque acknowledged reservation.
 type Recovery struct{ state *recoveryState }
 type recoveryState struct {
-	client      *Client
-	reservation allocatoradmission.RecoveryReservation
-	accepted    atomic.Pointer[RecoveryObservation]
+	client              *Client
+	reservation         allocatoradmission.RecoveryReservation
+	accepted            atomic.Pointer[RecoveryObservation]
+	publicationConsumed atomic.Bool
 }
 
 // RecoveryResult is complete, process-local authority. Diagnostics cannot
-// reconstruct it, and no durable publication or quarantine release is provided.
+// reconstruct it or release quarantine. Its originating state owns one shared
+// publication attempt, including independently constructed publisher wrappers.
 type RecoveryResult struct {
 	state       *recoveryState
 	observation *RecoveryObservation
@@ -82,11 +84,25 @@ func (r *Recovery) Accept(result RecoveryResult) (RecoveryObservation, error) {
 	if r == nil || r.state == nil || result.state != r.state || result.observation == nil || r.state.accepted.Load() != result.observation {
 		return RecoveryObservation{}, ErrClosed
 	}
-	got := *result.observation
+	return cloneRecovery(result.observation), nil
+}
+
+// consumePublication spends the live complete result before storage I/O. No
+// diagnostic decoder can construct its private origin or accepted pointer.
+func (result RecoveryResult) consumePublication() (RecoveryObservation, error) {
+	if result.state == nil || result.observation == nil || result.state.accepted.Load() != result.observation || !result.state.publicationConsumed.CompareAndSwap(false, true) {
+		return RecoveryObservation{}, ErrClosed
+	}
+	return cloneRecovery(result.observation), nil
+}
+
+// cloneRecovery keeps detached diagnostics from mutating live authority.
+func cloneRecovery(observation *RecoveryObservation) RecoveryObservation {
+	got := *observation
 	got.Owner.Handoff.Journal.Binding.MemberPodUIDs = slices.Clone(got.Owner.Handoff.Journal.Binding.MemberPodUIDs)
 	got.Owner.Handoff.Journal.Grants = slices.Clone(got.Owner.Handoff.Journal.Grants)
 	got.Grants = slices.Clone(got.Grants)
-	return got, nil
+	return got
 }
 
 // fenceRecovered distinguishes original Ready history from matching allocation,
