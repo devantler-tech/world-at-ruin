@@ -64,7 +64,11 @@ func ownedControlPlane(t *testing.T) *rest.Config {
 		t.Fatal("owned fixture state unavailable")
 	}
 	cmd := exec.Command("/out/gameserver-fixture", "-assets=/out/controlplane", "-crd=/out/controlplane/gameserver.yaml", "-output="+file)
-	cmd.Env = append(os.Environ(), "TMPDIR="+stateRoot)
+	// envtest reserves ports during package initialization. On a read-only root,
+	// its ambient user-cache fallback would leave a sibling of the data directory.
+	// Give that helper-only cache explicit ownership before the process starts.
+	cacheRoot := filepath.Join(stateRoot, "cache")
+	cmd.Env = append(os.Environ(), "TMPDIR="+stateRoot, "XDG_CACHE_HOME="+cacheRoot)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		_ = os.RemoveAll(stateRoot)
@@ -88,13 +92,26 @@ func ownedControlPlane(t *testing.T) *rest.Config {
 				t.Error("owned API fixture did not retire cleanly")
 				return
 			}
+			// Only a successful helper join establishes component retirement. Its
+			// private port cache may then be removed; every other residue still fails.
+			portCache, cacheErr := os.Stat(filepath.Join(cacheRoot, "kubebuilder-envtest"))
+			if cacheErr != nil || !portCache.IsDir() {
+				t.Error("owned API fixture did not use its private port cache")
+				return
+			}
+			if err := os.RemoveAll(cacheRoot); err != nil {
+				t.Error("retired helper port cache not removed")
+				return
+			}
 			if files, err := os.ReadDir(stateRoot); err != nil || len(files) != 0 {
-				t.Error("owned API fixture retained private state after retirement")
+				t.Errorf("owned API fixture retained private state after retirement: entries=%d read_error=%v", len(files), err)
 				return
 			}
 			if err := os.Remove(stateRoot); err != nil {
 				t.Error("retired fixture state root not removed")
+				return
 			}
+			t.Log("OWNED CONTROL PLANE RETIRE PASS: components_joined=1 private_port_cache=1 private_state_remaining=0")
 		case <-time.After(50 * time.Second):
 			_ = cmd.Process.Kill()
 			<-done
