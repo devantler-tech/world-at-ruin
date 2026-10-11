@@ -285,12 +285,7 @@ func TestClosedLoopRevisionFence(t *testing.T) {
 
 // TestClosedLoopRestartProtection catches claim loss across real Nakama restart and cleanup.
 func TestClosedLoopRestartProtection(t *testing.T) {
-	f := closedFixture(t)
-	f.env["WAR_HANDOFF_LEASE_TTL"] = "45s"
-	f.env["WAR_HANDOFF_TOKEN_TTL"] = "45s"
-	z := f.startZone("zone-a", f.key, "", false)
-	f.startZone("zone-b", f.key, "", false)
-	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
+	f, z := expiryFixture(t, "")
 	account, uid := f.account("restart-closed-loop")
 	got := f.handoff(account)
 	conn := z.snapshot(got)
