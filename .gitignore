@@ -15,3 +15,6 @@ build/
 
 # MegaLinter run output — regenerated locally, never committed.
 megalinter-reports/
+
+# Installed pinned scanner — the dependency lock is committed, packages are not.
+tools/duplication/node_modules/

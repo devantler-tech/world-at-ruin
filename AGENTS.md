@@ -404,6 +404,15 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+The required duplication gate uses the same jscpd 5.0.16 settings as MegaLinter.
+Run `bash tools/duplication-guard.test.sh` after installing its locked scanner
+with `npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund`.
+`bash tools/duplication-guard.sh` checks the real tree and open cleanup owner.
+The generated catalog can only shrink; cleanup commits remove stale entries.
+Do not refresh it to accept new copies or change detection exclusions. See
+[ADR 0042](docs/adr/0042-block-unaccepted-code-duplication.md) for generation and
+the permanent blocking policy.
+
 - **Editor-only scenes are NOT dead code.** Three scenes are deliberately unreferenced by the running
   game and exist as **editor surfaces**: `client/scenes/recipes.tscn` (the character taste gate,
   documented in `recipe_gallery.gd`), `client/scenes/cave.tscn` (the cave-generation preview
