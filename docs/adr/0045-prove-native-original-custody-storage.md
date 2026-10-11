@@ -75,7 +75,9 @@ against fresh PostgreSQL, simultaneous processes, actual reply loss/cancellation
 exact process kill/join, independently retained pins and changed-document readers.
 Unit tests establish input/refusal behavior and bounded local control transport;
 they are not native persistence proof. The mandatory scenario inventory fails on
-missing tests and preserves every existing deadline.
+missing tests. Individual RPC, stage and process deadlines stay fixed; the
+complete fault matrix has a sixteen-minute suite budget inside the unchanged
+twenty-five-minute CI job limit.
 
 SPIRE issuance, separately attested launcher/custodian/child roles, original
 private-claim-to-custody composition, exclusive child ownership, independently
