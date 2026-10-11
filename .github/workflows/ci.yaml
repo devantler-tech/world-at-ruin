@@ -1270,7 +1270,7 @@ jobs:
             directory: tools/spire-trial
             go-version-file: tools/spire-trial/go.mod
             cache-dependency-path: tools/spire-trial/go.sum
-            flags: -tags=war_spire_trial
+            flags: -test -tags=war_spire_trial
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -281,6 +281,20 @@ func (f *nativeFixture) startWorker(role string, issuer nativeIssuer) *nativeWor
 	}
 	w := &nativeWorker{f: f, cmd: cmd, input: input, output: json.NewDecoder(output)}
 	w.process = f.start(cmd)
+	if role == "unregistered" {
+		// Consume the mandatory refusal only after its process has fully exited.
+		// The controller must still own the unread stdout bytes after Cmd.Wait.
+		select {
+		case err := <-w.process.done:
+			w.process.joined = true
+			var exited *exec.ExitError
+			if !errors.As(err, &exited) || exited.ExitCode() != 1 {
+				f.t.Fatal("unregistered role did not exit with its refusal")
+			}
+		case <-time.After(10 * time.Second):
+			f.t.Fatal("unregistered role did not exit within its bound")
+		}
+	}
 	w.ready = w.receive()
 	if role != "unregistered" && (w.ready.Error != "" || w.ready.ID != roleID(role).String() || w.ready.Address == "") {
 		f.t.Fatal("attested worker startup failed:", role, w.ready.Error)
