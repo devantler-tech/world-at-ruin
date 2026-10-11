@@ -89,7 +89,7 @@ func TestClosedLoopClaimAfterZoneDeath(t *testing.T) {
 			if claimedVersion == version {
 				t.Fatal("delayed disconnect did not commit the original claim after child join")
 			}
-			var originalFields, claimedFields map[string]any
+			var originalFields, claimedFields map[string]json.RawMessage
 			if json.Unmarshal([]byte(before), &originalFields) != nil || json.Unmarshal([]byte(claimed), &claimedFields) != nil {
 				t.Fatal("decode exact private claim binding")
 			}
