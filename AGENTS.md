@@ -679,6 +679,15 @@ the permanent blocking policy.
   additive `/v2/claim` returns the original durable version/generation while `/v1/claim`
   retains its empty acknowledgement. Explicit `zoneclaim.NewReceiptGate` admission retains
   one immutable receipt across reconnects and failed upgrades; the command keeps the v1 gate.
+  `NewCustodiedReceiptGate` additionally requires explicit `CustodyConfig.Enabled` and an
+  injected custodian. It withholds admission/receipt export until original custody ACK,
+  latches uncertainty before initial claim dispatch and never retries an ambiguous
+  initial claim or custody result. Acknowledged reconnects authenticate without refreshing
+  the original receipt. Run the custody race and real mutual-TLS controls in `zoneclaim`
+  and `claimrpc`; fixture storage proves no native durability. Keep this gate for its lifetime,
+  never copy/reconstruct it. ADR 0043/#1336 retain independent launch enrollment,
+  authenticated durable custody, rollback-resistant witness and termination gates;
+  no normal command or completion caller composes this source boundary.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
