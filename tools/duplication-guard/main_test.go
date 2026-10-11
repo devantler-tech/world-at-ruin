@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// Reports use the pinned scanner's real field names. Exercise the production
-// checker, including multiset identity, rather than a parallel count-only model.
+// fixture writes report, catalog and ownership inputs with real scanner fields.
+// It exercises the production multiset checker rather than a count-only model.
 func fixture(t *testing.T) (string, string, string, string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -60,6 +60,7 @@ func fixture(t *testing.T) (string, string, string, string, string) {
 	return reportPath, catalogPath, basePath, configPath, ownerPath
 }
 
+// alter changes one fixture's JSON without duplicating the checker implementation.
 func alter(t *testing.T, path string, change func(map[string]any)) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -80,6 +81,7 @@ func alter(t *testing.T, path string, change func(map[string]any)) {
 	}
 }
 
+// expectResult distinguishes required success from a specific refusal.
 func expectResult(t *testing.T, want string, err error) {
 	t.Helper()
 	actual := ""
@@ -94,6 +96,7 @@ func expectResult(t *testing.T, want string, err error) {
 	}
 }
 
+// trackedSources creates an isolated Git inventory for source-selection controls.
 func trackedSources(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -110,6 +113,7 @@ func trackedSources(t *testing.T) {
 	}
 }
 
+// TestCatalogBehavior checks stable identities and refusal of growth or missing evidence.
 func TestCatalogBehavior(t *testing.T) {
 	cases := []struct {
 		name, want string
@@ -186,6 +190,7 @@ func TestCatalogBehavior(t *testing.T) {
 	}
 }
 
+// TestBootstrapIsExactRevisionOnly rejects invented catalogs and unknown adoption bases.
 func TestBootstrapIsExactRevisionOnly(t *testing.T) {
 	r, c, _, s, o := fixture(t)
 	if err := check(r, c, "", s, o, adoptionRevision); err == nil {
@@ -196,6 +201,7 @@ func TestBootstrapIsExactRevisionOnly(t *testing.T) {
 	}
 }
 
+// TestGenerationPreservesReviewedJustification retains deliberate copies after owner closure.
 func TestGenerationPreservesReviewedJustification(t *testing.T) {
 	r, c, b, s, o := fixture(t)
 	for _, path := range []string{c, b} {
@@ -214,6 +220,7 @@ func TestGenerationPreservesReviewedJustification(t *testing.T) {
 	}
 }
 
+// TestScannerCompletionBoundary rejects failed, stale and internally inconsistent producers.
 func TestScannerCompletionBoundary(t *testing.T) {
 	for _, test := range []struct{ name, mode, want string }{
 		{"complete threshold report", "complete", ""},
@@ -261,6 +268,7 @@ exit 1
 	}
 }
 
+// TestIndependentSourceInventory proves tracked input cannot disappear through exclusions.
 func TestIndependentSourceInventory(t *testing.T) {
 	for _, test := range []struct {
 		name, want string

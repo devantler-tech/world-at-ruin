@@ -24,6 +24,7 @@ import (
 
 const adoptionRevision = "afd354c2987d92b89156d7bd96ddc34f7172bb8a"
 const scannerVersion = "cpd 5.0.16"
+const cleanupOwner = 276
 
 // Hash of the generated catalog from the independently measured adoption tree.
 // Neither an absent base file nor the adoption SHA permits an invented baseline.
@@ -83,6 +84,7 @@ type catalog struct {
 	Entries          []entry `json:"entries"`
 }
 
+// main dispatches bounded scanning, catalog generation or acceptance checking.
 func main() {
 	var err error
 	args := os.Args[1:]
@@ -102,6 +104,7 @@ func main() {
 	}
 }
 
+// decode reads exactly one JSON value, optionally rejecting unknown fields.
 func decode(path string, value any, strict bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -120,11 +123,13 @@ func decode(path string, value any, strict bool) error {
 	return nil
 }
 
+// digest returns the hexadecimal SHA-256 used to bind policy and clone identity.
 func digest(value []byte) string {
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])
 }
 
+// settings binds detection configuration, arguments and the source inventory.
 func settings(path string) (string, error) {
 	var config map[string]any
 	if err := decode(path, &config, false); err != nil {
@@ -142,6 +147,7 @@ func settings(path string) (string, error) {
 	return digest(data), err
 }
 
+// statsValues requires present, nonnegative counters and plausible source totals.
 func statsValues(s statistics) ([]int, error) {
 	var result []int
 	for _, value := range []*int{s.Clones, s.Sources, s.Lines, s.Tokens, s.DuplicatedLines, s.DuplicatedTokens} {
@@ -156,6 +162,7 @@ func statsValues(s statistics) ([]int, error) {
 	return result, nil
 }
 
+// readReport validates clone locations and reconciles format and total counters.
 func readReport(path string) (report, error) {
 	var value report
 	if err := decode(path, &value, false); err != nil {
@@ -208,6 +215,7 @@ func readReport(path string) (report, error) {
 	return value, nil
 }
 
+// identity names a clone by language, file pair and content rather than line offset.
 func identity(copy clone) entry {
 	files := [2]string{copy.First.Name, copy.Second.Name}
 	if files[1] < files[0] {
@@ -219,6 +227,7 @@ func identity(copy clone) entry {
 	return e
 }
 
+// generate proposes current occurrences while preserving retained review annotations.
 func generate(reportPath, configPath, catalogPath string) error {
 	r, err := readReport(reportPath)
 	if err != nil {
@@ -238,7 +247,7 @@ func generate(reportPath, configPath, catalogPath string) error {
 		if existing, ok := entries[e.Key]; ok {
 			e.Occurrences = existing.Occurrences + 1
 		}
-		e.CleanupIssue = 276
+		e.CleanupIssue = cleanupOwner
 		if strings.HasPrefix(e.Files[0], "client/tests/historical/") || strings.HasPrefix(e.Files[1], "client/tests/historical/") {
 			e.CleanupIssue = 0
 			e.Reason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
@@ -263,6 +272,7 @@ func generate(reportPath, configPath, catalogPath string) error {
 	return os.WriteFile(catalogPath, append(data, '\n'), 0o644)
 }
 
+// readCatalog requires fixed policy, unique identities and one ownership rationale.
 func readCatalog(path string) (catalog, map[string]entry, error) {
 	var value catalog
 	if err := decode(path, &value, true); err != nil {
@@ -280,7 +290,7 @@ func readCatalog(path string) (catalog, map[string]entry, error) {
 		if _, exists := entries[e.Key]; exists {
 			return value, nil, fmt.Errorf("duplicate catalog identity")
 		}
-		if (e.CleanupIssue == 276) == (strings.TrimSpace(e.Reason) != "") || (e.CleanupIssue != 0 && e.CleanupIssue != 276) {
+		if (e.CleanupIssue == cleanupOwner) == (strings.TrimSpace(e.Reason) != "") || (e.CleanupIssue != 0 && e.CleanupIssue != cleanupOwner) {
 			return value, nil, fmt.Errorf("entry %s needs one cleanup owner or deliberate-copy reason", e.Key)
 		}
 		entries[e.Key] = e
@@ -288,6 +298,7 @@ func readCatalog(path string) (catalog, map[string]entry, error) {
 	return value, entries, nil
 }
 
+// check rejects catalog growth, unaccepted copies, stale entries and unproven ownership.
 func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision string) error {
 	r, err := readReport(reportPath)
 	if err != nil {
@@ -328,7 +339,7 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 		}
 	}
 	for _, e := range accepted {
-		if e.CleanupIssue == 276 {
+		if e.CleanupIssue == cleanupOwner {
 			var owner struct {
 				Number int             `json:"number"`
 				State  string          `json:"state"`
@@ -337,8 +348,8 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 			if err := decode(ownerPath, &owner, false); err != nil {
 				return fmt.Errorf("open cleanup owner: %w", err)
 			}
-			if owner.Number != 276 || owner.State != "open" || len(owner.PR) != 0 {
-				return fmt.Errorf("open cleanup owner #276 is not proven")
+			if owner.Number != cleanupOwner || owner.State != "open" || len(owner.PR) != 0 {
+				return fmt.Errorf("open cleanup owner #%d is not proven", cleanupOwner)
 			}
 			break
 		}
@@ -360,6 +371,7 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 	return nil
 }
 
+// scan requires a fresh pinned report consistent with the independently staged sources.
 func scan(scanner, output, configPath string) error {
 	scanner, err := filepath.Abs(scanner)
 	if err != nil {
@@ -461,6 +473,7 @@ func scan(scanner, output, configPath string) error {
 	return nil
 }
 
+// stageSources copies readable tracked language sources without ignore-file suppression.
 func stageSources(ctx context.Context, configPath string) (stage string, counts map[string]int, err error) {
 	var formats map[string]string
 	if err = json.Unmarshal(formatData, &formats); err != nil {

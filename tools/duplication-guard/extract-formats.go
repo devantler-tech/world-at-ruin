@@ -11,6 +11,7 @@ import (
 	"regexp"
 )
 
+// main extracts the pinned format table with upstream's last-entry-wins precedence.
 func main() {
 	if len(os.Args) != 3 {
 		panic("usage: extract-formats RUST-TABLE OUTPUT")
