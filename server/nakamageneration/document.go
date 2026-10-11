@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"slices"
-	"strconv"
-	"unicode/utf8"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
@@ -60,7 +58,7 @@ func validIdentity(value string, maxBytes int) bool {
 // decodeDocument accepts every readable schema and refuses ambiguous JSON.
 // Persisted membership must already be canonical and match its recorded digest.
 func decodeDocument(value string) (document, error) {
-	if len(value) > maxDocumentBytes || !validJSONUnicode(value) {
+	if len(value) > maxDocumentBytes || !nakamastorage.ValidJSONUnicode(value) {
 		return document{}, ErrStorage
 	}
 	decoder, err := nakamastorage.BeginObject(value)
@@ -108,48 +106,6 @@ func decodeDocument(value string) (document, error) {
 		return document{}, ErrStorage
 	}
 	return got, nil
-}
-
-// validJSONUnicode rejects the lossy replacements encoding/json otherwise makes
-// for malformed UTF-8 and unpaired UTF-16 escapes. The decoder checks JSON syntax.
-func validJSONUnicode(value string) bool {
-	if !utf8.ValidString(value) {
-		return false
-	}
-	for index := 0; index < len(value); index++ {
-		if value[index] != '\\' {
-			continue
-		}
-		index++
-		if index >= len(value) {
-			return false
-		}
-		if value[index] != 'u' {
-			continue // An escaped backslash cannot introduce a Unicode escape.
-		}
-		if index+5 > len(value) {
-			return false
-		}
-		unit, err := strconv.ParseUint(value[index+1:index+5], 16, 16)
-		if err != nil {
-			return false
-		}
-		index += 4
-		switch {
-		case unit >= 0xdc00 && unit <= 0xdfff:
-			return false
-		case unit >= 0xd800 && unit <= 0xdbff:
-			if index+7 > len(value) || value[index+1:index+3] != `\u` {
-				return false
-			}
-			low, err := strconv.ParseUint(value[index+3:index+7], 16, 16)
-			if err != nil || low < 0xdc00 || low > 0xdfff {
-				return false
-			}
-			index += 6
-		}
-	}
-	return true
 }
 
 // record returns the exact storage version with an independently owned member set.

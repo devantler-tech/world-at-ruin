@@ -9,9 +9,6 @@ import (
 	"errors"
 	"reflect"
 	"slices"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
@@ -165,7 +162,7 @@ func sameJournalBinding(a, b JournalBinding) bool {
 // decodeJournal preserves schema-1 inventory and rejects partial/ambiguous JSON.
 // Storage version belongs to the enclosing Nakama object, not this document.
 func decodeJournal(value string) (JournalObservation, error) {
-	if len(value) > 262144 || !journalUnicode(value) {
+	if len(value) > 262144 || !nakamastorage.ValidJSONUnicode(value) {
 		return JournalObservation{}, ErrUnknown
 	}
 	var schema int
@@ -213,73 +210,10 @@ func decodeJournal(value string) (JournalObservation, error) {
 // journalObject requires each declared field exactly once, including nested
 // grant objects, and rejects null, unknown names and trailing JSON values.
 func journalObject(value string, fields map[string]any) error {
-	decoder, err := nakamastorage.BeginObject(value)
-	if err != nil {
-		return ErrUnknown
-	}
-	seen := make(map[string]bool)
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return ErrUnknown
-		}
-		name, ok := token.(string)
-		target, known := fields[name]
-		if !ok || !known || seen[name] {
-			return ErrUnknown
-		}
-		seen[name] = true
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil || strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, target) != nil {
-			return ErrUnknown
-		}
-	}
-	if nakamastorage.EndObject(decoder) != nil || len(seen) != len(fields) {
+	if nakamastorage.DecodeRequiredObject(value, fields) != nil {
 		return ErrUnknown
 	}
 	return nil
-}
-
-// journalUnicode rejects encoding/json's lossy replacement of malformed UTF-8
-// and unpaired UTF-16 escapes; valid paired escapes retain their full identity.
-func journalUnicode(value string) bool {
-	if !utf8.ValidString(value) {
-		return false
-	}
-	for index := 0; index < len(value); index++ {
-		if value[index] != '\\' {
-			continue
-		}
-		index++
-		if index >= len(value) {
-			return false
-		}
-		if value[index] != 'u' {
-			continue
-		}
-		if index+5 > len(value) {
-			return false
-		}
-		unit, err := strconv.ParseUint(value[index+1:index+5], 16, 16)
-		if err != nil {
-			return false
-		}
-		index += 4
-		switch {
-		case unit >= 0xdc00 && unit <= 0xdfff:
-			return false
-		case unit >= 0xd800 && unit <= 0xdbff:
-			if index+7 > len(value) || value[index+1:index+3] != `\u` {
-				return false
-			}
-			low, err := strconv.ParseUint(value[index+3:index+7], 16, 16)
-			if err != nil || low < 0xdc00 || low > 0xdfff {
-				return false
-			}
-			index += 6
-		}
-	}
-	return true
 }
 
 // ValidGenerationBinding checks only canonical source identity and membership.

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"strings"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -259,28 +258,7 @@ func DecodeRecoveryProof(value string) (RecoveryObservation, error) {
 // decodePublicationObject requires every exact field once, including false/zero
 // values, and refuses null, aliases, unknown names and trailing JSON content.
 func decodePublicationObject(value string, fields map[string]any) error {
-	decoder, err := nakamastorage.BeginObject(value)
-	if err != nil {
-		return ErrUnknown
-	}
-	seen := make(map[string]bool, len(fields))
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return ErrUnknown
-		}
-		name, ok := token.(string)
-		target, known := fields[name]
-		if !ok || !known || seen[name] {
-			return ErrUnknown
-		}
-		seen[name] = true
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil || strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, target) != nil {
-			return ErrUnknown
-		}
-	}
-	if nakamastorage.EndObject(decoder) != nil || len(seen) != len(fields) {
+	if nakamastorage.DecodeRequiredObject(value, fields) != nil {
 		return ErrUnknown
 	}
 	return nil
