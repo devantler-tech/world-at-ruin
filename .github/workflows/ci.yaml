@@ -1266,6 +1266,11 @@ jobs:
             directory: .github/scripts/release-credential-boundary
             go-version-file: .github/scripts/release-credential-boundary/go.mod
             cache-dependency-path: .github/scripts/release-credential-boundary/go.sum
+          - name: SPIRE trial
+            directory: tools/spire-trial
+            go-version-file: tools/spire-trial/go.mod
+            cache-dependency-path: tools/spire-trial/go.sum
+            flags: -tags=war_spire_trial
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1292,7 +1297,17 @@ jobs:
           exit 1
       - name: Scan for reachable vulnerabilities
         working-directory: ${{ matrix.module.directory }}
-        run: govulncheck ./...
+        run: govulncheck ${{ matrix.module.flags }} ./...
+      - name: SPIRE source race tests
+        if: matrix.module.name == 'SPIRE trial'
+        run: go -C tools/spire-trial test -race -mod=readonly ./...
+      - name: SPIRE source correctness lint
+        if: matrix.module.name == 'SPIRE trial'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          working-directory: tools/spire-trial
+          args: --config ../../server/.golangci.yml --build-tags=war_spire_trial ./...
 
   zone-container:
     name: Zone container (${{ matrix.arch }})
@@ -1344,6 +1359,33 @@ jobs:
           tags: world-at-ruin-nakama-native:ci
       - name: Exercise the actual packaged runtime against disposable PostgreSQL
         run: bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:ci --experimental
+
+  spire-native:
+    name: SPIRE native (${{ matrix.arch }})
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the explicitly experimental issuer acceptance image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: tools/spire-trial/Dockerfile
+          build-args: EXPERIMENTAL=true
+          load: true
+          tags: world-at-ruin-spire-native:ci
+      - name: Prove native issuance, exact roles and owned cleanup
+        run: bash tools/smoke-spire-native.sh world-at-ruin-spire-native:ci --experimental
 
   gameserver-commit-trial:
     name: GameServer commit (real storage)
@@ -3195,6 +3237,7 @@ jobs:
         gameserver-commit-trial,
         zone-container,
         nakama-native,
+        spire-native,
         detect-visual-changes,
         frame-capture,
         frame-capture-exported,
@@ -3224,6 +3267,7 @@ jobs:
             ${{ needs.gameserver-commit-trial.result }}
             ${{ needs.zone-container.result }}
             ${{ needs.nakama-native.result }}
+            ${{ needs.spire-native.result }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
             ${{ needs.frame-capture-exported.result }}

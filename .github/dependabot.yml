@@ -22,6 +22,15 @@ updates:
       default-days: 7
       semver-major-days: 14
 
+  # Disposable workload issuer proof has its own dependency graph.
+  - package-ecosystem: gomod
+    directory: /tools/spire-trial
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
