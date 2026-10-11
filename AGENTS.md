@@ -688,6 +688,16 @@ the permanent blocking policy.
   never copy/reconstruct it. ADR 0043/#1336 retain independent launch enrollment,
   authenticated durable custody, rollback-resistant witness and termination gates;
   no normal command or completion caller composes this source boundary.
+  The inert `server/internal/zonecustody/` owner requires explicit `Config.Enabled`
+  and two private system-owned create-only schema-1 documents. One original
+  allocation key excludes owner/child correlations; copies share terminal
+  enrollment/custody attempts, and only originating exact ACKs export a live
+  custodian or detached pins. Strict permanent readers compare complete private
+  data against independently retained pins and never reconstruct a handle.
+  Run its race/reader/import controls and `claimrpc` custody integration, plus
+  the server durability guard for both families. ADR 0044 keeps authentication,
+  bootstrap/child launch sequencing, protected ACK custody, rollback witness and
+  completion outside this source delivery; fixture storage is not native proof.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;

@@ -14,7 +14,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 	"github.com/heroiclabs/nakama-common/api"
@@ -124,4 +126,80 @@ func EndObject(decoder *json.Decoder) error {
 		return errors.New("trailing JSON content")
 	}
 	return nil
+}
+
+// DecodeRequiredObject consumes one object containing exactly the declared
+// fields, once each and non-null. Nested objects must use their own strict
+// reader; callers retain document bounds and schema-specific validation.
+func DecodeRequiredObject(value string, fields map[string]any) error {
+	if !ValidJSONUnicode(value) {
+		return errors.New("invalid JSON Unicode")
+	}
+	decoder, err := BeginObject(value)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := token.(string)
+		target, known := fields[name]
+		if !ok || !known || seen[name] {
+			return errors.New("ambiguous JSON field")
+		}
+		seen[name] = true
+		var raw json.RawMessage
+		if decoder.Decode(&raw) != nil || strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, target) != nil {
+			return errors.New("invalid JSON field")
+		}
+	}
+	if EndObject(decoder) != nil || len(seen) != len(fields) {
+		return errors.New("incomplete JSON object")
+	}
+	return nil
+}
+
+// ValidJSONUnicode rejects encoding/json's lossy replacement of malformed
+// UTF-8 and unpaired UTF-16 escapes while preserving valid paired escapes.
+func ValidJSONUnicode(value string) bool {
+	if !utf8.ValidString(value) {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] != '\\' {
+			continue
+		}
+		index++
+		if index >= len(value) {
+			return false
+		}
+		if value[index] != 'u' {
+			continue
+		}
+		if index+5 > len(value) {
+			return false
+		}
+		unit, err := strconv.ParseUint(value[index+1:index+5], 16, 16)
+		if err != nil {
+			return false
+		}
+		index += 4
+		switch {
+		case unit >= 0xdc00 && unit <= 0xdfff:
+			return false
+		case unit >= 0xd800 && unit <= 0xdbff:
+			if index+7 > len(value) || value[index+1:index+3] != `\u` {
+				return false
+			}
+			low, err := strconv.ParseUint(value[index+3:index+7], 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return false
+			}
+			index += 6
+		}
+	}
+	return true
 }

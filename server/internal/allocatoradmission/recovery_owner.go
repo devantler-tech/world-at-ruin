@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -158,34 +157,14 @@ func DecodeRecoveryOwner(value string) (RecoveryOwnerObservation, error) {
 	if len(value) > 267264 || !utf8.ValidString(value) {
 		return RecoveryOwnerObservation{}, ErrUnknown
 	}
-	decoder, err := nakamastorage.BeginObject(value)
-	if err != nil {
-		return RecoveryOwnerObservation{}, ErrUnknown
-	}
 	var schema int
 	var got RecoveryOwnerObservation
 	var handoff json.RawMessage
 	fields := map[string]any{"schema": &schema, "owner_id": &got.OwnerID, "handoff_version": &got.HandoffVersion, "handoff": &handoff}
-	seen := map[string]bool{}
-	for decoder.More() {
-		token, e := decoder.Token()
-		if e != nil {
-			return RecoveryOwnerObservation{}, ErrUnknown
-		}
-		name, ok := token.(string)
-		target, known := fields[name]
-		if !ok || !known || seen[name] {
-			return RecoveryOwnerObservation{}, ErrUnknown
-		}
-		seen[name] = true
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil || strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, target) != nil {
-			return RecoveryOwnerObservation{}, ErrUnknown
-		}
-	}
-	if nakamastorage.EndObject(decoder) != nil || len(seen) != 4 || schema != 1 || !handoffidentity.OpaqueUTF8(got.OwnerID, 128) || !validVersion(got.HandoffVersion) {
+	if nakamastorage.DecodeRequiredObject(value, fields) != nil || schema != 1 || !handoffidentity.OpaqueUTF8(got.OwnerID, 128) || !validVersion(got.HandoffVersion) {
 		return RecoveryOwnerObservation{}, ErrUnknown
 	}
+	var err error
 	got.Handoff, err = decodeHandoff(string(handoff))
 	if err != nil {
 		return RecoveryOwnerObservation{}, ErrUnknown

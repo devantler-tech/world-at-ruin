@@ -401,17 +401,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "27818c4eda3e300ef43dc568a6dbd7c94b4609438c7bda07597b3966daa538bb",
-      "format": "go",
-      "files": [
-        "server/internal/allocatorjournal/journal.go",
-        "server/nakamageneration/document.go"
-      ],
-      "fragmentSHA256": "f28e70666417754d0fcbe3df21ef91f01c4dcf0fbd05ed55bd3ca0453f0683ed",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "27acfe76ba629ba4a296183f32841eece5879932eef9ab3a00291abe6fbd33b9",
       "format": "gdscript",
       "files": [
@@ -507,17 +496,6 @@
         "client/tests/boot_recovery_lock_test.gd"
       ],
       "fragmentSHA256": "50335f5f34630c76bc0c29cae6f42e9760b3731f61bcf514734c10602efc1399",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "30057de40c5196a0299cf49485a1c79067027e43d0e472f5b87496c8d18c00ed",
-      "format": "go",
-      "files": [
-        "server/internal/allocatorjournal/journal.go",
-        "server/nakamalease/reader.go"
-      ],
-      "fragmentSHA256": "6b80b731ca3376e3126dc4af46e9a59aae997b0460b82a19af5007e96c53d4c5",
       "occurrences": 1,
       "cleanupIssue": 276
     },
@@ -683,17 +661,6 @@
         "client/tests/persistence_scenario.gd"
       ],
       "fragmentSHA256": "030ceabcefb3e5384e487ea9ae625497b0831ca2bc680877cf1aa39fd3e5c166",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "4d7b2568cdc8731ad35f4a5349b3c03c0ca37093cd676e7bd20f6c62ce65b529",
-      "format": "go",
-      "files": [
-        "server/internal/allocatorjournal/journal.go",
-        "server/internal/gameservercommit/publication.go"
-      ],
-      "fragmentSHA256": "b074fc700f61a95d056045e8041108b3127f8fc8340fe742a12262715a267798",
       "occurrences": 1,
       "cleanupIssue": 276
     },
@@ -1292,17 +1259,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "9de3da006c8f245a4a5b5c55934c24c08d68577e8bbf14107888b9d5e195173a",
-      "format": "go",
-      "files": [
-        "server/internal/allocatorjournal/journal.go",
-        "server/nakamalease/reader.go"
-      ],
-      "fragmentSHA256": "89f73bc7d9019e2cd4b32a32d25e7ba75a959411c9c0f2111ec03acc54310027",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "9e432969342d521779c1388bc1ff2fac06319072e0096ae4ee3320d4215aa482",
       "format": "gdscript",
       "files": [
@@ -1787,17 +1743,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "d49f3349fe33b035ae166eca13e6b45babd52947ba59ece6589432580e7eb76d",
-      "format": "go",
-      "files": [
-        "server/internal/allocatoradmission/admission.go",
-        "server/internal/allocatoradmission/recovery_owner.go"
-      ],
-      "fragmentSHA256": "c6bd6fb03eec7855646bd9432d25b1c466ac6068a222c78f3f36a27b50395c61",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "d4b4dbadcf4c9e89e9d19dfd52e6e40a2b5ddda801084261e4fb89af0b160801",
       "format": "go",
       "files": [
@@ -1827,17 +1772,6 @@
         "server/gameserverapi/client_test.go"
       ],
       "fragmentSHA256": "14a3ca564f40d22da9c2a7b936b46d565cd80d13984edf0f711b036cb00f9c1c",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "d86df42026d233415edc96426b870f0ec58aded71520d650e009a9030bfdf528",
-      "format": "go",
-      "files": [
-        "server/internal/allocatoradmission/admission.go",
-        "server/internal/allocatorjournal/journal.go"
-      ],
-      "fragmentSHA256": "c6bd6fb03eec7855646bd9432d25b1c466ac6068a222c78f3f36a27b50395c61",
       "occurrences": 1,
       "cleanupIssue": 276
     },
@@ -1919,17 +1853,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "dfd00a1292a3510b57a32ac94fc10f67b03e7bc3a70c6970e1c2605d4db263c3",
-      "format": "go",
-      "files": [
-        "server/internal/allocatoradmission/admission.go",
-        "server/internal/allocatoradmission/handoff.go"
-      ],
-      "fragmentSHA256": "3d75fac9b60af3bc4a23e140000064856ec9ede0f5ee8cfaa90a271cdaaef51f",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "e1078da5933e6c6815dcc63b2adb7f529695e78c9a0b655f62851a5e2a3b4e9d",
       "format": "go",
       "files": [
@@ -2003,17 +1926,6 @@
         "client/tests/shipped_piece_slots_test.gd"
       ],
       "fragmentSHA256": "a7dcea31f63153f8af6715d8de9da11c040c959d82da00f0bbd305139d7b54e4",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "ea95fa1d7a85c3d495b08ef9d0c3d38806bfc6d95705cba943b861d9d9c9f0ed",
-      "format": "go",
-      "files": [
-        "server/internal/allocatorjournal/journal.go",
-        "server/nakamageneration/document.go"
-      ],
-      "fragmentSHA256": "c4292acd4762af2e5f82575cee53a5c2f127d6bef2a334b16e45d52b8d5070bb",
       "occurrences": 1,
       "cleanupIssue": 276
     },

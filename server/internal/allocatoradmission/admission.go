@@ -213,32 +213,11 @@ func decodeAdmission(value string) (Observation, error) {
 	if len(value) > 263168 || !utf8.ValidString(value) {
 		return Observation{}, ErrUnknown
 	}
-	decoder, err := nakamastorage.BeginObject(value)
-	if err != nil {
-		return Observation{}, ErrUnknown
-	}
 	var schema int
 	var phase string
 	var journal json.RawMessage
 	fields := map[string]any{"schema": &schema, "phase": &phase, "journal": &journal}
-	seen := map[string]bool{}
-	for decoder.More() {
-		token, e := decoder.Token()
-		if e != nil {
-			return Observation{}, ErrUnknown
-		}
-		name, ok := token.(string)
-		target, known := fields[name]
-		if !ok || !known || seen[name] {
-			return Observation{}, ErrUnknown
-		}
-		seen[name] = true
-		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil || strings.TrimSpace(string(raw)) == "null" || json.Unmarshal(raw, target) != nil {
-			return Observation{}, ErrUnknown
-		}
-	}
-	if nakamastorage.EndObject(decoder) != nil || len(seen) != 3 || schema != 1 || (phase != "open" && phase != "draining") {
+	if nakamastorage.DecodeRequiredObject(value, fields) != nil || schema != 1 || (phase != "open" && phase != "draining") {
 		return Observation{}, ErrUnknown
 	}
 	got, err := allocatorjournal.DecodeJournal(string(journal))
