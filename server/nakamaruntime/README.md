@@ -455,7 +455,7 @@ complete/mixed outcomes, competing owners and same-result publishers, omitted/ch
 proof contents, lost/canceled storage replies and actual killed/joined processes before
 submission, after commit before ACK, after ACK before readback and after complete
 readback before pin export. Visible rows never repair missing acknowledgment or pins.
-All thirty-two mandatory native scenarios must pass. This supervisor does not establish
+Every mandatory native scenario must pass. This supervisor does not establish
 authenticated durable production custody or database rollback survival. Exclusive
 mutation authority, serving/retained reader adoption and quarantine release remain
 separate #1315/#793 gates. See
