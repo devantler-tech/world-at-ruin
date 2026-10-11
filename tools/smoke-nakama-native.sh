@@ -44,7 +44,7 @@ for ((attempt=1;attempt<=30;attempt++)); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'disposable native database did not become ready' >&2; exit 1; fi
-# Fourteen minutes bounds all 35 mandatory scenarios, including the thirteen
+# Fourteen minutes bounds all 40 mandatory scenarios, including the thirteen
 # two-target recovery cuts, fifteen complete-proof publication cuts and two
 # additional restarted 45-second expiry controls after exact zone death, plus
 # one bounded suspension/watch-loss/resumed-movement control.
@@ -78,6 +78,11 @@ scenarios=(
   "TestNativeRecoveryOwner"
   "TestNativeRecoveryFence"
   "TestNativeRecoveryPublication"
+  "TestNativeZoneCustodyDefaultOff"
+  "TestNativeZoneCustodyPersistence"
+  "TestNativeZoneCustodyCrashCuts"
+  "TestNativeZoneCustodyCompetingProcesses"
+  "TestNativeZoneCustodyReaderRefusals"
   "TestNativeJournalDefaultOff"
   "TestNativeJournalReadback"
   "TestNativeJournalRefusals"
@@ -99,11 +104,11 @@ scenarios=(
   "TestClosedLoopMovementAfterWatchLoss"
 )
 if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
-  echo 'native Nakama acceptance did not execute all thirty-five scenarios' >&2; exit 1
+  echo 'native Nakama acceptance did not execute all forty scenarios' >&2; exit 1
 fi
 for scenario in "${scenarios[@]}"; do
   if ! grep -qE "^--- PASS: ${scenario} \\(" "$state/trial.log"; then
     echo "native Nakama acceptance omitted required scenario: ${scenario}" >&2; exit 1
   fi
 done
-echo 'NAKAMA NATIVE PASS: thirty-five scenarios; native plugin; complete journal readback; durable recovery owner; fresh complete recovery barriers; acknowledged complete proof publication; durable capability storage join; real API barriers; built sealed zone; TLS movement; resumed movement after watch loss; disposable PostgreSQL; non-root'
+echo 'NAKAMA NATIVE PASS: forty scenarios; native plugin; original custody persistence and crash/readback controls; complete journal readback; durable recovery owner; fresh complete recovery barriers; acknowledged complete proof publication; durable capability storage join; real API barriers; built sealed zone; TLS movement; resumed movement after watch loss; disposable PostgreSQL; non-root'

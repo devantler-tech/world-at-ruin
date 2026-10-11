@@ -82,6 +82,13 @@ func assertOwnerRefused(t *testing.T, p *nativeProcess) {
 }
 func awaitOwnerReady(t *testing.T, p *nativeProcess, port string) {
 	t.Helper()
+	awaitNativeProbeReady(t, p, port, "NAKAMA RECOVERY OWNER PROBE PASS: owner=")
+}
+
+// Both owning-process experiments require native health and their own complete
+// verdict; a partial report or a dead process cannot satisfy either caller.
+func awaitNativeProbeReady(t *testing.T, p *nativeProcess, port, marker string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -97,7 +104,7 @@ func awaitOwnerReady(t *testing.T, p *nativeProcess, port string) {
 		response, err := (&http.Client{Timeout: 200 * time.Millisecond}).Get("http://127.0.0.1:" + port + "/healthcheck")
 		if err == nil {
 			_ = response.Body.Close()
-			if response.StatusCode == 200 && strings.Contains(p.log.String(), "NAKAMA RECOVERY OWNER PROBE PASS: owner=") {
+			if response.StatusCode == 200 && strings.Contains(p.log.String(), marker) {
 				return
 			}
 		}

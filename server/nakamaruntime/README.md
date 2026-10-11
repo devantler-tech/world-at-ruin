@@ -8,6 +8,32 @@ Another independent opt-in supervises orphan cleanup after complete resource
 and private lease observations.
 The module is **off by default**. No deployment manifest or client call enables it.
 
+### Native original-custody persistence experiment
+
+The explicitly built `war_native_trial` bundle alone composes the individually
+default-off `WAR_ZONE_CUSTODY_PROBE_ENABLED` startup experiment. Normal plugins
+and zone commands do not import it. `true` requires one named scenario, bounded
+complete diagnostic input and the disposable supervisor's literal loopback
+control endpoint. `read` instead requires complete independently retained storage
+pins and performs no writes. Absent/`false` ignores malformed dependencies; other
+enablement values fail startup.
+
+`TestNativeZoneCustodyDefaultOff`, `TestNativeZoneCustodyPersistence`,
+`TestNativeZoneCustodyCrashCuts`, `TestNativeZoneCustodyCompetingProcesses` and
+`TestNativeZoneCustodyReaderRefusals` are mandatory on both native architectures.
+They inspect actual PostgreSQL effects separately from originating Nakama ACKs
+and diagnostic pins delivered before exact source kill/join. Independent same-key
+writers, same/changed-owner restart, ambiguous/canceled replies, private public-API
+isolation and faulty fresh readers must never replace the original documents.
+
+The lifetime/receipt inputs are diagnostic fixtures. This experiment does not
+obtain a native originating private claim, authenticate a supervisor, launch a
+child or establish independently protected production custody/rollback resistance.
+Even successful fresh readback returns diagnostics only. See ADR 0045 and #1342;
+authenticated original launch remains #1340, witness prerequisites #1341/#1336,
+and completion #1318/#567. The native bundle remains unpublished and retirement
+is tracked in #1192. No production infrastructure or credentials are configured.
+
 ## Build and configure
 
 Build the plugin in the **same Go toolchain and dependency environment as the

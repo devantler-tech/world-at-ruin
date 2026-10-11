@@ -24,7 +24,7 @@ RUN GOBIN=/out go install golang.org/x/vuln/cmd/govulncheck@v1.7.0 \
 RUN go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
       -experimental -source . -output /out/bundle \
     && go test -mod=readonly -modfile=nakama-runtime/go.mod -tags=war_native_trial \
-      ./internal/nakamacapabilityprobe \
+      ./internal/nakamacapabilityprobe ./internal/nakamazonecustodyprobe \
     && go test -mod=readonly -modfile=nakama-runtime/go.mod -tags=war_native_trial \
       -c -o /out/native-trial.test ./internal/nakamatrial \
     && mkdir /out/bundle/mismatched-modules \

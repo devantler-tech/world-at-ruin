@@ -698,6 +698,14 @@ the permanent blocking policy.
   the server durability guard for both families. ADR 0044 keeps authentication,
   bootstrap/child launch sequencing, protected ACK custody, rollback witness and
   completion outside this source delivery; fixture storage is not native proof.
+  The native-only `WAR_ZONE_CUSTODY_PROBE_ENABLED` experiment uses diagnostic
+  lifetime/receipt fixtures against actual Nakama/PostgreSQL. Require its five
+  mandatory amd64/arm64 scenarios for private create-only writes, competing
+  processes, lost/canceled replies, exact source death and complete fresh-reader
+  refusals. Only its storage ACKs originate natively; it proves neither a native
+  private claim, issuer identity, protected production custody nor exclusive
+  child launch. Normal artifacts have no probe/writer dependency. ADR 0045/#1342
+  preserve #1340/#1341/#1336/#1318/#567 authority gates; #1192 owns retirement.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
