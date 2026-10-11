@@ -59,6 +59,9 @@ func (b *boundary) StorageWrite(ctx context.Context, writes []*runtime.StorageWr
 	} else if writes[0].Collection != zonecustody.EnrollmentCollection {
 		return nil, errors.New("zone custody probe: unexpected collection")
 	}
+	if writes[0].Version != "*" {
+		return nil, errors.New("zone custody probe: write is not create-only")
+	}
 	b.writes.Add(1)
 	if err := controlRequest(ctx, b.control, "/"+b.owner+"-before-"+phase, nil); err != nil {
 		return nil, err

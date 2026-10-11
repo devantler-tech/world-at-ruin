@@ -80,9 +80,35 @@ func TestEnabledProbeRetainsBothOriginatingStorageACKs(t *testing.T) {
 // Disabled startup must ignore malformed diagnostic input and missing
 // dependencies; merely linking the native experiment cannot activate its writes.
 func TestDisabledProbeNeverInspectsInputs(t *testing.T) {
+	var calls atomic.Int32
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(204) }))
+	defer control.Close()
 	for _, flag := range []string{"", "false"} {
-		if err := run(t, map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": flag, "WAR_ZONE_CUSTODY_PROBE_INPUT": "invalid"}, nil, nil); err != nil {
+		if err := run(t, map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": flag, "WAR_ZONE_CUSTODY_PROBE_INPUT": "invalid", "WAR_ZONE_CUSTODY_PROBE_CONTROL": control.URL}, nil, nil); err != nil {
 			t.Fatal(err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatal("disabled probe contacted control")
+	}
+	if controlRequest(t.Context(), control.URL, "/positive", nil) != nil || calls.Load() != 1 {
+		t.Fatal("reachable control positive missing")
+	}
+}
+
+// Both native write phases must reject overwrite requests before the actual
+// storage or control boundary is touched, even when the collection is empty.
+func TestBoundaryRejectsNonCreateWrites(t *testing.T) {
+	var calls atomic.Int32
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(204) }))
+	defer control.Close()
+	for _, collection := range []string{zonecustody.EnrollmentCollection, zonecustody.CustodyCollection} {
+		for _, version := range []string{"", "existing-version"} {
+			s := nakamastoragetest.New()
+			b := &boundary{Storage: s, control: control.URL, owner: "owner-a"}
+			if _, err := b.StorageWrite(t.Context(), []*runtime.StorageWrite{{Collection: collection, Key: "key", Value: "{}", Version: version}}); err == nil || b.writes.Load() != 0 || len(s.WrittenValues()) != 0 || calls.Load() != 0 {
+				t.Fatal("non-create native write crossed experiment boundary", collection, version)
+			}
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +31,13 @@ func custodyInput() (agones.ClaimBinding, zoneclaim.Receipt) {
 	b := agones.ClaimBinding{Namespace: "trial", LeaseObjectID: strings.Repeat("a", 64), AttemptDigest: strings.Repeat("a", 52), AllocationID: "zone-a", GameServerUID: "uid-a"}
 	r := zoneclaim.Receipt{Namespace: "trial", Observer: 7, Fence: nakamalease.SessionFence{LeaseObjectID: b.LeaseObjectID, AttemptDigest: b.AttemptDigest, AllocationID: b.AllocationID, GameServerUID: b.GameServerUID, LeaseVersion: "diagnostic-version", Generation: time.Unix(123, 456).UTC()}}
 	return b, r
+}
+
+// custodyObservation names the exact diagnostic writer expected in PostgreSQL;
+// independently plausible owner/child labels cannot substitute for this pair.
+func custodyObservation(owner, child string) zonecustody.Observation {
+	b, _ := custodyInput()
+	return zonecustody.Observation{Lifetime: zonecustody.Lifetime{Namespace: b.Namespace, LeaseObjectID: b.LeaseObjectID, AttemptDigest: b.AttemptDigest, AllocationID: b.AllocationID, GameServerUID: b.GameServerUID}, OwnerID: owner, ChildIncarnation: child}
 }
 
 // custodyEnv enables one native writer with diagnostic owner/child labels.
@@ -83,7 +91,7 @@ type custodyRow struct {
 // custodyRows independently observes committed system-owned effects, including
 // versions, private permissions and complete correlation, without creating pins.
 // It also requires the persistence-only scenario to leave provider effects at zero.
-func custodyRows(t *testing.T, f *fixture, enrollment, custody int) map[string]custodyRow {
+func custodyRows(t *testing.T, f *fixture, enrollment, custody int, expected zonecustody.Observation) map[string]custodyRow {
 	t.Helper()
 	b, r := custodyInput()
 	result := map[string]custodyRow{}
@@ -101,16 +109,22 @@ func custodyRows(t *testing.T, f *fixture, enrollment, custody int) map[string]c
 		}
 		if collection == zonecustody.EnrollmentCollection {
 			o, err := zonecustody.DecodeEnrollment(row.Value)
-			if err != nil || o.Lifetime != (zonecustody.Lifetime{Namespace: "trial", LeaseObjectID: strings.Repeat("a", 64), AttemptDigest: strings.Repeat("a", 52), AllocationID: "zone-a", GameServerUID: "uid-a"}) || (o.OwnerID != "a" && o.OwnerID != "b") || (o.ChildIncarnation != "child-a" && o.ChildIncarnation != "child-b") {
+			if err != nil || o != expected {
 				t.Fatal("native enrollment lost original lifetime/correlation")
 			}
 		} else {
 			p, err := zonecustody.DecodeCustody(row.Value)
-			if err != nil || !p.Receipt.Equal(r) {
+			if err != nil || p.Enrollment != expected || !p.Receipt.Equal(r) {
 				t.Fatal("native custody changed complete diagnostic receipt")
 			}
 		}
 		result[collection] = row
+	}
+	if custody != 0 {
+		p, err := zonecustody.DecodeCustody(result[zonecustody.CustodyCollection].Value)
+		if err != nil || p.EnrollmentVersion != result[zonecustody.EnrollmentCollection].Version {
+			t.Fatal("native custody lost originating enrollment version")
+		}
 	}
 	if allocations, requests := f.counts(); allocations != 0 || requests != 0 {
 		t.Fatal("custody persistence issued provider side effects")
@@ -175,13 +189,32 @@ func TestNativeZoneCustodyDefaultOff(t *testing.T) {
 	for _, flag := range []string{"", "false", "TRUE"} {
 		t.Run("flag="+flag, func(t *testing.T) {
 			f := newFixture(t)
-			p := f.launch(map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": flag, "WAR_ZONE_CUSTODY_PROBE_INPUT": "invalid", "WAR_ZONE_CUSTODY_PROBE_CONTROL": "invalid"}, filepath.Join(*bundle, "modules"), 10, flag != "TRUE")
+			var calls atomic.Int32
+			control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(204) }))
+			t.Cleanup(control.Close)
+			p := f.launch(map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": flag, "WAR_ZONE_CUSTODY_PROBE_INPUT": "invalid", "WAR_ZONE_CUSTODY_PROBE_CONTROL": control.URL}, filepath.Join(*bundle, "modules"), 10, flag != "TRUE")
 			if flag == "TRUE" {
 				custodyRefused(t, p, "invalid enablement")
 			} else if strings.Contains(p.log.String(), custodyPass) {
 				t.Fatal("disabled custody probe ran")
 			}
-			custodyRows(t, f, 0, 0)
+			custodyRows(t, f, 0, 0, custodyObservation("a", "child-a"))
+			p.stop(t)
+			if calls.Load() != 0 {
+				t.Fatal("disabled or malformed probe contacted control")
+			}
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, control.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := control.Client().Do(request)
+			if err != nil {
+				t.Fatal("reachable control positive missing", err)
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusNoContent || calls.Load() != 1 {
+				t.Fatal("reachable control positive missing")
+			}
 		})
 	}
 }
@@ -202,7 +235,7 @@ func TestNativeZoneCustodyPersistence(t *testing.T) {
 			if !strings.Contains(p.log.String(), custodyPass+" scenario="+scenario+" writes="+strconv.Itoa(writes)+" pins="+strconv.FormatBool(complete)) {
 				t.Fatal("native custody scenario did not execute")
 			}
-			rows := custodyRows(t, f, 1, custody)
+			rows := custodyRows(t, f, 1, custody, custodyObservation("a", "child-a"))
 			if scenario == "complete" {
 				custodyPublicIsolation(t, f, rows)
 			}
@@ -226,7 +259,7 @@ func TestNativeZoneCustodyPersistence(t *testing.T) {
 			for _, owner := range []string{"a", "b"} {
 				restarted := f.launch(custodyEnv(t, "complete", owner, "child-b", control.URL), filepath.Join(*bundle, "modules"), 10, false)
 				custodyRefused(t, restarted, "enrollment unknown")
-				if !equalCustodyRows(rows, custodyRows(t, f, 1, custody)) {
+				if !equalCustodyRows(rows, custodyRows(t, f, 1, custody, custodyObservation("a", "child-a"))) {
 					t.Fatal("restart changed original rows")
 				}
 			}
@@ -270,7 +303,7 @@ func custodyPublicIsolation(t *testing.T, f *fixture, original map[string]custod
 			t.Fatal("native read control selected another storage identity")
 		}
 	}
-	if !equalCustodyRows(original, custodyRows(t, f, 1, 1)) {
+	if !equalCustodyRows(original, custodyRows(t, f, 1, 1, custodyObservation("a", "child-a"))) {
 		t.Fatal("public storage changed original system-owned custody")
 	}
 }
@@ -289,7 +322,7 @@ func TestNativeZoneCustodyCompetingProcesses(t *testing.T) {
 	stageReached(t, a)
 	peer := startRecoveryPeer(t, f, custodyEnv(t, "complete", "b", "child-b", control.URL))
 	stageReached(t, b)
-	custodyRows(t, f, 0, 0)
+	custodyRows(t, f, 0, 0, custodyObservation("a", "child-a"))
 	a.allow()
 	b.allow()
 	var retained zonecustody.Pins
@@ -297,6 +330,9 @@ func TestNativeZoneCustodyCompetingProcesses(t *testing.T) {
 	case retained = <-pins:
 	case <-time.After(20 * time.Second):
 		t.Fatal("native race had no acknowledged custody winner")
+	}
+	if retained.Enrollment != custodyObservation("a", "child-a") && retained.Enrollment != custodyObservation("b", "child-b") {
+		t.Fatal("native race retained a torn writer correlation")
 	}
 	winner, loser := source, peer
 	if retained.Enrollment.OwnerID == "b" {
@@ -312,7 +348,7 @@ func TestNativeZoneCustodyCompetingProcesses(t *testing.T) {
 	if len(pins) != 0 {
 		t.Fatal("native race produced multiple winners or no healthy winner")
 	}
-	rows := custodyRows(t, f, 1, 1)
+	rows := custodyRows(t, f, 1, 1, retained.Enrollment)
 	if retained.EnrollmentVersion != rows[zonecustody.EnrollmentCollection].Version || retained.CustodyVersion != rows[zonecustody.CustodyCollection].Version {
 		t.Fatal("race ACK versions differ from committed original")
 	}
@@ -320,7 +356,7 @@ func TestNativeZoneCustodyCompetingProcesses(t *testing.T) {
 	winner.stop(t)
 	loser.stop(t)
 	reader := f.launch(custodyReadEnv(t, retained), filepath.Join(*bundle, "modules"), 10, true)
-	if !strings.Contains(reader.log.String(), custodyPass+" scenario=read writes=0 pins=true") || !equalCustodyRows(rows, custodyRows(t, f, 1, 1)) {
+	if !strings.Contains(reader.log.String(), custodyPass+" scenario=read writes=0 pins=true") || !equalCustodyRows(rows, custodyRows(t, f, 1, 1, retained.Enrollment)) {
 		t.Fatal("race readback mutated original custody")
 	}
 	t.Log("CUSTODY PROCESS RACE PASS independent_writers=2 acknowledged_winner=1 private_rows=2 reader_writes=0 provider_effects=0")
@@ -329,13 +365,17 @@ func TestNativeZoneCustodyCompetingProcesses(t *testing.T) {
 // A complete reader must examine both original records. Each fault changes
 // actual PostgreSQL state after acknowledged pins were retained independently.
 func TestNativeZoneCustodyReaderRefusals(t *testing.T) {
-	for _, fault := range []string{"missing-enrollment", "missing-custody", "enrollment-version", "custody-version", "public-enrollment", "public-custody", "changed-owner", "changed-receipt", "supplied-version"} {
+	faults := []string{"missing-enrollment", "missing-custody", "enrollment-version", "custody-version", "public-enrollment", "public-custody", "changed-owner", "changed-receipt", "supplied-version"}
+	for _, field := range []string{"namespace", "lease_object_id", "attempt_digest", "allocation_id", "game_server_uid"} {
+		faults = append(faults, "enrollment-binding-"+field, "custody-binding-"+field)
+	}
+	for _, fault := range faults {
 		t.Run(fault, func(t *testing.T) {
 			f := newFixture(t)
 			control, _, delivered := custodyControl(t, "")
 			source := f.launch(custodyEnv(t, "complete", "a", "child-a", control.URL), filepath.Join(*bundle, "modules"), 10, true)
 			pins := <-delivered
-			before := custodyRows(t, f, 1, 1)
+			before := custodyRows(t, f, 1, 1, custodyObservation("a", "child-a"))
 			killJoinedSource(t, source)
 			collection := zonecustody.EnrollmentCollection
 			if strings.Contains(fault, "custody") || fault == "changed-receipt" {
@@ -355,6 +395,8 @@ func TestNativeZoneCustodyReaderRefusals(t *testing.T) {
 				statement = "UPDATE storage SET value=jsonb_set(value,'{receipt,Fence,LeaseVersion}','\"changed-version\"') WHERE collection=$1"
 			case "supplied-version":
 				pins.CustodyVersion = "changed-version"
+			default:
+				custodyBindingFault(t, f, collection, strings.SplitN(fault, "-binding-", 2)[1])
 			}
 			if statement != "" {
 				result, err := f.db.ExecContext(t.Context(), statement, collection)
@@ -390,6 +432,63 @@ func TestNativeZoneCustodyReaderRefusals(t *testing.T) {
 	}
 }
 
+// custodyBindingFault changes one complete, still-valid allocation field at
+// the original database key. Custody's receipt changes with its nested binding,
+// so refusal must compare original pins rather than reject malformed documents.
+func custodyBindingFault(t *testing.T, f *fixture, collection, field string) {
+	t.Helper()
+	expected := custodyObservation("a", "child-a")
+	_, receipt := custodyInput()
+	value, receiptPath := "", ""
+	switch field {
+	case "namespace":
+		value, receiptPath = "other", "{receipt,Namespace}"
+		expected.Lifetime.Namespace, receipt.Namespace = value, value
+	case "lease_object_id":
+		value, receiptPath = strings.Repeat("b", 64), "{receipt,Fence,LeaseObjectID}"
+		expected.Lifetime.LeaseObjectID, receipt.Fence.LeaseObjectID = value, value
+	case "attempt_digest":
+		value, receiptPath = strings.Repeat("b", 52), "{receipt,Fence,AttemptDigest}"
+		expected.Lifetime.AttemptDigest, receipt.Fence.AttemptDigest = value, value
+	case "allocation_id":
+		value, receiptPath = "zone-b", "{receipt,Fence,AllocationID}"
+		expected.Lifetime.AllocationID, receipt.Fence.AllocationID = value, value
+	case "game_server_uid":
+		value, receiptPath = "uid-b", "{receipt,Fence,GameServerUID}"
+		expected.Lifetime.GameServerUID, receipt.Fence.GameServerUID = value, value
+	default:
+		t.Fatal("unknown binding fault")
+	}
+	path := "{lifetime," + field + "}"
+	statement := "UPDATE storage SET value=jsonb_set(value,$2::text[],to_jsonb($3::text)) WHERE collection=$1 AND user_id=$4::uuid RETURNING value::text"
+	args := []any{collection, path, value, zeroOwner}
+	if collection == zonecustody.CustodyCollection {
+		args[1] = "{enrollment,lifetime," + field + "}"
+		args = append(args, receiptPath)
+		statement = "UPDATE storage SET value=jsonb_set(jsonb_set(value,$2::text[],to_jsonb($3::text)),$5::text[],to_jsonb($3::text)) WHERE collection=$1 AND user_id=$4::uuid RETURNING value::text"
+	}
+	rows, err := f.db.QueryContext(t.Context(), statement, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var changed string
+	if !rows.Next() || rows.Scan(&changed) != nil || rows.Next() || rows.Err() != nil {
+		t.Fatal("native binding fault not applied exactly once")
+	}
+	if collection == zonecustody.EnrollmentCollection {
+		o, err := zonecustody.DecodeEnrollment(changed)
+		if err != nil || o != expected {
+			t.Fatal("changed enrollment is not a complete valid binding")
+		}
+	} else {
+		p, err := zonecustody.DecodeCustody(changed)
+		if err != nil || p.Enrollment != expected || !p.Receipt.Equal(receipt) {
+			t.Fatal("changed custody is not a complete valid binding")
+		}
+	}
+}
+
 // equalCustodyRows compares the full observed row snapshots, so a fresh reader
 // or refused replacement cannot refresh versions, permissions or stored values.
 func equalCustodyRows(a, b map[string]custodyRow) bool {
@@ -419,7 +518,7 @@ func TestNativeZoneCustodyCrashCuts(t *testing.T) {
 			control, stage, delivered := custodyControl(t, "a-"+cut.stage)
 			source := f.start(custodyEnv(t, "complete", "a", "child-a", control.URL), filepath.Join(*bundle, "modules"), 10)
 			stageReached(t, stage)
-			before := custodyRows(t, f, cut.enrollment, cut.custody)
+			before := custodyRows(t, f, cut.enrollment, cut.custody, custodyObservation("a", "child-a"))
 			if len(delivered) != 0 || strings.Contains(source.log.String(), custodyPass) {
 				t.Fatal("pending crash seam exported pins")
 			}
@@ -432,7 +531,7 @@ func TestNativeZoneCustodyCrashCuts(t *testing.T) {
 					p := f.launch(custodyEnv(t, "complete", owner, "child-b", control.URL), filepath.Join(*bundle, "modules"), 10, false)
 					custodyRefused(t, p, "enrollment unknown")
 				}
-				if !equalCustodyRows(before, custodyRows(t, f, cut.enrollment, cut.custody)) {
+				if !equalCustodyRows(before, custodyRows(t, f, cut.enrollment, cut.custody, custodyObservation("a", "child-a"))) {
 					t.Fatal("post-crash restart refreshed rows")
 				}
 			} else {
@@ -440,7 +539,7 @@ func TestNativeZoneCustodyCrashCuts(t *testing.T) {
 				if !strings.Contains(p.log.String(), custodyPass) {
 					t.Fatal("unsubmitted enrollment falsely established database exclusion")
 				}
-				custodyRows(t, f, 1, 1)
+				custodyRows(t, f, 1, 1, custodyObservation("b", "child-b"))
 			}
 			t.Logf("CUSTODY CRASH PASS cut=%s exact_source_joined=true enrollment=%d custody=%d original_pins=0", cut.stage, cut.enrollment, cut.custody)
 		})

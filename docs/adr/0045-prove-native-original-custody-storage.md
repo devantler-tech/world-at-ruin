@@ -43,6 +43,11 @@ versions against these inputs without writing. Missing/changed rows, permission,
 version, receipt or original binding produce a specific complete-reader refusal.
 Even a successful read returns diagnostics only. Same-owner and changed-owner
 writer restart must lose the existing enrollment create, not adopt its contents.
+Observe create-only versions at both write boundaries. Database readback must
+match the exact writer's owner/child pair, including after lost replies and death.
+Change each lifetime field independently in both documents; keep changed custody
+receipts internally consistent so refusal proves comparison against original pins.
+Disabled controls use a reachable counting endpoint with a positive request check.
 
 ## Ordering and uncertainty
 
