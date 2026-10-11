@@ -44,10 +44,12 @@ for ((attempt=1;attempt<=30;attempt++)); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'disposable native database did not become ready' >&2; exit 1; fi
-# Fourteen minutes bounds all 35 mandatory scenarios, including the thirteen
+# Sixteen minutes bounds all 40 mandatory scenarios, including the thirteen
 # two-target recovery cuts, fifteen complete-proof publication cuts and two
 # additional restarted 45-second expiry controls after exact zone death, plus
-# one bounded suspension/watch-loss/resumed-movement control.
+# one bounded suspension/watch-loss/resumed-movement control. The nineteen
+# original-custody reader faults each start two independent refusing readers;
+# the complete arm64 suite now exceeds the former fourteen-minute budget.
 # Individual RPC, stage and process limits stay fixed;
 # the suite-level budget includes their actual native startup/cleanup work.
 trial_id=$(docker create --network "$network" --read-only --cap-drop ALL \
@@ -55,7 +57,7 @@ trial_id=$(docker create --network "$network" --read-only --cap-drop ALL \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
   --tmpfs /var/run/secrets/kubernetes.io/serviceaccount:rw,nosuid,nodev,size=1m,uid=10001,gid=10001,mode=0700 \
   -e WAR_NATIVE_DB_PASSWORD "$image" -war-experimental -war-bundle=/out/bundle \
-  -war-postgres=postgres:5432 -war-zone=/out/zone -test.v -test.timeout=14m)
+  -war-postgres=postgres:5432 -war-zone=/out/zone -test.v -test.timeout=16m)
 docker start -a "$trial_id" | tee "$state/trial.log"
 exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$trial_id")
 if [[ "$exit_code" != 0 ]] || ! grep -q '^PASS$' "$state/trial.log"; then
@@ -78,6 +80,11 @@ scenarios=(
   "TestNativeRecoveryOwner"
   "TestNativeRecoveryFence"
   "TestNativeRecoveryPublication"
+  "TestNativeZoneCustodyDefaultOff"
+  "TestNativeZoneCustodyPersistence"
+  "TestNativeZoneCustodyCrashCuts"
+  "TestNativeZoneCustodyCompetingProcesses"
+  "TestNativeZoneCustodyReaderRefusals"
   "TestNativeJournalDefaultOff"
   "TestNativeJournalReadback"
   "TestNativeJournalRefusals"
@@ -99,11 +106,11 @@ scenarios=(
   "TestClosedLoopMovementAfterWatchLoss"
 )
 if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
-  echo 'native Nakama acceptance did not execute all thirty-five scenarios' >&2; exit 1
+  echo 'native Nakama acceptance did not execute all forty scenarios' >&2; exit 1
 fi
 for scenario in "${scenarios[@]}"; do
   if ! grep -qE "^--- PASS: ${scenario} \\(" "$state/trial.log"; then
     echo "native Nakama acceptance omitted required scenario: ${scenario}" >&2; exit 1
   fi
 done
-echo 'NAKAMA NATIVE PASS: thirty-five scenarios; native plugin; complete journal readback; durable recovery owner; fresh complete recovery barriers; acknowledged complete proof publication; durable capability storage join; real API barriers; built sealed zone; TLS movement; resumed movement after watch loss; disposable PostgreSQL; non-root'
+echo 'NAKAMA NATIVE PASS: forty scenarios; native plugin; original custody persistence and crash/readback controls; complete journal readback; durable recovery owner; fresh complete recovery barriers; acknowledged complete proof publication; durable capability storage join; real API barriers; built sealed zone; TLS movement; resumed movement after watch loss; disposable PostgreSQL; non-root'
