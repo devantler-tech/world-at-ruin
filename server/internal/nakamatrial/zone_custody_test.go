@@ -223,10 +223,12 @@ func TestNativeZoneCustodyPersistence(t *testing.T) {
 // or change either system-owned document through native public storage APIs.
 func custodyPublicIsolation(t *testing.T, f *fixture, original map[string]custodyRow) {
 	t.Helper()
-	token, _ := f.account("custody-public-isolation")
+	token, uid := f.account("custody-public-isolation")
 	b, _ := custodyInput()
 	for _, collection := range []string{zonecustody.EnrollmentCollection, zonecustody.CustodyCollection} {
-		code, data := f.request("POST", "/v2/storage", token, fmt.Sprintf(`{"object_ids":[{"collection":"%s","key":"%s","user_id":"%s"}]}`, collection, zonecustody.LifetimeKey(b), zeroOwner))
+		// The native public API rejects an explicit nil UUID. An omitted
+		// owner selects system-owned storage and reaches its permission filter.
+		code, data := f.request("POST", "/v2/storage", token, fmt.Sprintf(`{"object_ids":[{"collection":"%s","key":"%s"}]}`, collection, zonecustody.LifetimeKey(b)))
 		var response struct {
 			Objects []json.RawMessage `json:"objects"`
 		}
@@ -236,6 +238,20 @@ func custodyPublicIsolation(t *testing.T, f *fixture, original map[string]custod
 		code, _ = f.request("PUT", "/v2/storage", token, fmt.Sprintf(`{"objects":[{"collection":"%s","key":"%s","value":"{}"}]}`, collection, zonecustody.LifetimeKey(b)))
 		if code != 200 {
 			t.Fatal("native isolated player write failed")
+		}
+		code, data = f.request("POST", "/v2/storage", token, fmt.Sprintf(`{"object_ids":[{"collection":"%s","key":"%s","user_id":"%s"}]}`, collection, zonecustody.LifetimeKey(b), uid))
+		var positive struct {
+			Objects []struct {
+				Collection, Key, Value string
+				UserID                 string `json:"user_id"`
+			} `json:"objects"`
+		}
+		if code != 200 || json.Unmarshal(data, &positive) != nil || len(positive.Objects) != 1 {
+			t.Fatal("native player-owned read control missing")
+		}
+		object := positive.Objects[0]
+		if object.Collection != collection || object.Key != zonecustody.LifetimeKey(b) || object.UserID != uid || object.Value != "{}" {
+			t.Fatal("native read control selected another storage identity")
 		}
 	}
 	if !equalCustodyRows(original, custodyRows(t, f, 1, 1)) {
@@ -333,8 +349,8 @@ func TestNativeZoneCustodyReaderRefusals(t *testing.T) {
 					t.Fatal("native reader fault not applied exactly once")
 				}
 			}
-			// Snapshot all storage before both refusals; neither reader
-			// must never repair, refresh or replace an observed faulty document.
+			// Snapshot all storage before both refusals; neither reader may
+			// repair, refresh or replace an observed faulty document.
 			var snapshot, again string
 			query := "SELECT coalesce(jsonb_agg(to_jsonb(s) ORDER BY collection,key)::text,'[]') FROM storage s"
 			if f.db.QueryRowContext(t.Context(), query).Scan(&snapshot) != nil {
