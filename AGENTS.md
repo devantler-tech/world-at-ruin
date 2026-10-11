@@ -953,7 +953,7 @@ the permanent blocking policy.
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
   authoritative movement, complete read-only journal observations and the joined
   durable registration/real API barrier controls, recovery-owner exclusion and
-  complete fresh-process recovery fencing. The fourteen-minute suite budget keeps
+  complete fresh-process recovery fencing. The sixteen-minute suite budget keeps
   every individual RPC, stage and process deadline unchanged. Both native Linux
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
