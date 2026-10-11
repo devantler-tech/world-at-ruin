@@ -297,10 +297,15 @@ of admission or cleanup can win.
 Claimed leases are not no-show leases and are never reclaimed merely because
 their original handoff expiry passed. A new system-only session-end transition
 will fence claimed cleanup by lease version, attempt digest, allocation ID,
-GameServer UID, and session generation. Normal zone completion invokes that
-private boundary. A supervisor may invoke it only after observing that the
-exact GameServer UID is `Shutdown` or unhealthy, or that the pinned UID is
-absent. The transition moves the exact claimed lease to `releasing` before
+GameServer UID, and session generation. The boundary remains uncomposed until
+independent authority proves that the exact original process cannot resume its
+session authority and that its fence survives cleanup and restart. `Shutdown`,
+unhealthy or absent GameServer observations, watch loss, socket loss and expiry
+do not establish that fact. Original receipt custody and independently
+authenticated supervisor delegation also remain prerequisites under #1318;
+[ADR 0020](0020-retain-exact-claim-receipts-for-private-completion.md) records the
+current inert boundary and native controls. The transition moves the exact
+claimed lease to `releasing` before
 external deletion; only its successful completion permits the stable
 reservation to stage a replacement attempt. A stale completion or death signal
 cannot release a newer session.
