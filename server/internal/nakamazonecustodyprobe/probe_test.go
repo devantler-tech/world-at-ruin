@@ -20,6 +20,8 @@ import (
 	"github.com/heroiclabs/nakama-common/runtime"
 )
 
+// inputs supplies complete diagnostic correlation, including the receipt's
+// generation. It deliberately supplies no originating claim or issuer proof.
 func inputs(t *testing.T) string {
 	t.Helper()
 	b := agones.ClaimBinding{Namespace: "trial", LeaseObjectID: strings.Repeat("a", 64), AttemptDigest: strings.Repeat("a", 52), AllocationID: "zone-a", GameServerUID: "uid-a"}
@@ -34,10 +36,16 @@ func inputs(t *testing.T) string {
 	}
 	return string(raw)
 }
+
+// enabled opts into exactly one storage scenario with a disposable control
+// endpoint; individual refusal controls replace one dependency from this baseline.
 func enabled(t *testing.T, scenario, control string) map[string]string {
 	t.Helper()
 	return map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": "true", "WAR_ZONE_CUSTODY_PROBE_SCENARIO": scenario, "WAR_ZONE_CUSTODY_PROBE_INPUT": inputs(t), "WAR_ZONE_CUSTODY_PROBE_CONTROL": control}
 }
+
+// run injects startup configuration through Nakama's context boundary, leaving
+// the storage and report dependencies explicit for inertness and fault controls.
 func run(t *testing.T, env map[string]string, s Storage, report func(Report)) error {
 	t.Helper()
 	return Run(context.WithValue(t.Context(), runtime.RUNTIME_CTX_ENV, env), s, report)
@@ -69,6 +77,8 @@ func TestEnabledProbeRetainsBothOriginatingStorageACKs(t *testing.T) {
 	}
 }
 
+// Disabled startup must ignore malformed diagnostic input and missing
+// dependencies; merely linking the native experiment cannot activate its writes.
 func TestDisabledProbeNeverInspectsInputs(t *testing.T) {
 	for _, flag := range []string{"", "false"} {
 		if err := run(t, map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": flag, "WAR_ZONE_CUSTODY_PROBE_INPUT": "invalid"}, nil, nil); err != nil {

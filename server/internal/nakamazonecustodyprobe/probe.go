@@ -177,6 +177,8 @@ func Run(ctx context.Context, storage Storage, report func(Report)) error {
 	return nil
 }
 
+// decode accepts one bounded, fully understood diagnostic document. Trailing
+// values and unknown fields cannot silently narrow the supplied lifetime.
 func decode(raw string, target any) error {
 	if len(raw) > 16384 {
 		return errors.New("zone custody probe: input too large")
@@ -195,6 +197,9 @@ func localEndpoint(value string) bool {
 	u, err := url.Parse(value)
 	return err == nil && u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Port() != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
+
+// controlRequest waits for the disposable supervisor to accept a stage or pins.
+// Any ambiguous transport result stops the probe; it never retries delivery.
 func controlRequest(ctx context.Context, control, path string, pins *zonecustody.Pins) error {
 	if !localEndpoint(control) {
 		return errors.New("zone custody probe: control refused")

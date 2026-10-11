@@ -80,6 +80,9 @@ func assertOwnerRefused(t *testing.T, p *nativeProcess) {
 		t.Fatal("owner did not produce its specific fail-closed refusal")
 	}
 }
+
+// awaitOwnerReady requires the recovery owner's own completed probe verdict in
+// addition to native health; the custody experiment uses its distinct marker.
 func awaitOwnerReady(t *testing.T, p *nativeProcess, port string) {
 	t.Helper()
 	awaitNativeProbeReady(t, p, port, "NAKAMA RECOVERY OWNER PROBE PASS: owner=")

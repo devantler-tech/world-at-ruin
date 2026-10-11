@@ -8,7 +8,7 @@ Another independent opt-in supervises orphan cleanup after complete resource
 and private lease observations.
 The module is **off by default**. No deployment manifest or client call enables it.
 
-### Native original-custody persistence experiment
+## Native original-custody persistence experiment
 
 The explicitly built `war_native_trial` bundle alone composes the individually
 default-off `WAR_ZONE_CUSTODY_PROBE_ENABLED` startup experiment. Normal plugins

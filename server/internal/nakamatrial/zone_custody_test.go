@@ -31,6 +31,9 @@ func custodyInput() (agones.ClaimBinding, zoneclaim.Receipt) {
 	r := zoneclaim.Receipt{Namespace: "trial", Observer: 7, Fence: nakamalease.SessionFence{LeaseObjectID: b.LeaseObjectID, AttemptDigest: b.AttemptDigest, AllocationID: b.AllocationID, GameServerUID: b.GameServerUID, LeaseVersion: "diagnostic-version", Generation: time.Unix(123, 456).UTC()}}
 	return b, r
 }
+
+// custodyEnv enables one native writer with diagnostic owner/child labels.
+// These labels vary contention inputs; they are not attested process identities.
 func custodyEnv(t *testing.T, scenario, owner, child, control string) map[string]string {
 	t.Helper()
 	b, r := custodyInput()
@@ -44,6 +47,9 @@ func custodyEnv(t *testing.T, scenario, owner, child, control string) map[string
 	}
 	return map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": "true", "WAR_ZONE_CUSTODY_PROBE_SCENARIO": scenario, "WAR_ZONE_CUSTODY_PROBE_INPUT": string(raw), "WAR_ZONE_CUSTODY_PROBE_CONTROL": control}
 }
+
+// custodyReadEnv delivers pins already retained by the disposable supervisor
+// to a fresh reader. Database contents never seed its expected acknowledgements.
 func custodyReadEnv(t *testing.T, pins zonecustody.Pins) map[string]string {
 	t.Helper()
 	raw, err := json.Marshal(pins)
@@ -52,6 +58,9 @@ func custodyReadEnv(t *testing.T, pins zonecustody.Pins) map[string]string {
 	}
 	return map[string]string{"WAR_ZONE_CUSTODY_PROBE_ENABLED": "true", "WAR_ZONE_CUSTODY_PROBE_SCENARIO": "read", "WAR_ZONE_CUSTODY_PROBE_PINS": string(raw)}
 }
+
+// custodyRefused requires a joined native startup failure naming the expected
+// refusal. A timeout, generic crash or successful probe cannot satisfy it.
 func custodyRefused(t *testing.T, p *nativeProcess, reason string) {
 	t.Helper()
 	select {
@@ -71,6 +80,9 @@ type custodyRow struct {
 	Read, Write           int
 }
 
+// custodyRows independently observes committed system-owned effects, including
+// versions, private permissions and complete correlation, without creating pins.
+// It also requires the persistence-only scenario to leave provider effects at zero.
 func custodyRows(t *testing.T, f *fixture, enrollment, custody int) map[string]custodyRow {
 	t.Helper()
 	b, r := custodyInput()
@@ -118,6 +130,8 @@ func custodyControl(t *testing.T, hold string) (*httptest.Server, *capabilitySta
 	return server, stage, pins
 }
 
+// custodyControlHandler holds selected source stages and retains separately
+// delivered pins. Cancellation and queue overflow cannot acknowledge delivery.
 func custodyControlHandler(stages map[string]*capabilityStage, pins chan zonecustody.Pins) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/pins" {
@@ -155,6 +169,8 @@ func custodyControlHandler(stages map[string]*capabilityStage, pins chan zonecus
 	})
 }
 
+// Default-off native startup ignores malformed unused inputs and writes no
+// custody rows; malformed opt-in must instead fail with its specific refusal.
 func TestNativeZoneCustodyDefaultOff(t *testing.T) {
 	for _, flag := range []string{"", "false", "TRUE"} {
 		t.Run("flag="+flag, func(t *testing.T) {
@@ -374,6 +390,8 @@ func TestNativeZoneCustodyReaderRefusals(t *testing.T) {
 	}
 }
 
+// equalCustodyRows compares the full observed row snapshots, so a fresh reader
+// or refused replacement cannot refresh versions, permissions or stored values.
 func equalCustodyRows(a, b map[string]custodyRow) bool {
 	if len(a) != len(b) {
 		return false
