@@ -32,7 +32,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -97,18 +96,8 @@ type nativeProcess struct {
 // stop signals the real native process and joins it before fixture retirement.
 func (p *nativeProcess) stop(t *testing.T) {
 	t.Helper()
-	select {
-	case <-p.done:
-		return
-	default:
-	}
-	_ = p.cmd.Process.Signal(syscall.SIGTERM)
-	select {
-	case <-p.done:
-	case <-time.After(15 * time.Second):
-		_ = p.cmd.Process.Kill()
-		<-p.done
-		t.Error("native process exceeded shutdown bound")
+	if err := stopOwnedProcess(p.cmd.Process, p.done, 15*time.Second, 5*time.Second); err != nil {
+		t.Error(err)
 	}
 }
 

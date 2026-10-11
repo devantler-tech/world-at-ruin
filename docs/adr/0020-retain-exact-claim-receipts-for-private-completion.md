@@ -68,3 +68,33 @@ This evidence distinguishes process exit from outstanding remote work. It does
 not establish authenticated independent supervisor authority, protected durable
 receipt custody, a termination tombstone, exclusive relaunch ownership or their
 restart/rollback behavior. Those remain open decision gates under #1318.
+
+## Native watch-loss and resumption control
+
+`TestClosedLoopMovementAfterWatchLoss` (#1332) exercises the explicitly enabled
+v3 movement fixture with one input hold tick. It establishes a stationary
+sequence-zero baseline on the real claimed socket, SIGSTOPs the exact owned
+child, observes its stopped state through Linux procfs, ends the generated SDK
+watch while retaining health, and SIGCONTs the same child. Repeated fresh
+admission must return exactly HTTP 401 before the original handoff expires.
+A never-used sequence sent after resumption on the established socket must
+produce its exact applied-sequence ACK, a newer tick and bounded position change.
+Buffered pre-suspension ACKs cannot contain that sequence. Later ticks must stop
+at the applied position after the single hold tick.
+
+The original private claim remains byte/version identical, with no new private
+TCP connection. Connection counts do not establish an absence of private RPCs
+on an existing TLS connection. Mutual TLS is unchanged, and no storage write,
+claim acknowledgement or completion receipt is manufactured. One bounded reader
+spans suspension and is canceled, closed and joined during cleanup. The native
+fixture resumes stopped children before cooperative shutdown and bounds the
+kill/join fallback. The successful control ends with exact-child SIGKILL and join.
+
+This is watch-loss evidence, never demonstrated Pod or node deletion. Fresh
+admission and existing session authority have separate paths; an unavailable
+watch cannot establish irreversible loss of movement authority. The experiment
+requires actual success on both native Linux architectures under the existing
+non-root, capability-dropped trial. Missing visibility, signal permission or
+bounded joins fails closed. It neither composes completion nor establishes
+durable termination tombstones, independent production authority, protected
+original-receipt custody or exclusive relaunch fencing. #1318 remains open.

@@ -1161,6 +1161,17 @@ the permanent blocking policy.
   race controls. These test-only observations capture no original completion receipt
   and grant no session-end authority. [ADR 0020](docs/adr/0020-retain-exact-claim-receipts-for-private-completion.md)
   keeps independent production authority and protected receipt custody under #1318.
+- **Movement authority after watch loss:** mandatory native acceptance suspends the exact
+  owned zone child, observes its stopped state through Linux procfs, ends the generated
+  SDK watch and resumes that same child. Repeated fresh admission must return HTTP 401
+  before handoff expiry while health continues; the original v3 socket must apply a
+  never-used post-resume sequence at a newer tick with bounded actual movement. The
+  original private claim bytes/version and private TCP connection count stay fixed.
+  The count is connection-scoped and does not establish zero private RPCs. Fixture
+  cleanup resumes stopped children and bounds cooperative shutdown and kill/join;
+  the socket reader is separately canceled and joined. Run both native architectures
+  and the ordinary stopped-child cleanup race control. This experiment proves watch
+  loss, not Pod/node deletion or production session-end authority; #1318 stays open.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

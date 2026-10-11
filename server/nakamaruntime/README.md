@@ -271,9 +271,9 @@ docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
 bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:trial --experimental
 ```
 
-The image refuses a default invocation. Twenty-nine named mandatory scenarios use
+The image refuses a default invocation. Every named mandatory scenario uses
 the real loaded plugin, authentication and PostgreSQL-backed private storage.
-Eleven scenarios run the built sealed zone command through generated SDK sidecars,
+The closed-loop scenarios run the built sealed zone command through generated SDK sidecars,
 consume the authenticated handoff and decode a real TLS WebSocket snapshot.
 The command uses its own random admission secret; fixture-side minting is absent
 from this closed-loop path. Normal TLS chain and hostname verification remain
@@ -293,6 +293,17 @@ movement, expiry, malformed-input refusal and reconnect without inherited input.
 It reads back the same durable claim before and after movement and keeps normal
 TLS verification. The shipping Godot client remains on v2; this is a server
 capability trial, not player input/prediction delivery or production activation.
+
+The watch-loss control observes the exact child stopped through Linux procfs,
+ends its generated SDK watch and resumes it. Fresh sockets must receive repeated
+HTTP 401 before token expiry while SDK health remains active. A new sequence sent
+after resumption must move the established v3 socket at a newer applied tick.
+The exact private claim bytes/version and private TCP connection count remain
+unchanged; connection counts do not prove an absence of RPCs on existing TLS.
+One bounded reader spans suspension, and cleanup resumes the child before bounded
+cooperative shutdown or kill/join. The control ends by killing and joining the
+exact child. This demonstrates watch loss, not Pod/node deletion, original receipt
+custody or irreversible production session termination. See ADR 0020 and #1318.
 
 Lock maintenance is deliberate: use Go's alternate-module commands to resolve
 both `github.com/heroiclabs/nakama/v3` and `./cmd/nakama`, plus the tagged native
