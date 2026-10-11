@@ -112,7 +112,14 @@ func custodyControl(t *testing.T, hold string) (*httptest.Server, *capabilitySta
 	t.Helper()
 	stage := newStage()
 	pins := make(chan zonecustody.Pins, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(custodyControlHandler(map[string]*capabilityStage{"/" + hold: stage}, pins))
+	t.Cleanup(server.Close)
+	t.Cleanup(stage.allow)
+	return server, stage, pins
+}
+
+func custodyControlHandler(stages map[string]*capabilityStage, pins chan zonecustody.Pins) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/pins" {
 			var p zonecustody.Pins
 			d := json.NewDecoder(io.LimitReader(r.Body, 16385))
@@ -133,7 +140,7 @@ func custodyControl(t *testing.T, hold string) (*httptest.Server, *capabilitySta
 			w.WriteHeader(405)
 			return
 		}
-		if r.URL.Path == "/"+hold {
+		if stage := stages[r.URL.Path]; stage != nil {
 			stage.arrival.Do(func() { close(stage.entered) })
 			select {
 			case <-stage.release:
@@ -145,10 +152,7 @@ func custodyControl(t *testing.T, hold string) (*httptest.Server, *capabilitySta
 			}
 		}
 		w.WriteHeader(204)
-	}))
-	t.Cleanup(server.Close)
-	t.Cleanup(stage.allow)
-	return server, stage, pins
+	})
 }
 
 func TestNativeZoneCustodyDefaultOff(t *testing.T) {
@@ -245,35 +249,7 @@ func TestNativeZoneCustodyCompetingProcesses(t *testing.T) {
 	f := newFixture(t)
 	a, b := newStage(), newStage()
 	pins := make(chan zonecustody.Pins, 2)
-	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/pins" {
-			var p zonecustody.Pins
-			if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&p) != nil {
-				w.WriteHeader(400)
-				return
-			}
-			select {
-			case pins <- p:
-				w.WriteHeader(204)
-			default:
-				w.WriteHeader(409)
-			}
-			return
-		}
-		stage := map[string]*capabilityStage{"/a-before-enrollment": a, "/b-before-enrollment": b}[r.URL.Path]
-		if stage != nil {
-			stage.arrival.Do(func() { close(stage.entered) })
-			select {
-			case <-stage.release:
-			case <-r.Context().Done():
-				return
-			case <-time.After(10 * time.Second):
-				w.WriteHeader(504)
-				return
-			}
-		}
-		w.WriteHeader(204)
-	}))
+	control := httptest.NewServer(custodyControlHandler(map[string]*capabilityStage{"/a-before-enrollment": a, "/b-before-enrollment": b}, pins))
 	t.Cleanup(control.Close)
 	t.Cleanup(a.allow)
 	t.Cleanup(b.allow)
