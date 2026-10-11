@@ -39,3 +39,32 @@ The independent termination verifier has no production implementation: #567,
 #569 and #793 retain process-authority, workload issuance, allocator fencing,
 rollout and real-cluster acceptance. Storage schemas and writer capabilities are
 unchanged. These source interfaces do not authorize deployment or activation.
+
+## Native process-death controls
+
+The explicit native trial exercises the built zone, native Nakama and disposable
+PostgreSQL in `TestClosedLoopClaimAfterZoneDeath` and
+`TestClosedLoopAcknowledgedZoneDeath` (#1330). The first control holds the actual
+claim transaction, observes its PostgreSQL waiter, kills and joins the exact
+owned zone, and observes ordinary disconnect cancellation. Its separate delayed
+disconnect control forwards the original mutual-TLS ciphertext unchanged and
+keeps the already authenticated backend connection until its bounded deadline.
+Releasing the transaction after child join must commit the original claim while
+no living zone can acknowledge it. The row remains private, keeps its original
+allocation binding and gains a new claim version; readback is diagnostic only.
+
+Both a late unacknowledged claim and a previously acknowledged claim must survive
+native Nakama restart, repeated public handoff refusal and real expiry cleanup
+of an unclaimed canary. Claimed ownership must remain byte/version identical,
+with its exact resource retained and no allocation redispatch. The native runner
+requires both controls on amd64 and arm64, with explicit verdicts and owned child,
+listener and transport-worker cleanup.
+
+Delayed disconnect is an explicit network fault model, not a claim that an
+ordinary direct connection necessarily commits after death. The built zone uses
+legacy `/v1/claim`; the experiment captures no original completion receipt and
+constructs none from a visible row. It neither calls nor composes completion.
+This evidence distinguishes process exit from outstanding remote work. It does
+not establish authenticated independent supervisor authority, protected durable
+receipt custody, a termination tombstone, exclusive relaunch ownership or their
+restart/rollback behavior. Those remain open decision gates under #1318.

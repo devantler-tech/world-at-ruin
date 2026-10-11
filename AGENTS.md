@@ -921,12 +921,12 @@ the permanent blocking policy.
   graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.2
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
-  `tools/smoke-nakama-native.sh <local-image> --experimental` requires thirty-one
-  named scenarios against fresh disposable PostgreSQL databases, including the built
+  `tools/smoke-nakama-native.sh <local-image> --experimental` requires every named
+  scenario against fresh disposable PostgreSQL databases, including the built
   sealed zone, native private claims, actual TLS WebSocket replication and opt-in
   authoritative movement, complete read-only journal observations and the joined
   durable registration/real API barrier controls, recovery-owner exclusion and
-  complete fresh-process recovery fencing. The twelve-minute suite budget keeps
+  complete fresh-process recovery fencing. The fourteen-minute suite budget keeps
   every individual RPC, stage and process deadline unchanged. Both native Linux
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
@@ -1150,8 +1150,17 @@ the permanent blocking policy.
   process-death seams through native storage. Production authenticated durable custody,
   exclusive authorization, serving/retained reader adoption and quarantine release
   remain #1315/#793 gates. Run the full capability race suite, native probe tests,
-  fourteen-family storage-history guard and all thirty-two native scenarios.
+  fourteen-family storage-history guard and all required native scenarios.
   See [ADR 0041](docs/adr/0041-publish-an-acknowledged-complete-recovery-proof.md).
+- **Claim lifetime after zone death:** the native acceptance includes the exact owned
+  zone's kill/join during a PostgreSQL-held claim, ordinary disconnect cancellation,
+  and a bounded transparent mutual-TLS transport that permits the original request
+  to commit after its zone exits. Late unacknowledged and acknowledged claims must
+  remain unchanged across native restart, public handoff refusal and active cleanup
+  of an unclaimed canary. Run both native architectures and the ordinary transport
+  race controls. These test-only observations capture no original completion receipt
+  and grant no session-end authority. [ADR 0020](docs/adr/0020-retain-exact-claim-receipts-for-private-completion.md)
+  keeps independent production authority and protected receipt custody under #1318.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.

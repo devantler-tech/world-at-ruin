@@ -15,7 +15,6 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"io"
 	"maps"
 	"math/big"
 	"net"
@@ -48,13 +47,14 @@ import (
 var zoneArtifact = flag.String("war-zone", "", "built sealed zone command for the disposable trial")
 
 type trialZone struct {
-	f                *fixture
-	name             string
-	port             int
-	sidecar          *agonestest.Sidecar
-	process          *nativeProcess
-	roots            *x509.CertPool
-	claimConnections atomic.Int32
+	f                 *fixture
+	name              string
+	port              int
+	sidecar           *agonestest.Sidecar
+	process           *nativeProcess
+	roots             *x509.CertPool
+	claimConnections  atomic.Int32
+	claimDisconnected chan struct{}
 }
 
 // closedFixture selects the real zone pool; it never manufactures admission keys.
@@ -64,6 +64,18 @@ func closedFixture(t *testing.T) *fixture {
 	f.zonePool = make(map[string]*trialZone)
 	f.env["WAR_HANDOFF_CLAIMS_ENABLED"] = "true"
 	return f
+}
+
+// expiryFixture shares the real two-zone setup for claimed/unclaimed cleanup controls.
+func expiryFixture(t *testing.T, peer string) (*fixture, *trialZone) {
+	t.Helper()
+	f := closedFixture(t)
+	f.env["WAR_HANDOFF_LEASE_TTL"] = "45s"
+	f.env["WAR_HANDOFF_TOKEN_TTL"] = "45s"
+	z := f.startZone("zone-a", f.key, peer, false)
+	f.startZone("zone-b", f.key, "", false)
+	f.launch(f.env, filepath.Join(*bundle, "modules"), 10, true)
+	return f, z
 }
 
 // zoneFile writes private material only to this scenario's owned temporary directory.
@@ -99,6 +111,9 @@ func (f *fixture) startZone(name string, wrapping *rsa.PrivateKey, peer string, 
 	f.mu.Lock()
 	port := 8443 + len(f.zonePool)
 	z := &trialZone{f: f, name: name, port: port, sidecar: sdk}
+	if peer == "delayed-disconnect" {
+		z.claimDisconnected = make(chan struct{})
+	}
 	f.zonePool[name] = z
 	f.mu.Unlock()
 	// Separate transport roots certify the handoff's actual DNS name.
@@ -170,6 +185,7 @@ func (z *trialZone) claimProbe() string {
 	var mu sync.Mutex
 	connections := make(map[net.Conn]struct{})
 	var workers sync.WaitGroup
+	var disconnected sync.Once
 	acceptDone := make(chan struct{})
 	go func() {
 		defer close(acceptDone)
@@ -194,12 +210,13 @@ func (z *trialZone) claimProbe() string {
 				mu.Unlock()
 				defer func() { _ = backend.Close(); mu.Lock(); delete(connections, backend); mu.Unlock() }()
 				z.claimConnections.Add(1)
-				done := make(chan struct{})
-				go func() { _, _ = io.Copy(backend, client); _ = backend.Close(); _ = client.Close(); close(done) }()
-				_, _ = io.Copy(client, backend)
-				_ = backend.Close()
-				_ = client.Close()
-				<-done
+				deadline := time.Time{}
+				var observeDisconnect func()
+				if z.claimDisconnected != nil {
+					deadline = time.Now().Add(6 * time.Second)
+					observeDisconnect = func() { disconnected.Do(func() { close(z.claimDisconnected) }) }
+				}
+				relayClaim(client, backend, deadline, observeDisconnect)
 			}()
 		}
 	}()
