@@ -3,7 +3,7 @@
 # Independent source inventory
 
 `formats.json` is generated data from the extension table in
-[jscpd v5.0.16](https://github.com/kucherenko/jscpd/blob/v5.0.16/rust/crates/cpd-tokenizer/src/formats.rs).
+[jscpd v5.0.16](https://raw.githubusercontent.com/kucherenko/jscpd/v5.0.16/rust/crates/cpd-tokenizer/src/formats.rs).
 The upstream project distributes this table under the MIT license. The extractor
 retains only factual language names and extensions, with the same last-entry-wins
 mapping as upstream. Shebang detection follows that revision's file walker.
