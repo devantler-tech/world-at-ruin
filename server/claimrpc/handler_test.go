@@ -109,6 +109,12 @@ func (f *fixture) serve(t *testing.T, resolve resolverFunc) (*Client, *httptest.
 	if err != nil {
 		t.Fatal(err)
 	}
+	return f.serveHandler(t, handler)
+}
+
+// serveHandler also supports observing requests around the production handler.
+func (f *fixture) serveHandler(t *testing.T, handler http.Handler) (*Client, *httptest.Server) {
+	t.Helper()
 	server := httptest.NewUnstartedServer(handler)
 	server.TLS = f.serverTLS
 	server.StartTLS()

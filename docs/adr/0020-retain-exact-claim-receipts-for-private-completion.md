@@ -42,6 +42,13 @@ unchanged. These source interfaces do not authorize deployment or activation.
 
 ## Native process-death controls
 
+Original receipt custody has a separately enabled source boundary in
+[ADR 0043](0043-acknowledge-original-receipt-custody-before-admission.md).
+It withholds admission and receipt export until originating custody is
+acknowledged, and refuses every retry after an ambiguous initial claim/custody
+outcome. It supplies no production custodian, exclusive launch enrollment,
+supervisor authentication or termination verifier; #1336 owns those prerequisites.
+
 The explicit native trial exercises the built zone, native Nakama and disposable
 PostgreSQL in `TestClosedLoopClaimAfterZoneDeath` and
 `TestClosedLoopAcknowledgedZoneDeath` (#1330). The first control holds the actual

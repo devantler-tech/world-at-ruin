@@ -3,6 +3,7 @@ package zoneclaim
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/sim"
@@ -23,6 +24,8 @@ type ReceiptGate struct {
 	backend   ReceiptClaimer
 	receipt   Receipt
 	captured  bool
+	custodian ReceiptCustodian
+	uncertain bool
 }
 
 // NewReceiptGate requires explicit receipt-capable admission dependencies and
@@ -39,6 +42,11 @@ func NewReceiptGate(source BindingSource, backend ReceiptClaimer) (*ReceiptGate,
 // Claim serializes capture so overlapping admissions cannot adopt two lifetimes.
 // Retain a validated receipt even when the subsequent upgrade is refused.
 func (g *ReceiptGate) Claim(ctx context.Context, token string, observer sim.EntityID) error {
+	if g.custodian != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
 	select {
 	case <-ctx.Done():
 		return ErrRefused
@@ -48,10 +56,23 @@ func (g *ReceiptGate) Claim(ctx context.Context, token string, observer sim.Enti
 	if ctx.Err() != nil {
 		return ErrRefused
 	}
+	g.mu.Lock()
+	uncertain := g.uncertain
+	g.mu.Unlock()
+	if uncertain {
+		return ErrRefused
+	}
 	original, captured := g.Receipt()
 	binding, err := g.source.ClaimBinding()
 	if err != nil || !g.source.ClaimBindingCurrent(binding) || (captured && !original.Matches(binding, observer)) {
 		return ErrRefused
+	}
+	// Latch before dispatch: a failed claim reply can follow a remote commit.
+	// Only the originating custody acknowledgement may clear this latch.
+	if g.custodian != nil && !captured {
+		g.mu.Lock()
+		g.uncertain = true
+		g.mu.Unlock()
 	}
 	receipt, err := g.backend.ClaimWithReceipt(ctx, binding, token, observer)
 	if err != nil || !receipt.Matches(binding, observer) || (captured && !original.Equal(receipt)) {
@@ -62,6 +83,14 @@ func (g *ReceiptGate) Claim(ctx context.Context, token string, observer sim.Enti
 		g.receipt = receipt
 		g.captured = true
 		g.mu.Unlock()
+		if g.custodian != nil {
+			if ctx.Err() != nil || g.custodian.RetainOriginal(ctx, receipt) != nil || ctx.Err() != nil {
+				return ErrRefused
+			}
+			g.mu.Lock()
+			g.uncertain = false
+			g.mu.Unlock()
+		}
 	}
 	if ctx.Err() != nil || !g.source.ClaimBindingCurrent(binding) {
 		return ErrRefused
@@ -70,9 +99,13 @@ func (g *ReceiptGate) Claim(ctx context.Context, token string, observer sim.Enti
 }
 
 // Receipt returns a copy of the immutable original fence, never a fresh lookup.
+// Custody-aware gates withhold it until the originating custody acknowledgement.
 // The caller must establish independent session-end authority before using it.
 func (g *ReceiptGate) Receipt() (Receipt, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.uncertain {
+		return Receipt{}, false
+	}
 	return g.receipt, g.captured
 }
