@@ -448,7 +448,7 @@ func custodyBindingFault(t *testing.T, f *fixture, collection, field string) {
 		value, receiptPath = strings.Repeat("b", 64), "{receipt,Fence,LeaseObjectID}"
 		expected.Lifetime.LeaseObjectID, receipt.Fence.LeaseObjectID = value, value
 	case "attempt_digest":
-		value, receiptPath = strings.Repeat("b", 52), "{receipt,Fence,AttemptDigest}"
+		value, receiptPath = strings.Repeat("b", 51)+"a", "{receipt,Fence,AttemptDigest}"
 		expected.Lifetime.AttemptDigest, receipt.Fence.AttemptDigest = value, value
 	case "allocation_id":
 		value, receiptPath = "zone-b", "{receipt,Fence,AllocationID}"
