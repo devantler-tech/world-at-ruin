@@ -44,8 +44,9 @@ for ((attempt=1;attempt<=30;attempt++)); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then echo 'disposable native database did not become ready' >&2; exit 1; fi
-# Twelve minutes bounds all 34 mandatory scenarios, including the thirteen
-# two-target recovery cuts and fifteen complete-proof publication cuts.
+# Fourteen minutes bounds all 34 mandatory scenarios, including the thirteen
+# two-target recovery cuts, fifteen complete-proof publication cuts and two
+# additional restarted 45-second expiry controls after exact zone death.
 # Individual RPC, stage and process limits stay fixed;
 # the suite-level budget includes their actual native startup/cleanup work.
 trial_id=$(docker create --network "$network" --read-only --cap-drop ALL \
@@ -53,7 +54,7 @@ trial_id=$(docker create --network "$network" --read-only --cap-drop ALL \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 \
   --tmpfs /var/run/secrets/kubernetes.io/serviceaccount:rw,nosuid,nodev,size=1m,uid=10001,gid=10001,mode=0700 \
   -e WAR_NATIVE_DB_PASSWORD "$image" -war-experimental -war-bundle=/out/bundle \
-  -war-postgres=postgres:5432 -war-zone=/out/zone -test.v -test.timeout=12m)
+  -war-postgres=postgres:5432 -war-zone=/out/zone -test.v -test.timeout=14m)
 docker start -a "$trial_id" | tee "$state/trial.log"
 exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$trial_id")
 if [[ "$exit_code" != 0 ]] || ! grep -q '^PASS$' "$state/trial.log"; then
