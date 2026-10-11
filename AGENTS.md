@@ -1150,8 +1150,17 @@ the permanent blocking policy.
   process-death seams through native storage. Production authenticated durable custody,
   exclusive authorization, serving/retained reader adoption and quarantine release
   remain #1315/#793 gates. Run the full capability race suite, native probe tests,
-  fourteen-family storage-history guard and all thirty-two native scenarios.
+  fourteen-family storage-history guard and all required native scenarios.
   See [ADR 0041](docs/adr/0041-publish-an-acknowledged-complete-recovery-proof.md).
+- **Claim lifetime after zone death:** the native acceptance includes the exact owned
+  zone's kill/join during a PostgreSQL-held claim, ordinary disconnect cancellation,
+  and a bounded transparent mutual-TLS transport that permits the original request
+  to commit after its zone exits. Late unacknowledged and acknowledged claims must
+  remain unchanged across native restart, public handoff refusal and active cleanup
+  of an unclaimed canary. Run both native architectures and the ordinary transport
+  race controls. These test-only observations capture no original completion receipt
+  and grant no session-end authority. [ADR 0020](docs/adr/0020-retain-exact-claim-receipts-for-private-completion.md)
+  keeps independent production authority and protected receipt custody under #1318.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
