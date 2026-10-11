@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,18 +36,10 @@ func TestCustodyRefusalRetainsRemotelyAcknowledgedClaim(t *testing.T) {
 				t.Fatal(err)
 			}
 			var requests atomic.Int32
-			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			client, _ := f.serveHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				handler.ServeHTTP(w, r)
 			}))
-			server.TLS = f.serverTLS
-			server.StartTLS()
-			t.Cleanup(server.Close)
-			client, err := NewClient(server.URL+"/v1/claim", f.clientTLS)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(client.Close)
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			var original zoneclaim.Receipt

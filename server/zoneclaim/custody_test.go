@@ -24,10 +24,18 @@ func custodyFixture() (*receiptSource, Receipt) {
 	return &receiptSource{binding: b, current: true}, r
 }
 
-// An initial uncertain remote claim must not become a replay-derived receipt.
-func TestCustodyGateQuarantinesUncertainInitialClaim(t *testing.T) {
-	for _, mode := range []string{"error", "malformed receipt", "canceled acknowledgement"} {
-		t.Run(mode, func(t *testing.T) {
+// Neither initial claim nor custody uncertainty may become a replay-derived receipt.
+func TestCustodyGateQuarantinesUncertainAcknowledgement(t *testing.T) {
+	for _, test := range []struct {
+		name, claimMode, custodyMode string
+	}{
+		{"claim error", "error", ""},
+		{"malformed claim receipt", "malformed", ""},
+		{"canceled claim acknowledgement", "canceled", ""},
+		{"lost custody acknowledgement", "", "lost"},
+		{"canceled custody acknowledgement", "", "canceled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			source, original := custodyFixture()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -37,30 +45,43 @@ func TestCustodyGateQuarantinesUncertainInitialClaim(t *testing.T) {
 				if calls > 1 {
 					return original, nil
 				}
-				switch mode {
+				switch test.claimMode {
 				case "error":
 					return Receipt{}, errors.New("claim acknowledgement lost")
-				case "malformed receipt":
+				case "malformed":
 					bad := original
 					bad.Fence.LeaseVersion = "*"
 					return bad, nil
-				default:
+				case "canceled":
 					cancel()
-					return original, nil
 				}
-			}), CustodyConfig{Enabled: true, Custodian: custodianFunc(func(context.Context, Receipt) error { custodyCalls++; return nil })})
+				return original, nil
+			}), CustodyConfig{Enabled: true, Custodian: custodianFunc(func(context.Context, Receipt) error {
+				custodyCalls++
+				switch test.custodyMode {
+				case "canceled":
+					cancel()
+				case "lost":
+					return errors.New("custody acknowledgement lost")
+				}
+				return nil
+			})})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if gate.Claim(ctx, "token", 1) == nil {
-				t.Fatal("uncertain initial claim admitted")
+				t.Fatal("uncertain acknowledgement admitted")
 			}
 			for range 3 {
 				if gate.Claim(t.Context(), "token", 1) == nil {
 					t.Fatal("uncertain original claim replayed into admission")
 				}
 			}
-			if r, ok := gate.Receipt(); ok || r != (Receipt{}) || calls != 1 || custodyCalls != 0 {
+			wantCustodyCalls := 0
+			if test.custodyMode != "" {
+				wantCustodyCalls = 1
+			}
+			if r, ok := gate.Receipt(); ok || r != (Receipt{}) || calls != 1 || custodyCalls != wantCustodyCalls {
 				t.Fatal("quarantined claim exported or replayed receipt material")
 			}
 		})
@@ -151,42 +172,6 @@ func TestCustodyGateWithholdsAdmissionAndReceiptUntilAcknowledgement(t *testing.
 	}
 	if err := gate.Claim(t.Context(), "token", 1); err != nil || claimCalls.Load() != 2 || custodyCalls.Load() != 1 {
 		t.Fatal("reconnect refreshed custody or bypassed claim authentication")
-	}
-}
-
-func TestCustodyGateQuarantinesFailedCustody(t *testing.T) {
-	for _, mode := range []string{"lost acknowledgement", "canceled acknowledgement"} {
-		t.Run(mode, func(t *testing.T) {
-			source, original := custodyFixture()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			calls, custodyCalls := 0, 0
-			gate, err := NewCustodiedReceiptGate(source, receiptFunc(func(context.Context, agones.ClaimBinding, string, sim.EntityID) (Receipt, error) {
-				calls++
-				return original, nil
-			}), CustodyConfig{Enabled: true, Custodian: custodianFunc(func(context.Context, Receipt) error {
-				custodyCalls++
-				if mode == "canceled acknowledgement" {
-					cancel()
-					return nil
-				}
-				return errors.New("custody acknowledgement lost")
-			})})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if gate.Claim(ctx, "token", 1) == nil {
-				t.Fatal("uncertain custody admitted")
-			}
-			for range 3 {
-				if gate.Claim(t.Context(), "token", 1) == nil {
-					t.Fatal("custody retry restored admission")
-				}
-			}
-			if r, ok := gate.Receipt(); ok || r != (Receipt{}) || calls != 1 || custodyCalls != 1 {
-				t.Fatal("uncertain custody retried or exported a receipt")
-			}
-		})
 	}
 }
 
