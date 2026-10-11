@@ -3,6 +3,7 @@
 package nakamatrial
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
@@ -44,6 +45,7 @@ func TestClosedLoopClaimAfterZoneDeath(t *testing.T) {
 			if f.blockedClaims() != 1 {
 				t.Fatal("death control did not isolate exactly one native claim writer")
 			}
+			writerPID := f.heldClaimWriter()
 			z.killZone()
 			select {
 			case err := <-pending:
@@ -54,7 +56,7 @@ func TestClosedLoopClaimAfterZoneDeath(t *testing.T) {
 				t.Fatal("socket admission did not retire after exact zone death")
 			}
 			if peer == "ordinary" {
-				waitFor(t, time.Second, "zone disconnect canceled the held native write", func() bool { return f.blockedClaims() == 0 })
+				waitFor(t, time.Second, "zone disconnect canceled the held native write", func() bool { return f.claimWriterRetired(writerPID) })
 			} else {
 				select {
 				case <-z.claimDisconnected:
@@ -70,7 +72,7 @@ func TestClosedLoopClaimAfterZoneDeath(t *testing.T) {
 				t.Fatal("held transaction changed original claim ownership")
 			}
 			release()
-			waitFor(t, 2*time.Second, "original native request settled", func() bool { return f.blockedClaims() == 0 })
+			waitFor(t, 2*time.Second, "original native request settled", func() bool { return f.claimWriterRetired(writerPID) })
 			if peer == "ordinary" {
 				after, newVersion, _, _ := f.row(leaseKey(uid))
 				if after != before || newVersion != version {
@@ -145,4 +147,29 @@ func (f *fixture) retainDeadClaim(account, uid string) {
 	if after != claimed || afterVersion != version || f.resource("zone-a") == nil || calls != allocations {
 		f.t.Fatal("zone death or restart released, refreshed or redispatched claimed ownership")
 	}
+}
+
+// heldClaimWriter pins the independently observed PostgreSQL backend before death.
+func (f *fixture) heldClaimWriter() int {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(f.t.Context(), time.Second)
+	defer cancel()
+	var pid int
+	if err := f.db.QueryRowContext(ctx, "SELECT pid FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query ILIKE '%storage%'", f.dbName).Scan(&pid); err != nil || pid <= 0 {
+		f.t.Fatal("identify original held native storage backend")
+	}
+	return pid
+}
+
+// claimWriterRetired refuses settlement while the original statement remains active.
+// Idle or departed is an observation of this request, never session-end authority.
+func (f *fixture) claimWriterRetired(pid int) bool {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(f.t.Context(), time.Second)
+	defer cancel()
+	var active int
+	if err := f.db.QueryRowContext(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=$1 AND pid=$2 AND state='active'", f.dbName, pid).Scan(&active); err != nil {
+		f.t.Fatal("observe original native storage backend settlement")
+	}
+	return active == 0
 }
