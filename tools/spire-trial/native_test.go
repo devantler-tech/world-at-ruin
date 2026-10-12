@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -42,12 +41,7 @@ func TestMain(m *testing.M) {
 // TestNativeSPIREAttestedRoles proves real issuance, exact authorization and
 // owned retirement without granting original-process or launch authority.
 func TestNativeSPIREAttestedRoles(t *testing.T) {
-	if err := verifyController(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-	f := newNativeFixture(t, ctx)
+	f := newControllerFixture(t)
 	primary := f.startIssuer("primary", 18443)
 	alternate := f.startIssuer("alternate", 18444)
 	roles := []string{"supervisor", "custodian", "child"}

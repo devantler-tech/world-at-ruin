@@ -11,8 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -191,28 +189,9 @@ func runWorker(role, api, private string) int {
 		return fail(err, "Listener")
 	}
 	var effects uint64
-	server := &http.Server{Handler: diagnosticHandler(&effects), ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second, IdleTimeout: 3 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
-	stopped := make(chan error, 1)
-	go func() { stopped <- server.Serve(listener) }()
-	defer func() {
-		_ = server.Close()
-		select {
-		case <-stopped:
-		case <-time.After(3 * time.Second):
-		}
-	}()
-	if err := out.Encode(response{ID: svid.ID.String(), Address: listener.Addr().String()}); err != nil {
-		return 1
-	}
-	input := json.NewDecoder(os.Stdin)
-	for {
-		var c command
-		if err := input.Decode(&c); err != nil {
-			if errors.Is(err, io.EOF) {
-				return 0
-			}
-			return 1
-		}
+	stopHTTP := startWorkerHTTP(listener, diagnosticHandler(&effects))
+	defer stopHTTP()
+	return workerCommands(out, response{ID: svid.ID.String(), Address: listener.Addr().String()}, func(c command) (response, bool) {
 		r := response{}
 		switch c.Op {
 		case "stats":
@@ -224,10 +203,8 @@ func runWorker(role, api, private string) int {
 		default:
 			r.Error = "unknown private diagnostic command"
 		}
-		if err := out.Encode(r); err != nil {
-			return 1
-		}
-	}
+		return r, false
+	})
 }
 
 // callDiagnostic uses one fresh authenticated connection, the exact expected

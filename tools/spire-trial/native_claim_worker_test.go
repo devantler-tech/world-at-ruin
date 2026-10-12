@@ -12,12 +12,8 @@ import (
 	"crypto/x509"
 	"encoding/base32"
 	"encoding/json"
-	"errors"
-	"io"
-	"log"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -38,26 +34,13 @@ const claimsFixtureDNS = "claims.fixture.test"
 // runClaimCaller needs no listener: its own attested credential is used only to
 // invoke the real client over the controller-selected owned loopback endpoint.
 func runClaimCaller(material *workloadapi.X509Context, out *json.Encoder) int {
-	if out.Encode(response{ID: material.DefaultSVID().ID.String()}) != nil {
-		return 1
-	}
-	input := json.NewDecoder(os.Stdin)
-	for {
-		var c command
-		if err := input.Decode(&c); err != nil {
-			if errors.Is(err, io.EOF) {
-				return 0
-			}
-			return 1
-		}
+	return workerCommands(out, response{ID: material.DefaultSVID().ID.String()}, func(c command) (response, bool) {
 		r := response{Error: "unknown private caller command"}
 		if c.Op == "claim" {
 			r = callPrivateClaim(c, material)
 		}
-		if out.Encode(r) != nil {
-			return 1
-		}
-	}
+		return r, false
+	})
 }
 
 // fixtureBinding carries synthetic storage routing, not production authority.
@@ -126,55 +109,33 @@ func runClaimServer(material *workloadapi.X509Context, out *json.Encoder) int {
 	}
 	var effects atomic.Uint64
 	var verified atomic.Bool
-	server := &http.Server{ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second, IdleTimeout: 3 * time.Second, ErrorLog: log.New(io.Discard, "", 0), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	observingHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		observed := &observedClaimWriter{ResponseWriter: w}
 		handler.ServeHTTP(observed, r)
 		if observed.status == http.StatusOK && r.URL.Path == "/v2/claim" {
 			effects.Add(1)
 			verified.Store(r.TLS != nil && r.TLS.HandshakeComplete && len(r.TLS.VerifiedChains) > 0)
 		}
-	})}
-	stopped := make(chan error, 1)
-	go func() { stopped <- server.Serve(listener) }()
-	defer func() {
-		_ = server.Close()
-		select {
-		case <-stopped:
-		case <-time.After(3 * time.Second):
-		}
-	}()
-	if out.Encode(response{ID: material.DefaultSVID().ID.String(), Address: listener.Addr().String(), Expiry: expiry.UnixNano()}) != nil {
-		return 1
-	}
-	input := json.NewDecoder(os.Stdin)
-	for {
-		var c command
-		if err := input.Decode(&c); err != nil {
-			if errors.Is(err, io.EOF) {
-				return 0
-			}
-			return 1
-		}
+	})
+	stopHTTP := startWorkerHTTP(listener, observingHandler)
+	defer stopHTTP()
+	ready := response{ID: material.DefaultSVID().ID.String(), Address: listener.Addr().String(), Expiry: expiry.UnixNano()}
+	return workerCommands(out, ready, func(c command) (response, bool) {
 		if c.Op != "stats" {
-			if out.Encode(response{Error: "unknown private claims command"}) != nil {
-				return 1
-			}
-			continue
+			return response{Error: "unknown private claims command"}, false
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		current, err := store.Load(ctx, record.Lease.UserID, record.Lease.ReservationID)
 		cancel()
 		if err != nil {
-			return fail()
+			return response{Error: "private claims fixture failed"}, true
 		}
 		generation := int64(0)
 		if !current.Lease.ClaimedAt.IsZero() {
 			generation = current.Lease.ClaimedAt.UnixNano()
 		}
-		if out.Encode(response{Effects: effects.Load(), Verified: verified.Load(), Claimed: !current.Lease.ClaimedAt.IsZero(), Version: current.Version, Generation: generation, Writes: uint64(len(storage.WrittenValues()))}) != nil {
-			return 1
-		}
-	}
+		return response{Effects: effects.Load(), Verified: verified.Load(), Claimed: !current.Lease.ClaimedAt.IsZero(), Version: current.Version, Generation: generation, Writes: uint64(len(storage.WrittenValues()))}, false
+	})
 }
 
 // callPrivateClaim constructs the actual client from this process's snapshot.

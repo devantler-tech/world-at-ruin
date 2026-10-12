@@ -3,22 +3,15 @@
 package spiretrial
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"testing"
-	"time"
 )
 
 // TestNativeSPIREPrivateClaim proves actual issuance and the real v2 handler/client
 // seam. The resolver and storage remain synthetic, without Nakama ACK or custody.
 func TestNativeSPIREPrivateClaim(t *testing.T) {
-	if err := verifyController(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-	f := newNativeFixture(t, ctx)
+	f := newControllerFixture(t)
 	primary := f.startIssuer("claims-primary", 18445)
 	alternate := f.startIssuer("claims-alternate", 18446)
 	zone := f.startWorker("zone", primary)

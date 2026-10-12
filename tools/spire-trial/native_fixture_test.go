@@ -43,6 +43,19 @@ type nativeWorker struct {
 	ready   response
 }
 
+// newControllerFixture preserves the same controller profile and proof deadline
+// for each independent native acceptance case, including cleanup on early failure.
+func newControllerFixture(t *testing.T) *nativeFixture {
+	t.Helper()
+	if err := verifyController(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	f := newNativeFixture(t, ctx)
+	t.Cleanup(cancel)
+	return f
+}
+
 // newNativeFixture owns one scratch tree and registers retirement before launch.
 // Its traversable root contains separate private issuer state and public sockets.
 func newNativeFixture(t *testing.T, ctx context.Context) *nativeFixture {
