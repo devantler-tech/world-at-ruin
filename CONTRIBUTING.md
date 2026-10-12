@@ -27,8 +27,11 @@ provenance rules.
   On macOS, `/Applications/Godot.app/Contents/MacOS/Godot` can replace `godot` in the commands below.
   Exporting needs the matching **4.7.1** export templates; running from source does not.
 - Server work uses **Go 1.27.2**, as declared in `server/go.mod`. Check `go version`; automatic
-  toolchain selection may download the pinned version when you enter the module. Client play does
-  not require a server, cluster, credentials, or Go.
+  toolchain selection may download the pinned version when you enter the module. Race tests need
+  cgo enabled (`go env CGO_ENABLED` must print `1`); on Linux, install a C compiler such as GCC or
+  Clang. See the [Go race-detector requirements](https://go.dev/doc/articles/race_detector#Requirements).
+  The security checks use **govulncheck 1.7.0**, pinned in CI. Client play does not require a server,
+  cluster, credentials, or Go.
 - Optional humanoid regeneration uses Blender **5.2.0 LTS** and MPFB **2.0.16**. Follow the
   [kit guide](tools/artgen/humanoid_kit/README.md) before installing extensions or downloading packs.
 - Optional local GameServer storage trials have platform and download prerequisites in the
@@ -63,9 +66,11 @@ export WAR_UPDATE_CHECK=0
 godot --path client
 ```
 
-This runs offline with disposable character, vault, recovery, and update-history files. The starter
-cave should open; `WASD` moves, `C` opens character reshaping, and `L` opens the dev log. Close the
-game before inspecting or removing that temporary directory. Keep these variables set for every
+This runs offline with disposable character, vault, recovery, and update-history files. On this
+fresh save, the character creator opens first: shape your wanderer and select **Wake** to enter
+the starter cave. Movement stays disabled until Wake. Then `WASD` moves, `C` opens character
+reshaping, and `L` opens the dev log. Close the game before inspecting or removing that temporary
+directory. Keep these variables set for every
 launch in this terminal. A launch from another terminal or the app icon uses its own environment
 and can reach your regular saves. Never delete the normal Godot user-data directory to fix a test.
 
@@ -87,7 +92,8 @@ Neither check proves the full game or server is ready.
 
 Before submitting, follow the full applicable [Maintenance checks](AGENTS.md#maintenance): the
 client import, an isolated 120-frame boot with `BOOT_OK` and no script errors, the complete client
-regression suite and GDScript lint; or server formatting, vet, race tests, build, and lint. All
+regression suite and GDScript lint; or server formatting, vet, race tests, build, lint, and
+`govulncheck ./...` from both `server/` and `.github/scripts/release-credential-boundary/`. All
 regression scenes under `client/tests/` are required; selected tests are only the earlier first
 success signal. The CI workflow records the complete suite and its dedicated named checks. Run player
 tests through the repository's save-isolation helpers, not by launching their scenes directly.
@@ -103,8 +109,9 @@ check to get a green result.
 Use signed commits and open a **draft** pull request with a Conventional Commit title, such as
 `docs: clarify the source launch setup` or `fix: preserve a character during an update`. Keep the
 inherited template's **Why**, **What**, and **Fixes #** structure: describe the problem and outcome
-in plain language and link the agreed issue. Disclose AI assistance according to the repository's
-artifact conventions in the [organization contribution guide](https://github.com/devantler-tech/.github/blob/main/.github/CONTRIBUTING.md).
+in plain language and link the agreed issue. If you used AI assistance, state that in the pull
+request description and take responsibility for the submitted code, its licence and validation.
+Do not present AI-assisted work as unaided human work.
 
 Record which checks and user-facing paths you actually exercised, including any limits, in a
 pull-request comment. Address review feedback and wait for the current commit's required checks
