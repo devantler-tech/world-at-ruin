@@ -169,6 +169,7 @@ type reply struct {
 	PID    int
 	Status map[string]string
 	Inode  uint64
+	Seal   *sealEvidence
 }
 
 // launch captures the kernel process handle in this trusted start operation.
@@ -365,6 +366,9 @@ func statusEvidence() (map[string]string, error) {
 
 // worker executes only the diagnostic commands used by the native fixture.
 func worker(mode string) int {
+	if strings.HasPrefix(mode, "exec:") {
+		return execWorker(mode)
+	}
 	if mode == "resistant" {
 		signal.Ignore(syscall.SIGTERM)
 	}
@@ -419,7 +423,11 @@ func worker(mode string) int {
 		return 1
 	}
 	encoder := json.NewEncoder(os.Stdout)
-	if encoder.Encode(reply{Event: "ready", PID: os.Getpid(), Status: status, Inode: socketStat.Ino}) != nil {
+	seal, sealErr := sealWorker()
+	if sealErr != nil || seal == nil || seal.Result != (sealResult{}) {
+		return 1
+	}
+	if encoder.Encode(reply{Event: "ready", PID: os.Getpid(), Status: status, Inode: socketStat.Ino, Seal: seal}) != nil {
 		return 1
 	}
 	scanner := bufio.NewScanner(os.Stdin)

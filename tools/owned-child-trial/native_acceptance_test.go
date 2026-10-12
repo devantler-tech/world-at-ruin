@@ -54,6 +54,9 @@ func requireReady(t *testing.T, p *owned) reply {
 	if err := validateIdentity(r); err != nil {
 		t.Fatal(err)
 	}
+	if r.Seal == nil || !r.Seal.Synchronized || !p.boundary.completeSeal(r.Seal.Result.Value, r.Seal.Result.Errno) {
+		t.Fatal("trusted worker did not complete process-wide sealing")
+	}
 	return r
 }
 

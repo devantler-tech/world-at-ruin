@@ -978,9 +978,12 @@ the permanent blocking policy.
   test vulnerability graph are required. Run
   `bash tools/smoke-owned-child-native.sh <local-image> --experimental`;
   `bash tools/native-private-server-harness.test.sh` checks both private-server
-  wrappers. See ADR 0047 and `docs/design/owned-child-trial.md`. This is a
-  diagnostic process boundary, with no serving caller or publication. Executable
-  sealing remains #1345; custody composition and witness authority remain
+  wrappers. Trusted startup adds process-wide TSYNC exec denial before diagnostic
+  admission. Both raw return and errno must be zero. Native existing/future-thread
+  exec controls, divergence/error refusals, wrong-policy SIGSYS and explicit ABI
+  evidence limits are required. See ADRs 0047–0048 and `docs/design/owned-child-trial.md`.
+  This is a diagnostic process boundary, with no serving caller or publication.
+  Raw-fork and gameplay admission remain #1345; custody composition and witness authority remain
   #1346/#1341. Retire the experimental tooling through #1192 after adoption.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
