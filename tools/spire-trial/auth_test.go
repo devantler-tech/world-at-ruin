@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestDiagnosticEffectsRequireExactMethodAndPath requires refusal before any counted effect.
 func TestDiagnosticEffectsRequireExactMethodAndPath(t *testing.T) {
 	var effects uint64
 	h := diagnosticHandler(&effects)

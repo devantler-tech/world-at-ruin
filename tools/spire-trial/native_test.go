@@ -21,6 +21,8 @@ var workerRole = flag.String("war-role", "", "private diagnostic worker")
 var workerAPI = flag.String("war-api", "", "owned Workload API socket")
 var issuerState = flag.String("war-issuer-state", "", "private issuer state refusal control")
 
+// TestMain refuses default execution before state or processes, then enforces
+// no-new-privileges for both the controller and independently attested workers.
 func TestMain(m *testing.M) {
 	flag.Parse()
 	if !*experimental {
@@ -37,6 +39,8 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// TestNativeSPIREAttestedRoles proves real issuance, exact authorization and
+// owned retirement without granting original-process or launch authority.
 func TestNativeSPIREAttestedRoles(t *testing.T) {
 	if err := verifyController(); err != nil {
 		t.Fatal(err)
@@ -188,11 +192,14 @@ func TestNativeSPIREAttestedRoles(t *testing.T) {
 	fmt.Println("SPIRE NATIVE PASS: three own Workload API identities; role cycle; six wrong pairs; method/path; key possession; expected server; alternate issuer; unregistered UID; same-role positive; owned cleanup")
 }
 
+// runCLI invokes the pinned issuer administrator without a shell. Its output
+// can contain bootstrap material and must remain inside the disposable fixture.
 func runCLI(ctx context.Context, args ...string) ([]byte, error) {
 	c := exec.CommandContext(ctx, "/opt/spire/bin/spire-server", args...)
 	return c.Output()
 }
 
+// privateJSON decodes issuer replies without disclosing their raw token-bearing bytes.
 func privateJSON(data []byte, output any) error {
 	if err := json.Unmarshal(data, output); err != nil {
 		return fmt.Errorf("private SPIRE CLI reply could not be decoded")

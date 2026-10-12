@@ -43,6 +43,8 @@ type nativeWorker struct {
 	ready   response
 }
 
+// newNativeFixture owns one scratch tree and registers retirement before launch.
+// Its traversable root contains separate private issuer state and public sockets.
 func newNativeFixture(t *testing.T, ctx context.Context) *nativeFixture {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "war-spire-")
@@ -56,12 +58,17 @@ func newNativeFixture(t *testing.T, ctx context.Context) *nativeFixture {
 	t.Cleanup(f.close)
 	return f
 }
+
+// write creates controller-selected fixture files with explicit permission modes.
 func (f *nativeFixture) write(path, body string, mode os.FileMode) {
 	f.t.Helper()
 	if err := os.WriteFile(path, []byte(body), mode); err != nil {
 		f.t.Fatal(err)
 	}
 }
+
+// start retains only a process this fixture actually started, with one Wait
+// owner and a private log that never reaches public CI diagnostics.
 func (f *nativeFixture) start(cmd *exec.Cmd) *ownedProcess {
 	f.t.Helper()
 	log, err := os.CreateTemp(f.dir, "process-log-")
@@ -85,6 +92,9 @@ func (f *nativeFixture) start(cmd *exec.Cmd) *ownedProcess {
 	go func() { p.done <- cmd.Wait() }()
 	return p
 }
+
+// stop signals the retained owned handle and bounds TERM, KILL and exact join.
+// Joined processes release their private log and explicitly owned stdout reader.
 func (f *nativeFixture) stop(p *ownedProcess) {
 	f.t.Helper()
 	if p.joined {
@@ -140,6 +150,9 @@ func (f *nativeFixture) stop(p *ownedProcess) {
 		}
 	}
 }
+
+// close retires the entire owned set concurrently before removing private state.
+// Failed join retains that state and fails the experiment rather than claiming cleanup.
 func (f *nativeFixture) close() {
 	if f.closed {
 		return
@@ -162,6 +175,9 @@ func (f *nativeFixture) close() {
 		f.t.Error(err)
 	}
 }
+
+// cli bounds a controller-only SPIRE administrative call and keeps its
+// successful token-bearing reply private; failure exposes no raw issuer output.
 func (f *nativeFixture) cli(args ...string) []byte {
 	f.t.Helper()
 	ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
@@ -172,6 +188,10 @@ func (f *nativeFixture) cli(args ...string) []byte {
 	}
 	return data
 }
+
+// startIssuer starts a fresh real Server/Agent pair with private bootstrap
+// state, UID registrations and bounded transport readiness. Role readiness still
+// requires each worker's own exact SVID fetch.
 func (f *nativeFixture) startIssuer(name string, port int) nativeIssuer {
 	f.t.Helper()
 	private := filepath.Join(f.dir, name+"-private")
@@ -278,13 +298,17 @@ plugins {
 	}
 	return nativeIssuer{api: api, bundle: bundle, private: private}
 }
+
+// startWorker changes to a distinct unprivileged UID/GID before exec and retains
+// its private response pipe independently of process reaping. The unregistered
+// control must preserve its actual refusal even when decoded after joined exit.
 func (f *nativeFixture) startWorker(role string, issuer nativeIssuer) *nativeWorker {
 	f.t.Helper()
 	binary, err := os.Executable()
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	cmd := exec.CommandContext(f.ctx, binary, "-war-experimental", "-war-role="+role, "-war-api="+issuer.api, "-war-issuer-state="+issuer.private)
+	cmd := exec.CommandContext(f.ctx, binary, "-war-experimental", "-war-role", role, "-war-api", issuer.api, "-war-issuer-state", issuer.private)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: roleUID(role), Gid: roleUID(role), Groups: []uint32{}}}
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -335,6 +359,9 @@ func (f *nativeFixture) startWorker(role string, issuer nativeIssuer) *nativeWor
 	}
 	return w
 }
+
+// receive bounds one private reply; owned retirement closes the pipe on a
+// deadline failure so the decoder cannot keep the child lifetime alive.
 func (w *nativeWorker) receive() response {
 	w.f.t.Helper()
 	result := make(chan response, 1)
@@ -355,6 +382,9 @@ func (w *nativeWorker) receive() response {
 	}
 	return response{}
 }
+
+// exchange sends one diagnostic instruction over the controller-owned pipe.
+// This test protocol carries no private keys or production authority.
 func (w *nativeWorker) exchange(c command) response {
 	w.f.t.Helper()
 	if err := json.NewEncoder(w.input).Encode(c); err != nil {
@@ -363,6 +393,7 @@ func (w *nativeWorker) exchange(c command) response {
 	return w.receive()
 }
 
+// statusFields reads actual kernel credentials and capabilities of this process.
 func statusFields() (map[string]string, error) {
 	b, err := os.ReadFile("/proc/self/status")
 	if err != nil {
@@ -377,6 +408,9 @@ func statusFields() (map[string]string, error) {
 	}
 	return fields, nil
 }
+
+// verifyController permits only root with SETUID/SETGID/KILL, no inherited or
+// ambient capabilities, and enforced no-new-privileges.
 func verifyController() error {
 	fields, err := statusFields()
 	if err != nil {

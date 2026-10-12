@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 )
 
+// expectedCaller permits exactly one predecessor in the diagnostic role cycle.
+// Unknown roles have no permitted caller.
 func expectedCaller(server string) string {
 	switch server {
 	case "custodian":
@@ -18,7 +20,7 @@ func expectedCaller(server string) string {
 	}
 }
 
-// The TLS listener authenticates the role before this diagnostic handler runs.
+// diagnosticHandler applies the exact method/path gate after TLS authenticates the role.
 // This counter is deliberately unrelated to any launch or storage authority.
 func diagnosticHandler(effects *uint64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

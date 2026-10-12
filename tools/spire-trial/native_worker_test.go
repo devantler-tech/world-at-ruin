@@ -38,6 +38,7 @@ type response struct {
 	Effects                  uint64
 }
 
+// roleUID maps fixed diagnostic roles to disjoint users; unknown roles refuse.
 func roleUID(role string) uint32 {
 	switch role {
 	case "supervisor":
@@ -52,10 +53,14 @@ func roleUID(role string) uint32 {
 		return 0
 	}
 }
+
+// roleID constructs the exact test-domain principal used by both independent issuers.
 func roleID(role string) spiffeid.ID {
 	return spiffeid.RequireFromString("spiffe://war-fixture.test/role/" + role)
 }
 
+// verifyWorker observes real UID/GID, groups, capability sets and no-new-privileges,
+// then requires permission-denied access to the known-existing issuer state.
 func verifyWorker(role, private string) error {
 	uid := roleUID(role)
 	if uid == 0 || os.Getuid() != int(uid) || os.Geteuid() != int(uid) || os.Getgid() != int(uid) || os.Getegid() != int(uid) {
@@ -101,6 +106,10 @@ func verifyWorker(role, private string) error {
 	}
 	return nil
 }
+
+// runWorker fetches its own SPIRE credential before serving diagnostic mTLS.
+// The unregistered user preserves a single-shot issuer refusal instead of
+// turning it into a generic deadline or receiving controller-provided keys.
 func runWorker(role, api, private string) int {
 	out := json.NewEncoder(os.Stdout)
 	fail := func(err error, code string) int {
@@ -185,6 +194,9 @@ func runWorker(role, api, private string) int {
 	}
 }
 
+// callDiagnostic uses one fresh authenticated connection, the exact expected
+// server and locally fetched key. Negative controls change only the specified
+// key or public verifier bundle; the original credential remains private.
 func callDiagnostic(c command, material *workloadapi.X509Context) response {
 	// Every dial is fresh. Neither session resumption nor connection reuse can
 	// satisfy a key-possession or expected-server control.

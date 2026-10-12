@@ -2,6 +2,7 @@ package spiretrial
 
 import "testing"
 
+// TestRolePolicyIsOneDirectedCycle excludes self-calls, other roles and unknown principals.
 func TestRolePolicyIsOneDirectedCycle(t *testing.T) {
 	for _, server := range []string{"supervisor", "custodian", "child"} {
 		allowed := 0
