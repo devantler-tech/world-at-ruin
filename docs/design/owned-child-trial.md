@@ -4,7 +4,8 @@ This diagnostic experiment has no gameplay or serving caller. Build and run requ
 explicit opt-in; the image is never published. It provides the launch-time process
 handle and per-message sender increment of #1345, separately from SPIRE roles and
 claim custody. The process policy is in [ADR 0047](../adr/0047-prove-original-process-message-ownership.md);
-trusted startup exec sealing is in [ADR 0048](../adr/0048-seal-owned-child-exec-before-diagnostic-admission.md).
+trusted startup exec sealing is in [ADR 0048](../adr/0048-seal-owned-child-exec-before-diagnostic-admission.md);
+raw fork descendants are in [ADR 0049](../adr/0049-prove-fork-descendant-message-exclusion.md).
 
 On a native Linux Docker host, from the repository root:
 
@@ -58,6 +59,38 @@ names the original connection process. Refuse both replacement messages and requ
 another original positive. The isolated connection-only comparison accepts those
 same two packets; it cannot alter the secured diagnostic counter.
 
+The original also forks without exec while retaining three distinct OS threads.
+The native assembly trampoline uses copied memory and CLONE_PIDFD|SIGCHLD, with
+no shared memory, thread, vfork or namespace flags. It blocks catchable signals
+and restores/readbacks the exact parent mask before returning to Go, including
+the documented CLONE_PARENT_SETTID conflict's EINVAL control. Uncertain restoration
+terminates the worker. Every child operation stays in raw assembly: opening its
+own proc status, bounded read and EOF probe, nonblocking sendmsg with MSG_NOSIGNAL,
+one atomic private-pipe record, and raw exit or a finite sleep (five seconds for
+resistance/delay controls; thirty seconds for the separate orphan control).
+Both built executable variants undergo a compiled assembly audit. Child COW
+writes never constitute parent-visible evidence; only the launch-time kernel
+pidfd store and the complete private record are consumed by the original.
+
+The real fork packet has its own TGID, matching unprivileged identities, empty
+groups, zero effective/permitted/inheritable/ambient capabilities and NNP. Its
+restricted bounding set matches the original. Diagnostic effects remain zero
+for that packet while the connection-only comparison accepts the same packet;
+the original and unrelated canary remain usable after cleanup. The original
+alone consumes exact waitid(P_PIDFD, WEXITED|WNOHANG), requiring the captured
+child's PID/UID and terminal code/status before retiring its pidfd. Repeated
+cleanup retains the same terminal result. A TERM-resistant child must require
+actual SIGKILL. Native EPIPE/EBADF, incomplete status/record, delayed-child cleanup,
+missing-capture and uncertain-wait interface faults cannot count as proof.
+
+Parent death is intentionally outside the passing cleanup suite. A separate
+container invocation kills the original before its raw descendant joins. The
+controller deliberately pauses before killing the original, so the orphan hold
+must outlast delayed progress as well as the original-death and reader deadlines.
+original's Cmd.Wait completes, but descendant join remains unproved and the
+verdict must fail with containment retained. The wrapper requires that precise
+nonzero refusal and verifies container removal before reporting its own success.
+
 Diagnostic retirement is permanent. It precedes stop signaling and follows observed
 death, lost control or incomplete helper output. Stop sends TERM through the retained
 pidfd, escalates to KILL after 300 ms and bounds the owned join to three seconds.
@@ -74,6 +107,6 @@ claiming an unsupported-kernel launch happened natively.
 An observed live pidfd followed by a counter increment is a local authorization
 point; physical death can race that point. Trusted startup exec denial does not
 prove immutable in-process code, independent validation of a dishonest sealing
-report, raw-fork resistance, prevention of in-process proxying, original allocation/claim
+report, prevention of fork or in-process proxying, original allocation/claim
 authority or rollback-resistant custody. Those remain #1345/#1346/#1341. The
 experiment retirement decision belongs to #1192, due for review by 2026-11-12.

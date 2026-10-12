@@ -10,6 +10,8 @@ RUN gofmt -l . > /tmp/unformatted && test ! -s /tmp/unformatted && go mod downlo
     && go vet -tags=war_child_trial ./... \
     && go test -race -mod=readonly -tags=war_child_trial -c -o /out/owned-child-race.test . \
     && CGO_ENABLED=0 go test -mod=readonly -tags=war_child_trial -c -o /out/owned-child.test . \
+    && bash audit-fork-assembly.sh /out/owned-child.test \
+    && bash audit-fork-assembly.sh /out/owned-child-race.test \
     && mkdir -p /out/tmp && chmod 1777 /out/tmp
 FROM build AS source-race
 # The race executable needs the builder's C runtime. This unpublished target is
