@@ -968,6 +968,20 @@ the permanent blocking policy.
   joined cleanup. The same-role second-process positive establishes no original
   process or launch ownership. See ADR 0046 and `docs/design/spire-role-trial.md`;
   #1345/#1346 and #1341 remain separate gates.
+- **Native owned-child acceptance:** the separate `tools/owned-child-trial`
+  module/image requires explicit build and run opt-in. Its trusted controller
+  uses the existing SETUID/SETGID/KILL profile; every diagnostic sender has empty
+  supplementary groups, matching real/effective/saved IDs, no capabilities and
+  no-new-privileges. Launch-time pidfds and per-message seqpacket credentials
+  distinguish the original child from same-user transferred/inherited socket
+  senders. Both native architectures, source race/lint and the actual tagged
+  test vulnerability graph are required. Run
+  `bash tools/smoke-owned-child-native.sh <local-image> --experimental`;
+  `bash tools/native-private-server-harness.test.sh` checks both private-server
+  wrappers. See ADR 0047 and `docs/design/owned-child-trial.md`. This is a
+  diagnostic process boundary, with no serving caller or publication. Executable
+  sealing remains #1345; custody composition and witness authority remain
+  #1346/#1341. Retire the experimental tooling through #1192 after adoption.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
