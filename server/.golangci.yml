@@ -63,6 +63,12 @@ linters:
         linters: [gosec]
         text: "G304: Potential file inclusion via variable"
         source: 'd, err := os\.Open\(private\)'
+      # The diagnostic socket ancestor contains no issuer or secret material;
+      # packet credentials, not a filesystem path, bind the launched sender.
+      - path: ^(\.\./tools/owned-child-trial/)?native_acceptance_test\.go$
+        linters: [gosec]
+        text: "G302: Expect file permissions to be 0600 or less"
+        source: 'if err := os\.Chmod\((directory, 0755|address, 0666)\); err != nil'
       # The private claim endpoint is immutable constructor configuration,
       # validated as HTTPS with a fixed path and no redirects. Player payloads
       # cannot influence its destination; private service addresses are intended.

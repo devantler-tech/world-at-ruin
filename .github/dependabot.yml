@@ -31,6 +31,15 @@ updates:
       default-days: 7
       semver-major-days: 14
 
+  # Disposable process ownership proof has its own syscall dependency graph.
+  - package-ecosystem: gomod
+    directory: /tools/owned-child-trial
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
