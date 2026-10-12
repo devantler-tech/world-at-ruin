@@ -86,8 +86,10 @@ package and exit zero.
 Neither check proves the full game or server is ready.
 
 Before submitting, follow the full applicable [Maintenance checks](AGENTS.md#maintenance): the
-client import, an isolated 120-frame boot with `BOOT_OK` and no script errors, relevant client
-regressions and GDScript lint; or server formatting, vet, race tests, build, and lint. Run player
+client import, an isolated 120-frame boot with `BOOT_OK` and no script errors, the complete client
+regression suite and GDScript lint; or server formatting, vet, race tests, build, and lint. All
+regression scenes under `client/tests/` are required; selected tests are only the earlier first
+success signal. The CI workflow records the complete suite and its dedicated named checks. Run player
 tests through the repository's save-isolation helpers, not by launching their scenes directly.
 Record a missing tool or unexecuted optional trial accurately instead of reporting a pass.
 

@@ -45,15 +45,18 @@ ignored input packs into this kit directory. Review those local changes before r
 
 ```sh
 tools/artgen/humanoid_kit/bootstrap.sh
-mkdir -p build/humanoid-kit-check/a build/humanoid-kit-check/b
-blender --background --python tools/artgen/humanoid_kit/bake.py -- "${PWD}/build/humanoid-kit-check/a/humanoid_base.glb"
-blender --background --python tools/artgen/humanoid_kit/bake.py -- "${PWD}/build/humanoid-kit-check/b/humanoid_base.glb"
-diff -r build/humanoid-kit-check/a build/humanoid-kit-check/b
+mkdir -p build/humanoid-kit-check
+war_bake_dir=$(mktemp -d "${PWD}/build/humanoid-kit-check/run.XXXXXX")
+mkdir "$war_bake_dir/a" "$war_bake_dir/b"
+blender --background --python tools/artgen/humanoid_kit/bake.py -- "$war_bake_dir/a/humanoid_base.glb"
+blender --background --python tools/artgen/humanoid_kit/bake.py -- "$war_bake_dir/b/humanoid_base.glb"
+diff -r "$war_bake_dir/a" "$war_bake_dir/b"
 ```
 
 Each bake must finish with `RESULT: SUCCESS`; the recursive comparison must exit zero without
 differences. A missing prerequisite, failed download, bake error, or difference is a failure to
-investigate, not a reason to copy partial output. Use fresh output directories for each comparison.
+investigate, not a reason to copy partial output. The unique directory gives each comparison fresh
+outputs, so an older file cannot survive into both bakes and hide a removed or renamed artifact.
 
 The bake writes `humanoid_base.glb`, `humanoid_base_report.txt`, the `equipment/` GLBs and
 `equipment.json`, and the `skins/` textures and `skins.json`. To update the committed kit, transfer
