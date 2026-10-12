@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Bound reviewed host phases; GNU timeout owns and terminates the child group.
 set -euo pipefail
+# shellcheck source=tools/process-group-lifecycle.sh
+source "$(dirname "${BASH_SOURCE[0]}")/process-group-lifecycle.sh"
 if [ "${1:-}" = --cleanup-containers ]; then
   directory="${2:?private container record directory required}"
   shopt -s nullglob
@@ -32,6 +34,7 @@ case "$phase" in
   'sandbox execution') seconds="${WAR_TRUSTED_PROBE_SECONDS:-180}"; maximum=180 ;;
   'host cache guard build') seconds="${WAR_TRUSTED_BUILD_SECONDS:-900}"; maximum=900 ;;
   'sandbox cleanup') seconds=30; maximum=30 ;;
+  'ordinary client step') seconds="${WAR_CLIENT_STEP_SECONDS:-2700}"; maximum=2700 ;;
   *) echo '::error::unknown trusted setup phase' >&2; exit 2 ;;
 esac
 grace="${WAR_TRUSTED_TERMINATION_SECONDS:-5}"
@@ -50,35 +53,51 @@ if ! timeout --version 2>/dev/null | grep -q 'GNU coreutils'; then
   exit 2
 fi
 pid=""
+phase_state="$(mktemp -d "${TMPDIR:-/tmp}/trusted-regression-phase.XXXXXX")"
+verdict_record="$phase_state/verdict"
+launching=true
+cancel_pending=false
+acknowledge_child() {
+  local verdict
+  if [ ! -f "$verdict_record" ] || ! verdict="$(cat "$verdict_record")" ||
+    [[ ! $verdict =~ ^[0-9]{1,3}$ ]] || [ "$verdict" -gt 255 ]; then
+    echo '::error::phase child join is unverified; private state retained' >&2
+    return 2
+  fi
+  case "$verdict" in 2|137|143)
+    echo '::error::phase child cleanup refused or supervisor exited by signal; private state retained' >&2
+    return 2;; esac
+  rm -rf "$phase_state"
+}
 # shellcheck disable=SC2329 # Invoked by the signal trap.
 cancel() {
-  trap - INT TERM
+  cancel_pending=true
+  # A signal can arrive after spawn but before $! is published to the owner.
+  if [ "$launching" = true ]; then return; fi
+  trap ':' INT TERM
   if [ -n "$pid" ]; then
-    kill -TERM -- "-$pid" 2>/dev/null || true
-    local tries=0
-    while kill -0 -- "-$pid" 2>/dev/null && [ "$tries" -lt $((grace * 10)) ]; do
-      sleep 0.1
-      tries=$((tries + 1))
-    done
-    kill -KILL -- "-$pid" 2>/dev/null || true
+    war_retire_group "$pid" "$grace" || exit 2
     wait "$pid" 2>/dev/null || true
   fi
+  acknowledge_child || exit 2
   echo "::error::$phase cancelled" >&2
   exit 130
 }
-trap cancel INT TERM
+trap 'trap ":" INT TERM; cancel' INT TERM
 set -m
-timeout --kill-after="${grace}s" "${seconds}s" "$@" &
+timeout --kill-after="${grace}s" "${seconds}s" bash "$(dirname "${BASH_SOURCE[0]}")/trusted-phase-command.sh" "$verdict_record" "$@" &
 pid=$!
 set +m
+launching=false
+if [ "$cancel_pending" = true ]; then cancel; fi
 status=0
 wait "$pid" || status=$?
 # Even a successful command cannot retain invocation-owned background children.
-kill -TERM -- "-$pid" 2>/dev/null || true
-kill -KILL -- "-$pid" 2>/dev/null || true
+war_retire_group "$pid" "$grace" || exit 2
 pid=""
 trap - INT TERM
 if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
   echo "::error::$phase timed out (${seconds}s; termination grace ${grace}s)" >&2
 fi
+acknowledge_child || exit 2
 exit "$status"

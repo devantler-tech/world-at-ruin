@@ -5,8 +5,16 @@ root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=tools/trusted-regression-lifecycle.sh
 source "$root/tools/trusted-regression-lifecycle.sh"
 context="$(mktemp -d)"
-trap 'trusted_stop_child; rm -rf "$context"' EXIT
-trap 'exit 130' INT TERM
+cleanup() {
+  local status=$trusted_cleanup_status
+  trap - EXIT
+  trap ':' INT TERM
+  trusted_stop_child || status=2
+  if [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$status" -ne 2 ]; then rm -rf "$context"; fi
+  exit "$status"
+}
+trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
+trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 cp "$(command -v godot)" "$context/godot"
 trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" docker build --pull --file "$root/.github/containers/trusted-regressions.Dockerfile" \
   --tag "world-trusted-regressions:build-$$" "$context" >&2

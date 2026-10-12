@@ -39,6 +39,8 @@
 #   [failure-message]  optional context for the product-law guards, whose
 #                      failures deserve a louder explanation than the default
 set -euo pipefail
+# shellcheck source=tools/process-group-lifecycle.sh
+source "$(dirname "${BASH_SOURCE[0]}")/process-group-lifecycle.sh"
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
 	echo "::error::usage: tools/run-client-test.sh <test-name> [failure-message]" >&2
@@ -67,7 +69,8 @@ if [ ! -f "client/tests/${name}.tscn" ]; then
 	exit 1
 fi
 
-if ! command -v godot >/dev/null 2>&1; then
+godot_bin="${GODOT_BIN:-godot}"
+if ! command -v "$godot_bin" >/dev/null 2>&1; then
 	echo "::error::${name} could not execute: godot was not found in PATH"
 	exit 2
 fi
@@ -82,11 +85,26 @@ timeout_marker="${run_dir}/timed-out"
 test_pid=""
 tee_pid=""
 watchdog_pid=""
+launching=true
+cancel_pending=false
+cleanup_started=false
+cleanup_status=0
+request_cancel() {
+	cancel_pending=true
+	if [ "$cleanup_started" = true ]; then return; fi
+	if [ "$launching" != true ]; then exit 130; fi
+}
 
 cleanup() {
+	trap ':' INT TERM
+	local status=$cleanup_status
+	local cleanup_failed=0
+	trap - EXIT
+	# A group signal and timeout's forwarding can deliver TERM twice. Do not
+	# let that second signal interrupt retirement of the separate engine group.
+	trap ':' INT TERM
 	if [ -n "${test_pid}" ]; then
-		kill -TERM -- "-${test_pid}" 2>/dev/null || true
-		kill -KILL -- "-${test_pid}" 2>/dev/null || true
+		war_retire_group "$test_pid" 2 || cleanup_failed=1
 	fi
 	for pid in "${watchdog_pid}" "${test_pid}" "${tee_pid}"; do
 		if [ -n "${pid}" ]; then
@@ -94,10 +112,14 @@ cleanup() {
 			wait "${pid}" 2>/dev/null || true
 		fi
 	done
+	if [ "$cleanup_failed" -ne 0 ]; then
+		exit 2
+	fi
 	rm -rf "${run_dir}"
+	exit "$status"
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'cleanup_status=$? cleanup_started=true; cleanup' EXIT
+trap 'trap ":" INT TERM; request_cancel' INT TERM
 
 mkfifo "${output_fifo}"
 tee "${log}" <"${output_fifo}" &
@@ -107,32 +129,53 @@ tee_pid=$!
 # waiting forever after Godot exits. Job control is the portable Bash way to
 # create that group on both Linux and macOS (where setsid is not available).
 set -m
-godot --headless --path client "res://tests/${name}.tscn" >"${output_fifo}" 2>&1 &
+"$godot_bin" --headless --path client "res://tests/${name}.tscn" >"${output_fifo}" 2>&1 &
 test_pid=$!
 set +m
 
 (
+	trap - EXIT
 	watchdog_sleep_pid=""
-	trap 'kill "${watchdog_sleep_pid}" 2>/dev/null || true
-		wait "${watchdog_sleep_pid}" 2>/dev/null || true
-		exit 0' INT TERM
-	sleep "${timeout_seconds}" &
-	watchdog_sleep_pid=$!
-	if ! wait "${watchdog_sleep_pid}"; then
+	watchdog_launching=false
+	watchdog_cancel_pending=$cancel_pending
+	watchdog_cancel() {
+		watchdog_cancel_pending=true
+		if [ "$watchdog_launching" = true ]; then return; fi
+		trap ':' INT TERM
+		if [ -n "$watchdog_sleep_pid" ]; then
+			kill "$watchdog_sleep_pid" 2>/dev/null || true
+			wait "$watchdog_sleep_pid" 2>/dev/null || true
+		fi
+		exit 0
+	}
+	trap 'trap ":" INT TERM; watchdog_cancel' INT TERM
+	watchdog_wait() {
+		watchdog_launching=true
+		sleep "$1" &
+		watchdog_sleep_pid=$!
+		watchdog_launching=false
+		if [ "$watchdog_cancel_pending" = true ]; then watchdog_cancel; fi
+		local result=0
+		wait "$watchdog_sleep_pid" || result=$?
+		watchdog_sleep_pid=""
+		return "$result"
+	}
+	if ! watchdog_wait "$timeout_seconds"; then
 		exit 0
 	fi
-	watchdog_sleep_pid=""
 	if kill -0 "${test_pid}" 2>/dev/null; then
 		# Publish the verdict before TERM can wake the wait below. Otherwise
 		# the waiter can cancel this watchdog before the marker is durable and
 		# misclassify an elapsed timeout as the child's exit status.
 		: >"${timeout_marker}"
 		kill -TERM -- "-${test_pid}" 2>/dev/null || true
-		sleep 2
+		watchdog_wait 2 || exit 0
 		kill -KILL -- "-${test_pid}" 2>/dev/null || true
 	fi
 ) &
 watchdog_pid=$!
+launching=false
+if [ "$cancel_pending" = true ]; then exit 130; fi
 
 if wait "${test_pid}"; then
 	test_status=0
@@ -142,8 +185,7 @@ fi
 # A completed test does not own background work. Terminate its entire process
 # group before waiting for tee so an inherited FIFO writer cannot outlive the
 # per-test bound (or leak into later tests).
-kill -TERM -- "-${test_pid}" 2>/dev/null || true
-kill -KILL -- "-${test_pid}" 2>/dev/null || true
+war_retire_group "$test_pid" 2 || exit 2
 test_pid=""
 
 kill "${watchdog_pid}" 2>/dev/null || true

@@ -5,6 +5,8 @@ root="$(cd "$(dirname "$0")/.." && pwd -P)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/client/tests" "$tmp/work/server/wire" "$tmp/work/.github/workflows" "$tmp/metadata" "$tmp/containers"
+mkdir "$tmp/state"
+export TMPDIR="$tmp/state"
 printf 'source
 ' >"$tmp/work/server/wire/wire.go"
 printf 'source
@@ -128,7 +130,7 @@ echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves 
 FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
 # A phase returns as soon as every member of its process group acknowledges TERM.
-FAKE_READY="$tmp/phase-ready" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap "exit 130" TERM; touch "$FAKE_READY"; while :; do sleep 0.1; done' >"$tmp/phase-fast.log" 2>&1 &
+FAKE_READY="$tmp/phase-ready" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap '\''trap "" TERM; exit 130'\'' TERM; touch "$FAKE_READY"; while :; do sleep 0.1; done' >"$tmp/phase-fast.log" 2>&1 &
 phase_pid=$!
 for ((tries=0;tries<50;tries++)); do
   [ ! -f "$tmp/phase-ready" ] || break
@@ -163,7 +165,9 @@ start=$SECONDS
 kill -TERM "$phase_pid"
 status=0
 wait "$phase_pid" || status=$?
-test "$status" -eq 130
+test "$status" -eq 2
+grep -Fq 'private state retained' "$tmp/phase-resistant.log"
+compgen -G "$TMPDIR/trusted-regression-phase.*" >/dev/null
 elapsed=$((SECONDS-start))
 test "$elapsed" -ge 4
 test "$elapsed" -le 7
@@ -183,8 +187,8 @@ sleep 1
 kill -TERM "$phase_pid"
 status=0
 wait "$phase_pid" || status=$?
-test "$status" -eq 130
-grep -Fq 'sandbox execution cancelled' "$tmp/cancel.log"
+test "$status" -eq 2
+grep -Fq 'private state retained' "$tmp/cancel.log"
 kill -0 "$unrelated"
 if kill -0 "$(cat "$tmp/child")" 2>/dev/null; then
   state="$(ps -o stat= -p "$(cat "$tmp/child")" || true)"
@@ -207,7 +211,8 @@ start=$SECONDS
 kill -TERM "$launcher"
 status=0
 wait "$launcher" || status=$?
-test "$status" -eq 130
+test "$status" -eq 2
+grep -Fq 'private state retained' "$tmp/sandbox-cancel.log"
 test "$((SECONDS-start))" -le 12
 test "$(ls -A "$tmp/containers")" = unrelated
 kill -0 "$unrelated"
