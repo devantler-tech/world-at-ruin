@@ -1313,9 +1313,9 @@ jobs:
         if: matrix.module.name == 'Owned child trial'
         working-directory: tools/owned-child-trial
         run: govulncheck -test -tags=war_child_trial ./...
-      - name: Owned-child source race tests
+      - name: Compile the tagged owned-child source race suite
         if: matrix.module.name == 'Owned child trial'
-        run: go -C tools/owned-child-trial test -race -mod=readonly ./...
+        run: go -C tools/owned-child-trial test -race -mod=readonly -tags=war_child_trial -c -o "$RUNNER_TEMP/owned-child-source-race.test" .
       - name: Owned-child source correctness lint
         if: matrix.module.name == 'Owned child trial'
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -1437,6 +1437,17 @@ jobs:
           tags: world-at-ruin-owned-child-native:ci
       - name: Prove launch handles, exact message senders and joined cleanup
         run: bash tools/smoke-owned-child-native.sh world-at-ruin-owned-child-native:ci --experimental
+      - name: Build the tagged native race acceptance image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: tools/owned-child-trial/Dockerfile
+          target: source-race
+          build-args: EXPERIMENTAL=true
+          load: true
+          tags: world-at-ruin-owned-child-race:ci
+      - name: Exercise tagged launch, reader, wait and cleanup with the race detector
+        run: bash tools/smoke-owned-child-native.sh world-at-ruin-owned-child-race:ci --experimental
 
   gameserver-commit-trial:
     name: GameServer commit (real storage)

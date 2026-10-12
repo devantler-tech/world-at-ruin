@@ -305,6 +305,9 @@ func TestNativeOwnedRetirement(t *testing.T) {
 				case <-time.After(3 * time.Second):
 					t.Fatal("natural exit did not join")
 				}
+				if p.cmd.ProcessState == nil || !p.cmd.ProcessState.Success() {
+					t.Fatal("natural exit was not successful")
+				}
 				_, accepted := requirePacket(t, p, receiver)
 				if accepted {
 					t.Fatal("observed death accepted an effect")
