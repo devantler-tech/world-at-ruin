@@ -6,6 +6,9 @@ trap 'rm -rf "$tmp"' EXIT
 workflow="$root/.github/workflows/trusted-regressions.yaml"
 bash "$root/tools/trusted-regression-workflow-guard.sh"
 for mutation in \
+  '.jobs."trusted-client-regressions".steps[0].uses="step-security/harden-runner@main"' \
+  '.jobs."trusted-client-regressions".steps[0].uses="step-security/harden-runner@0000000000000000000000000000000000000000"' \
+  '.jobs."trusted-client-regressions".steps[0].with."egress-policy"="block"' \
   '.jobs."trusted-client-regressions".steps[4]={"name":"authenticated data checkout","uses":.jobs."trusted-client-regressions".steps[1].uses,"with":{"repository":"devantler-tech/world-at-ruin","ref":.jobs."trusted-client-regressions".steps[5].env.CANDIDATE_SHA,"path":"candidate","persist-credentials":false}}' \
   '.on={"pull_request":{}}' \
   '.on={"pull_request_target":{}}' \

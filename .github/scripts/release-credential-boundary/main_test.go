@@ -100,6 +100,40 @@ func TestWorkflowLevelEnvironmentIsRejected(t *testing.T) {
 	}
 }
 
+// TestReleaseRunnerHardeningIsLocked rejects substituted code and inherited
+// execution settings in each credential-bearing release job.
+func TestReleaseRunnerHardeningIsLocked(t *testing.T) {
+	for _, jobName := range []string{attachReleaseJob, publishReleaseJob} {
+		for _, mutation := range []struct {
+			name  string
+			apply func(map[string]any)
+		}{
+			{"floating revision", func(step map[string]any) { step["uses"] = "step-security/harden-runner@main" }},
+			{"unknown revision", func(step map[string]any) {
+				step["uses"] = "step-security/harden-runner@0000000000000000000000000000000000000000"
+			}},
+			{"changed egress", func(step map[string]any) { step["with"] = map[string]any{"egress-policy": "block"} }},
+			{"inherited environment", func(step map[string]any) { step["env"] = map[string]any{"BASH_ENV": "build/payload.sh"} }},
+		} {
+			t.Run(jobName+"/"+mutation.name, func(t *testing.T) {
+				document := loadRepositoryWorkflow(t)
+				if err := document.validate(); err != nil {
+					t.Fatalf("reviewed workflow rejected before mutation: %v", err)
+				}
+				job, err := document.job(jobName)
+				if err != nil {
+					t.Fatal(err)
+				}
+				step := steps(job)[0].(map[string]any)
+				mutation.apply(step)
+				if err := document.validate(); err == nil {
+					t.Fatal("runner hardening substitution accepted")
+				}
+			})
+		}
+	}
+}
+
 func TestBuildArtifactPathMustBeExact(t *testing.T) {
 	workflow := loadRepositoryWorkflow(t)
 	delete(workflow.root, "env")
