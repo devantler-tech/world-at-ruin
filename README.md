@@ -118,8 +118,9 @@ or release uncertain allocations.
   character keeps playing as the world evolves: the game can be migrated, but only without breaking
   your character, or through a deprecation that tells you first what is changing or going away.
   Unfinished features are opt-in. The CI guards for this exist before the first player does.
-- **Source-available, not open source** — see [LICENSE.md](LICENSE.md). Reading is welcome;
-  copying and redistribution are not permitted. Playing a distributed build is governed by the
+- **Source-available, not open source** — see [LICENSE.md](LICENSE.md). Reading, personal evaluation
+  and forks to prepare contributions are permitted within its terms; general redistribution is not.
+  Playing a distributed build is governed by the
   [EULA](EULA.md), and contributing requires signing the [CLA](CLA.md) (copyright assignment) —
   the CLA check on your first pull request explains how to sign.
 
