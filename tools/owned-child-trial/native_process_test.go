@@ -170,6 +170,7 @@ type reply struct {
 	Status map[string]string
 	Inode  uint64
 	Seal   *sealEvidence
+	Fork   *forkEvidence
 }
 
 // launch captures the kernel process handle in this trusted start operation.
@@ -365,7 +366,7 @@ func statusEvidence() (map[string]string, error) {
 }
 
 // worker executes only the diagnostic commands used by the native fixture.
-func worker(mode string) int {
+func worker(mode string) (code int) {
 	if strings.HasPrefix(mode, "exec:") {
 		return execWorker(mode)
 	}
@@ -431,8 +432,24 @@ func worker(mode string) int {
 		return 1
 	}
 	scanner := bufio.NewScanner(os.Stdin)
+	var forkChild *forkOwned
+	defer func() {
+		if forkChild != nil {
+			if closeErr := forkChild.stop(); closeErr != nil {
+				code = 1
+			}
+		}
+	}()
 	for scanner.Scan() {
 		command := scanner.Text()
+		if strings.HasPrefix(command, "fork:") {
+			var proof *forkEvidence
+			forkChild, proof, err = forkCommand(command, fd, forkChild)
+			if err != nil || encoder.Encode(reply{Event: command, PID: os.Getpid(), Fork: proof}) != nil {
+				return 1
+			}
+			continue
+		}
 		switch command {
 		case "send":
 			err = unix.Sendmsg(fd, []byte(diagnostic), nil, nil, 0)
