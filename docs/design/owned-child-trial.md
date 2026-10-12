@@ -66,7 +66,8 @@ and restores/readbacks the exact parent mask before returning to Go, including
 the documented CLONE_PARENT_SETTID conflict's EINVAL control. Uncertain restoration
 terminates the worker. Every child operation stays in raw assembly: opening its
 own proc status, bounded read and EOF probe, nonblocking sendmsg with MSG_NOSIGNAL,
-one atomic private-pipe record, and raw exit or a finite five-second sleep.
+one atomic private-pipe record, and raw exit or a finite sleep (five seconds for
+resistance/delay controls; thirty seconds for the separate orphan control).
 Both built executable variants undergo a compiled assembly audit. Child COW
 writes never constitute parent-visible evidence; only the launch-time kernel
 pidfd store and the complete private record are consumed by the original.
@@ -84,6 +85,8 @@ missing-capture and uncertain-wait interface faults cannot count as proof.
 
 Parent death is intentionally outside the passing cleanup suite. A separate
 container invocation kills the original before its raw descendant joins. The
+controller deliberately pauses before killing the original, so the orphan hold
+must outlast delayed progress as well as the original-death and reader deadlines.
 original's Cmd.Wait completes, but descendant join remains unproved and the
 verdict must fail with containment retained. The wrapper requires that precise
 nonzero refusal and verifies container removal before reporting its own success.

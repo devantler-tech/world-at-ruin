@@ -13,7 +13,8 @@ An uncertain mask restoration terminates the worker instead of resuming Go.
 The child never calls Go or a library. It opens its own proc status, performs
 bounded reads including an EOF probe, sends the fixed frame with MSG_DONTWAIT and
 MSG_NOSIGNAL, writes one private nonblocking evidence record below PIPE_BUF, and
-exits or sleeps for a fixed five seconds. All pointers and buffers are prepared
+exits or sleeps for a fixed five seconds (thirty for the orphan control, beyond
+its delayed controller progress and cleanup deadlines). All pointers and buffers are prepared
 before clone. The private record, not copy-on-write memory, conveys child evidence.
 The finite sleep permits a bounded pidfd-only TERM/KILL cleanup control.
 

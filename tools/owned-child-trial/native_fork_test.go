@@ -163,6 +163,9 @@ func orphanScenario() int {
 		_ = p.stop()
 		return 2
 	}
+	// Exercise delayed controller progress: a five-second raw hold would expire
+	// during the subsequent reader deadline and cannot establish this refusal.
+	time.Sleep(2500 * time.Millisecond)
 	if err = unix.PidfdSendSignal(p.pidfd, unix.SIGKILL, nil, 0); err != nil {
 		return 2
 	}

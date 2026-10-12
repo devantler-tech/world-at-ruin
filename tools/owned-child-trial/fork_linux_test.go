@@ -104,8 +104,11 @@ func startFork(socket int, mode string) (child *forkOwned, proof *forkEvidence, 
 		Path: &path[0], Message: &message, Record: &record, Pidfd: -1,
 		Flags: unix.CLONE_PIDFD | uint64(unix.SIGCHLD), Blocked: ^uint64(0), Sleep: unix.Timespec{Sec: 5}}
 	switch mode {
-	case "resistant", "orphan":
+	case "resistant":
 		args.Mode = 1
+	case "orphan":
+		args.Mode = 1
+		args.Sleep = unix.Timespec{Sec: 30} // Outlast startup, death and reader deadlines.
 	case "delayed":
 		args.Mode = 2
 	case "clone-error":
