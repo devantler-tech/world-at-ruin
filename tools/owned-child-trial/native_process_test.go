@@ -39,12 +39,12 @@ type packet struct {
 }
 
 // readyRead bounds each native socket operation using kernel readiness.
-func readyRead(fd int, timeout time.Duration) error {
+func readyRead(fd int) error {
 	if fd < 0 || fd > math.MaxInt32 {
 		return errors.New("descriptor outside kernel poll range")
 	}
 	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -69,7 +69,7 @@ func readyRead(fd int, timeout time.Duration) error {
 
 // receive validates a complete packet and closes every received descriptor.
 func receive(fd int) (packet, error) {
-	if err := readyRead(fd, 3*time.Second); err != nil {
+	if err := readyRead(fd); err != nil {
 		return packet{}, err
 	}
 	data := make([]byte, len(diagnostic)+1)
@@ -319,7 +319,7 @@ func (p *owned) stop() error {
 		return errors.New("join has no terminal process state; ownership retained")
 	}
 	status, ok := state.Sys().(syscall.WaitStatus)
-	if !ok || !(status.Exited() || status.Signaled()) {
+	if !ok || (!status.Exited() && !status.Signaled()) {
 		return errors.New("join is not terminal; ownership retained")
 	}
 	var exitErr *exec.ExitError
@@ -382,7 +382,7 @@ func worker(mode string) int {
 	case "inherited":
 		fd = 3
 	case "received":
-		if err = readyRead(3, 3*time.Second); err != nil {
+		if err = readyRead(3); err != nil {
 			return 1
 		}
 		data, oob := make([]byte, 1), make([]byte, unix.CmsgSpace(4))

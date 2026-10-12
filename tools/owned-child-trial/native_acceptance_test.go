@@ -3,6 +3,7 @@
 package ownedchild
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -90,7 +91,11 @@ func connected(t *testing.T, mode string) (*owned, int, [2]*os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unix.Close(listener)
+	defer func() {
+		if err := unix.Close(listener); err != nil {
+			t.Errorf("listener close: %v", err)
+		}
+	}()
 	if err := unix.SetsockoptInt(listener, unix.SOL_SOCKET, unix.SO_PASSCRED, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +110,7 @@ func connected(t *testing.T, mode string) (*owned, int, [2]*os.File) {
 	}
 	transfer := pair(t)
 	p := own(t, mode, address, []*os.File{transfer[1]})
-	if err := readyRead(listener, 3*time.Second); err != nil {
+	if err := readyRead(listener); err != nil {
 		t.Fatal(err)
 	}
 	fd, _, err := unix.Accept4(listener, unix.SOCK_CLOEXEC)
@@ -147,7 +152,7 @@ func TestNativeOwnedChild(t *testing.T) {
 
 	// Get the already-connected endpoint from the original via SCM_RIGHTS.
 	requireReply(t, original, "give")
-	if err := readyRead(int(transfer[0].Fd()), 3*time.Second); err != nil {
+	if err := readyRead(int(transfer[0].Fd())); err != nil {
 		t.Fatal(err)
 	}
 	data, oob := make([]byte, 1), make([]byte, unix.CmsgSpace(4))
@@ -164,7 +169,11 @@ func TestNativeOwnedChild(t *testing.T) {
 		t.Fatal("original endpoint not transferred")
 	}
 	endpoint := os.NewFile(uintptr(fds[0]), "original-connected-endpoint")
-	defer endpoint.Close()
+	defer func() {
+		if err := endpoint.Close(); err != nil {
+			t.Errorf("transferred endpoint close: %v", err)
+		}
+	}()
 	var inode unix.Stat_t
 	if err := unix.Fstat(fds[0], &inode); err != nil {
 		t.Fatal(err)
@@ -315,7 +324,7 @@ func TestNativeOwnedRetirement(t *testing.T) {
 				}
 			case "connection":
 				requireReply(t, p, "close")
-				if _, accepted, err := p.evaluate(receiver); err != io.EOF || accepted {
+				if _, accepted, err := p.evaluate(receiver); !errors.Is(err, io.EOF) || accepted {
 					t.Fatalf("control loss=%v, want EOF", err)
 				}
 				if p.boundary.authorize(first.sender, true, p.live) {
@@ -349,7 +358,11 @@ func TestNativeOwnedCleanupFaults(t *testing.T) {
 				// The fault removes capture from the controller's interface before
 				// any effect. The test retains the actual descriptor through join.
 				captured := p.pidfd
-				defer unix.Close(captured)
+				defer func() {
+					if err := unix.Close(captured); err != nil {
+						t.Errorf("fault-held descriptor close: %v", err)
+					}
+				}()
 				p.pidfd = -1
 				p.boundary.retire()
 				if err := p.stop(); err != nil {

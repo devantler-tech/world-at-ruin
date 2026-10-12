@@ -70,6 +70,13 @@ linters:
         text: "G302: Expect file permissions to be 0600 or less"
         source: 'if err := os\.Chmod\((directory, 0755|address, 0666)\); err != nil'
       # The private claim endpoint is immutable constructor configuration,
+      # The helper executable is a fixed immutable image path. Only trusted
+      # fixture modes and its own disposable socket path choose arguments.
+      - path: ^(\.\./tools/owned-child-trial/)?native_process_test\.go$
+        linters: [gosec]
+        text: "G204: Subprocess launched with a potential tainted input or cmd arguments"
+        source: 'cmd := exec\.Command\("/out/owned-child\.test", "-war-experimental", "-war-worker="\+mode, "-war-address="\+address\)'
+      # The private claim endpoint is immutable constructor configuration,
       # validated as HTTPS with a fixed path and no redirects. Player payloads
       # cannot influence its destination; private service addresses are intended.
       - path: ^claimrpc/client\.go$
