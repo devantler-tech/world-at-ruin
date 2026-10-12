@@ -1270,6 +1270,10 @@ jobs:
             directory: tools/spire-trial
             go-version-file: tools/spire-trial/go.mod
             cache-dependency-path: tools/spire-trial/go.sum
+          - name: Owned child trial
+            directory: tools/owned-child-trial
+            go-version-file: tools/owned-child-trial/go.mod
+            cache-dependency-path: tools/owned-child-trial/go.sum
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1295,7 +1299,7 @@ jobs:
           echo "::error::Failed to install govulncheck after 3 attempts."
           exit 1
       - name: Scan for reachable vulnerabilities
-        if: matrix.module.name != 'SPIRE trial'
+        if: matrix.module.name != 'SPIRE trial' && matrix.module.name != 'Owned child trial'
         working-directory: ${{ matrix.module.directory }}
         run: govulncheck ./...
       - name: Scan the actual SPIRE test executable graph
@@ -1305,6 +1309,20 @@ jobs:
       - name: SPIRE source race tests
         if: matrix.module.name == 'SPIRE trial'
         run: go -C tools/spire-trial test -race -mod=readonly ./...
+      - name: Scan the actual owned-child test executable graph
+        if: matrix.module.name == 'Owned child trial'
+        working-directory: tools/owned-child-trial
+        run: govulncheck -test -tags=war_child_trial ./...
+      - name: Compile the tagged owned-child source race suite
+        if: matrix.module.name == 'Owned child trial'
+        run: go -C tools/owned-child-trial test -race -mod=readonly -tags=war_child_trial -c -o "$RUNNER_TEMP/owned-child-source-race.test" .
+      - name: Owned-child source correctness lint
+        if: matrix.module.name == 'Owned child trial'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          working-directory: tools/owned-child-trial
+          args: --config ../../server/.golangci.yml --build-tags=war_child_trial ./...
       - name: SPIRE source correctness lint
         if: matrix.module.name == 'SPIRE trial'
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -1390,6 +1408,46 @@ jobs:
           tags: world-at-ruin-spire-native:ci
       - name: Prove native issuance, exact roles and owned cleanup
         run: bash tools/smoke-spire-native.sh world-at-ruin-spire-native:ci --experimental
+
+  owned-child-native:
+    name: Owned child native (${{ matrix.arch }})
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prove native containment wrapper refusal and cleanup observations
+        run: bash tools/native-private-server-harness.test.sh
+      - name: Build the explicitly experimental process acceptance image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: tools/owned-child-trial/Dockerfile
+          build-args: EXPERIMENTAL=true
+          load: true
+          tags: world-at-ruin-owned-child-native:ci
+      - name: Prove launch handles, exact message senders and joined cleanup
+        run: bash tools/smoke-owned-child-native.sh world-at-ruin-owned-child-native:ci --experimental
+      - name: Build the tagged native race acceptance image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: tools/owned-child-trial/Dockerfile
+          target: source-race
+          build-args: EXPERIMENTAL=true
+          load: true
+          tags: world-at-ruin-owned-child-race:ci
+      - name: Exercise tagged launch, reader, wait and cleanup with the race detector
+        run: bash tools/smoke-owned-child-native.sh world-at-ruin-owned-child-race:ci --experimental
 
   gameserver-commit-trial:
     name: GameServer commit (real storage)
@@ -3242,6 +3300,7 @@ jobs:
         zone-container,
         nakama-native,
         spire-native,
+        owned-child-native,
         detect-visual-changes,
         frame-capture,
         frame-capture-exported,
@@ -3272,6 +3331,7 @@ jobs:
             ${{ needs.zone-container.result }}
             ${{ needs.nakama-native.result }}
             ${{ needs.spire-native.result }}
+            ${{ needs.owned-child-native.result == 'success' && 'success' || 'failure' }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
             ${{ needs.frame-capture-exported.result }}
