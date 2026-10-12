@@ -4,17 +4,37 @@ set -euo pipefail
 godot_bin="${GODOT_BIN:-godot}"
 timeout_seconds=180
 logs="$(mktemp -d)"
-trap 'rm -rf "${logs}"' EXIT
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tools/process-group-lifecycle.sh
+source "$root/tools/process-group-lifecycle.sh"
+active=()
+cleanup_uncertain=0
+war_cancel_init
+# Join both verdict runners and retain captures when either refuses cleanup.
+cleanup() {
+	trap '' INT TERM
+	local status=$cleanup_status pid
+	trap - EXIT
+	trap '' INT TERM
+	for pid in ${active[@]+"${active[@]}"}; do kill -TERM "$pid" 2>/dev/null || true; done
+	for pid in ${active[@]+"${active[@]}"}; do
+		local joined=0
+		wait "$pid" 2>/dev/null || joined=$?
+		case "$joined" in 2|137|143) cleanup_uncertain=1;; esac
+	done
+	if [ "$cleanup_uncertain" -ne 0 ]; then exit 2; fi
+	rm -rf "$logs"
+	exit "$status"
+}
+trap 'cleanup_status=$? cleanup_started=true; cleanup' EXIT
+trap 'trap ":" INT TERM; war_request_cancel' INT TERM
 
 if ! command -v "${godot_bin}" >/dev/null 2>&1; then
 	echo "::error::Godot is unavailable at '${godot_bin}'"
 	exit 2
 fi
-if ! command -v perl >/dev/null 2>&1; then
-	echo "::error::Perl is required for the portable test timeout"
-	exit 2
-fi
 
+# Require a successful runner exit and an explicit scene verdict in its capture.
 check_run() {
 	local log="$1"
 	local status="$2"
@@ -41,15 +61,29 @@ run_pair() {
 	local first_probe
 	local second_probe
 
-	perl -e 'alarm shift; exec @ARGV' "${timeout_seconds}" \
-		"${godot_bin}" --headless --path client "${scene}" >"${first_log}" 2>&1 &
+	local test_name="${scene##*/}"
+	test_name="${test_name%.tscn}"
+	mkdir -p "$logs/$name-first" "$logs/$name-second"
+	launching=true
+	set -m
+	RUN_CLIENT_TEST_LOG_DIR="$logs/$name-first" RUN_CLIENT_TEST_TIMEOUT_SECONDS="$timeout_seconds" GODOT_BIN="$godot_bin" \
+		bash "$root/tools/run-client-test.sh" "$test_name" >"${first_log}" 2>&1 &
 	local first_pid=$!
-	perl -e 'alarm shift; exec @ARGV' "${timeout_seconds}" \
-		"${godot_bin}" --headless --path client "${scene}" >"${second_log}" 2>&1 &
+	active=("$first_pid")
+	RUN_CLIENT_TEST_LOG_DIR="$logs/$name-second" RUN_CLIENT_TEST_TIMEOUT_SECONDS="$timeout_seconds" GODOT_BIN="$godot_bin" \
+		bash "$root/tools/run-client-test.sh" "$test_name" >"${second_log}" 2>&1 &
 	local second_pid=$!
+	active+=("$second_pid")
+	set +m
+	launching=false
+	if [ "$cancel_pending" = true ]; then exit 130; fi
 
 	wait "${first_pid}" || first_status=$?
+	if [ "$first_status" -eq 2 ] || [ "$first_status" -eq 137 ] || [ "$first_status" -eq 143 ]; then cleanup_uncertain=1; fi
+	active=("$second_pid")
 	wait "${second_pid}" || second_status=$?
+	if [ "$second_status" -eq 2 ] || [ "$second_status" -eq 137 ] || [ "$second_status" -eq 143 ]; then cleanup_uncertain=1; fi
+	active=()
 
 	local failed=0
 	check_run "${first_log}" "${first_status}" "${name}-first" || failed=1
@@ -70,15 +104,27 @@ run_pair() {
 	fi
 }
 
+# Require the intentional isolation breach to fail for its expected scene diagnosis.
 check_failure_path() {
 	local log="${logs}/vault-restore-failure-path.log"
 	local status=0
 	local expected="TEST FAIL — forced failure-path probe — AND the run touched the player's real save, vault or recovery ledger"
 
-	perl -e 'alarm shift; exec @ARGV' "${timeout_seconds}" \
-		"${godot_bin}" --headless --path client \
-		"res://tests/vault_restore_failure_path_probe.tscn" >"${log}" 2>&1 || status=$?
-	if [ "${status}" -eq 0 ] || ! grep -Fq "${expected}" "${log}"; then
+	mkdir -p "$logs/failure-path"
+	launching=true
+	set -m
+	RUN_CLIENT_TEST_LOG_DIR="$logs/failure-path" RUN_CLIENT_TEST_TIMEOUT_SECONDS="$timeout_seconds" GODOT_BIN="$godot_bin" \
+		bash "$root/tools/run-client-test.sh" vault_restore_failure_path_probe >"${log}" 2>&1 &
+	active=("$!")
+	set +m
+	launching=false
+	if [ "$cancel_pending" = true ]; then exit 130; fi
+	wait "${active[0]}" || status=$?
+	if [ "$status" -eq 2 ] || [ "$status" -eq 137 ] || [ "$status" -eq 143 ]; then cleanup_uncertain=1; fi
+	active=()
+	if [ "${status}" -ne 1 ] || ! grep -Fq "${expected}" "${log}" ||
+		! grep -Eq '^::error::vault_restore_failure_path_probe (reported TEST FAIL|failed [(]exit 1[)])$' "$log" ||
+		grep -Fq 'SCRIPT ERROR:' "$log"; then
 		echo "::error::vault-restore failure path cleaned up without reporting the isolation breach"
 		tail -80 "${log}"
 		return 1

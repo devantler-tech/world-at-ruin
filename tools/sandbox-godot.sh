@@ -98,19 +98,21 @@ if [ ! -d "$records" ] || [ -L "$records" ]; then
 fi
 : >"$records/$container"
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
+# Join the sandbox client and verify owned-container removal before releasing records.
 cleanup() {
-  result=$?
-  trap - EXIT INT TERM
-  trusted_stop_child
+  result=$trusted_cleanup_status
+  trap - EXIT
+  trap ':' INT TERM
+  trusted_stop_child || result=2
   if ! bash "$phase_runner" "sandbox cleanup" bash "$phase_runner" --cleanup-containers "$records"; then
-    result=1
-  elif [ "$private_records" = true ]; then
+    result=2
+  elif [ "$private_records" = true ] && [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then
     rmdir "$records"
   fi
   exit "$result"
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
+trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 printf '::stop-commands::%s\n' "$nonce"
 status=0
 phase='sandbox execution'

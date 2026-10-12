@@ -19,10 +19,16 @@ env:
   GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
 
 jobs:
-  client-smoke:
-    name: Client smoke boot
+  client-ordinary:
+    name: Ordinary client proof
     timeout-minutes: 75
     runs-on: ubuntu-latest
+    outputs:
+      complete: ${{ steps.proof.outputs.complete }}
+      tested-sha: ${{ steps.proof.outputs.tested-sha }}
+    defaults:
+      run:
+        shell: bash --noprofile --norc tools/client-proof-step.sh {0}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,6 +37,8 @@ jobs:
           fetch-depth: 0
           # Read-only job: no push, so the token must not linger in .git/config.
           persist-credentials: false
+      - name: Initialize the ordinary job's private save seam
+        run: printf 'XDG_DATA_HOME=%s/war-client-ordinary\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Cask branch visibility retry is bounded and fail-closed
         run: tools/test-cd-cask-ref-visibility.sh
       - name: Cask branch resets only when stale and unclaimed
@@ -71,6 +79,12 @@ jobs:
         run: ./tools/lavapipe-capture-guard.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
+      - name: Ordinary entry cancellation retires nested engine groups
+        run: bash tools/client-proof-phase.test.sh
+      - name: Protected controllers preserve cleanup acknowledgments
+        run: bash tools/trusted-regression-lifecycle.test.sh
+      - name: Completion follows matching integration and private-state cleanup
+        run: bash tools/client-proof-completion.test.sh
       - name: Private trial launcher scopes credentials and cleans up
         run: ./tools/try-zone-trial.test.sh
       - name: Required regression control is candidate-independent and fail-closed
@@ -916,14 +930,7 @@ jobs:
           done
           [ "$fail" = 0 ]
       - name: Install Godot (pinned, checksum-verified)
-        run: |
-          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
-          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
-          unzip -q godot.zip
-          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
-      - name: Real sandbox refuses escape and runs the full trusted suite
-        timeout-minutes: 45
-        run: bash tools/sandbox-godot-isolation.test.sh
+        run: bash tools/install-ci-godot.sh
       - name: Headless import + class-name scan
         # --import alone never writes global_script_class_cache.cfg, so scene-arg
         # runs (the regression tests) fail to resolve class_name types and hang.
@@ -1056,6 +1063,60 @@ jobs:
         # one host. A serial scene pass cannot prove two agent sessions will not
         # remove or replace one another's character, vault and recovery probes.
         run: ./tools/parallel-save-isolation.test.sh
+      - name: Report complete proof after cleanup
+        id: proof
+        shell: bash
+        run: bash tools/client-proof-completion.sh ordinary
+
+  client-sandbox:
+    name: Trusted sandbox client proof
+    timeout-minutes: 75
+    runs-on: ubuntu-latest
+    outputs:
+      complete: ${{ steps.proof.outputs.complete }}
+      tested-sha: ${{ steps.proof.outputs.tested-sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize the sandbox job's private save seam
+        run: printf 'XDG_DATA_HOME=%s/war-client-sandbox\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Real sandbox refuses escape and runs the full trusted suite
+        timeout-minutes: 45
+        run: bash tools/sandbox-godot-isolation.test.sh
+      - name: Report complete proof after cleanup
+        id: proof
+        shell: bash
+        run: bash tools/client-proof-completion.sh sandbox
+
+  client-smoke:
+    name: Client smoke boot
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    needs: [client-ordinary, client-sandbox]
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove complete client evidence is required
+        run: bash tools/client-proof-gate.test.sh
+      - name: Prove the workflow cannot omit either proof
+        run: bash tools/client-proof-workflow-guard.test.sh
+      - name: Require both completed proofs of this integration
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          ORDINARY_RESULT: ${{ needs.client-ordinary.result }}
+          SANDBOX_RESULT: ${{ needs.client-sandbox.result }}
+          ORDINARY_COMPLETE: ${{ needs.client-ordinary.outputs.complete }}
+          SANDBOX_COMPLETE: ${{ needs.client-sandbox.outputs.complete }}
+          ORDINARY_SHA: ${{ needs.client-ordinary.outputs.tested-sha }}
+          SANDBOX_SHA: ${{ needs.client-sandbox.outputs.tested-sha }}
+        run: bash tools/client-proof-gate.sh
 
   client-export-macos:
     name: Client export (macOS)
@@ -1829,11 +1890,7 @@ jobs:
             exit 1
           fi
       - name: Install Godot (pinned, checksum-verified)
-        run: |
-          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
-          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
-          unzip -q godot.zip
-          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+        run: bash tools/install-ci-godot.sh
       - name: Headless import + class-name scan
         run: |
           set -o pipefail
@@ -3319,7 +3376,7 @@ jobs:
           # what keeps a broken gate from silently dropping either.
           job-results: >-
             ${{ needs.retired-repo-links.result }}
-            ${{ needs.client-smoke.result }}
+            ${{ needs.client-smoke.result == 'success' && 'success' || 'failure' }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}

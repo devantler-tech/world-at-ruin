@@ -7,20 +7,8 @@ source "$root/tools/trusted-regression-lifecycle.sh"
 tmp="$(mktemp -d)"
 mkdir "$tmp/containers"
 export GODOT_SANDBOX_CONTAINERS="$tmp/containers"
-# shellcheck disable=SC2329 # Invoked by the EXIT trap.
-cleanup() {
-  result=$?
-  trap - EXIT INT TERM
-  trusted_stop_child
-  if bash "$root/tools/trusted-regression-phase.sh" "sandbox cleanup" bash "$root/tools/trusted-regression-phase.sh" --cleanup-containers "$GODOT_SANDBOX_CONTAINERS"; then
-    rm -rf "$tmp"
-  else
-    result=1
-  fi
-  exit "$result"
-}
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; trusted_cleanup_controller "$tmp" "$root/tools/trusted-regression-phase.sh" "$GODOT_SANDBOX_CONTAINERS"' EXIT
+trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 mkdir -p "$tmp/work/client/tests"
 mkdir -p "$tmp/work/server/wire" "$tmp/work/.github/workflows"
 printf 'source data\n' >"$tmp/work/server/wire/wire.go"
@@ -98,6 +86,7 @@ trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image
 image="$(cat "$tmp/image")"
 cd "$tmp/work"
 # Require a concrete refusal from one real containment control.
+# Display private probe captures and fail without accepting incomplete containment evidence.
 probe_failure() {
   cat "$tmp/import.log" "$tmp/run.log" 2>/dev/null || true
   exit 1
@@ -125,13 +114,24 @@ func _initialize() -> void:
 	quit(0)
 HELD
 status=0
-GODOT_SANDBOX_IMAGE="$image" WAR_TRUSTED_PROBE_SECONDS=1 trusted_wait bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/held.gd >"$tmp/held.log" 2>&1 || status=$?
-if [ "$status" -ne 124 ] && [ "$status" -ne 137 ]; then
+# This intentional refusal has its own latch; unexpected refusals elsewhere
+# still prevent the containing trial from releasing its private state.
+# Bound a real held engine while keeping this expected refusal's latch local.
+run_held_control() {
+  local trusted_cleanup_uncertain=0
+  GODOT_SANDBOX_IMAGE="$image" WAR_TRUSTED_PROBE_SECONDS=1 trusted_wait bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/held.gd
+}
+held_start=$SECONDS
+run_held_control >"$tmp/held.log" 2>&1 || status=$?
+held_elapsed=$((SECONDS-held_start))
+if { [ "$status" -ne 124 ] && [ "$status" -ne 137 ] && [ "$status" -ne 2 ]; } ||
+  [ "$held_elapsed" -lt 1 ] || [ "$held_elapsed" -gt 45 ]; then
   cat "$tmp/held.log"
   echo 'TEST FAIL -- held real engine did not time out' >&2
   exit 1
 fi
 grep -Fq 'sandbox execution timed out' "$tmp/held.log"
+if [ "$status" -eq 2 ]; then grep -Fq 'private state retained' "$tmp/held.log"; fi
 test -z "$(ls -A "$GODOT_SANDBOX_CONTAINERS")"
 echo 'TEST PASS -- held real engine times out and owned container absence is verified'
 

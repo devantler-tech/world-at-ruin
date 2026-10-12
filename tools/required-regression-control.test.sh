@@ -21,12 +21,16 @@ mkdir -p \
 	"${trusted}/client/tests" \
 	"${trusted}/tools" \
 	"${candidate}/client/tests" \
+	"${candidate}/tools" \
 	"${empty_trusted}/client/tests" \
 	"${empty_trusted}/tools" \
 	"${bin_dir}"
 
 cp "${control_source}" "${control}"
-cp "$repo_root/tools/trusted-regression-phase.sh" "$repo_root/tools/trusted-regression-lifecycle.sh" "$workflow_source/tools/"
+cp "$repo_root/tools/trusted-regression-phase.sh" "$repo_root/tools/trusted-phase-command.sh" "$repo_root/tools/trusted-regression-lifecycle.sh" "$repo_root/tools/process-group-lifecycle.sh" "$workflow_source/tools/"
+# Neither historical data nor candidate content may supply a host helper.
+printf 'echo candidate-helper-was-sourced >&2; exit 99\n' > "$candidate/tools/process-group-lifecycle.sh"
+printf 'echo historical-helper-was-sourced >&2; exit 99\n' > "$trusted/tools/process-group-lifecycle.sh"
 printf '%s\n' 'trusted alpha harness' >"${trusted}/client/tests/alpha_test.tscn"
 printf '%s\n' 'trusted beta harness' >"${trusted}/client/tests/beta_test.tscn"
 printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alpha_test.tscn"

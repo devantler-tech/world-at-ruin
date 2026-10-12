@@ -1368,6 +1368,15 @@ the permanent blocking policy.
     remaps are refused until supported without replaying them.
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
+    Complete candidate sandbox and ordinary client proofs run in independent jobs with separate
+    checkouts and private save seams. `client-smoke` / `Client smoke boot` remains the short stable
+    gate: both workers must succeed and report cleanup plus the same event integration SHA.
+    The aggregate refuses a skipped stable gate. No historical or ordinary scene is removed by
+    this split; the independently required trusted workflow remains enforced. Validate with
+    `bash tools/client-proof-gate.test.sh`, `bash tools/client-proof-completion.test.sh`,
+    `bash tools/client-proof-workflow-guard.test.sh` and `bash tools/client-proof-phase.test.sh`.
+    The phase controls exercise real timeout, SIGINT/SIGTERM, nested engine retirement and
+    unrelated-canary survival. Unreadable process inspection is a refused cleanup verdict.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
   - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active

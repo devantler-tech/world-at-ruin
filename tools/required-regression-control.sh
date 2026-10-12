@@ -75,17 +75,18 @@ host_logs="${scratch_root}/logs"
 # Remove only this invocation's private evaluation tree and reconstructed ledger.
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
-  result=$?
-  trap - EXIT INT TERM
-  trusted_stop_child
+  result=$trusted_cleanup_status
+  trap - EXIT
+  trap ':' INT TERM
+  trusted_stop_child || result=2
   if [ -n "${GODOT_SANDBOX_CONTAINERS:-}" ] && ! bash "$control_dir/trusted-regression-phase.sh" "sandbox cleanup" bash "$control_dir/trusted-regression-phase.sh" --cleanup-containers "$GODOT_SANDBOX_CONTAINERS"; then
-    result=1
+    result=2
   fi
-  rm -rf "$scratch_root"
+  if [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then rm -rf "$scratch_root"; fi
   exit "$result"
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
+trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 # Host output never follows a path supplied by the copied candidate.
 mkdir "${evaluation_root}" "${host_logs}"
 

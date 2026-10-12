@@ -5,6 +5,27 @@ root="$(cd "$(dirname "$0")/.." && pwd -P)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/client/tests" "$tmp/work/server/wire" "$tmp/work/.github/workflows" "$tmp/metadata" "$tmp/containers"
+mkdir "$tmp/state"
+export TMPDIR="$tmp/state"
+# A cooperative process handles repeated TERM atomically in its native signal
+# handler. Shell trap dispatch can instead exit by signal before its body runs.
+cat >"$tmp/cooperative.go" <<'GO'
+package main
+import (
+  "os"
+  "os/signal"
+  "syscall"
+)
+// main acknowledges actual TERM only after installing its native signal receiver.
+func main() {
+  signals := make(chan os.Signal, 8)
+  signal.Notify(signals, syscall.SIGTERM)
+  if os.WriteFile(os.Getenv("FAKE_READY"), []byte("ready"), 0600) != nil { os.Exit(2) }
+  <-signals
+  if os.WriteFile(os.Getenv("FAKE_ACK"), []byte("acknowledged"), 0600) != nil { os.Exit(2) }
+}
+GO
+GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 timeout --kill-after=2s 30s go build -o "$tmp/cooperative" "$tmp/cooperative.go"
 printf 'source
 ' >"$tmp/work/server/wire/wire.go"
 printf 'source
@@ -128,24 +149,27 @@ echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves 
 FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
 # A phase returns as soon as every member of its process group acknowledges TERM.
-FAKE_READY="$tmp/phase-ready" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap "exit 130" TERM; touch "$FAKE_READY"; while :; do sleep 0.1; done' >"$tmp/phase-fast.log" 2>&1 &
-phase_pid=$!
-for ((tries=0;tries<50;tries++)); do
-  [ ! -f "$tmp/phase-ready" ] || break
-  sleep 0.1
+for cooperative in 1 2 3; do
+  FAKE_READY="$tmp/phase-ready.$cooperative" FAKE_ACK="$tmp/phase-ack.$cooperative" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' "$tmp/cooperative" >"$tmp/phase-fast.log" 2>&1 &
+  phase_pid=$!
+  for ((tries=0;tries<50;tries++)); do
+    [ ! -f "$tmp/phase-ready.$cooperative" ] || break
+    sleep 0.1
+  done
+  test -f "$tmp/phase-ready.$cooperative"
+  start=$SECONDS
+  kill -TERM "$phase_pid"
+  status=0
+  wait "$phase_pid" || status=$?
+  if [ "$status" -ne 130 ]; then cat "$tmp/phase-fast.log"; echo "TEST FAIL -- acknowledged phase returned $status" >&2; exit 1; fi
+  test "$(cat "$tmp/phase-ack.$cooperative")" = acknowledged
+  elapsed=$((SECONDS-start))
+  if [ "$elapsed" -gt 2 ]; then
+    echo "TEST FAIL -- acknowledged phase group took ${elapsed}s to cancel" >&2
+    exit 1
+  fi
+  grep -Fq 'sandbox execution cancelled' "$tmp/phase-fast.log"
 done
-test -f "$tmp/phase-ready"
-start=$SECONDS
-kill -TERM "$phase_pid"
-status=0
-wait "$phase_pid" || status=$?
-test "$status" -eq 130
-elapsed=$((SECONDS-start))
-if [ "$elapsed" -gt 2 ]; then
-  echo "TEST FAIL -- acknowledged phase group took ${elapsed}s to cancel" >&2
-  exit 1
-fi
-grep -Fq 'sandbox execution cancelled' "$tmp/phase-fast.log"
 # A surviving descendant retains the full grace even after its leader exits.
 cat >"$tmp/resistant-group" <<'GROUP'
 #!/bin/bash
@@ -163,7 +187,9 @@ start=$SECONDS
 kill -TERM "$phase_pid"
 status=0
 wait "$phase_pid" || status=$?
-test "$status" -eq 130
+test "$status" -eq 2
+grep -Fq 'private state retained' "$tmp/phase-resistant.log"
+compgen -G "$TMPDIR/trusted-regression-phase.*" >/dev/null
 elapsed=$((SECONDS-start))
 test "$elapsed" -ge 4
 test "$elapsed" -le 7
@@ -183,8 +209,8 @@ sleep 1
 kill -TERM "$phase_pid"
 status=0
 wait "$phase_pid" || status=$?
-test "$status" -eq 130
-grep -Fq 'sandbox execution cancelled' "$tmp/cancel.log"
+test "$status" -eq 2
+grep -Fq 'private state retained' "$tmp/cancel.log"
 kill -0 "$unrelated"
 if kill -0 "$(cat "$tmp/child")" 2>/dev/null; then
   state="$(ps -o stat= -p "$(cat "$tmp/child")" || true)"
@@ -207,7 +233,8 @@ start=$SECONDS
 kill -TERM "$launcher"
 status=0
 wait "$launcher" || status=$?
-test "$status" -eq 130
+test "$status" -eq 2
+grep -Fq 'private state retained' "$tmp/sandbox-cancel.log"
 test "$((SECONDS-start))" -le 12
 test "$(ls -A "$tmp/containers")" = unrelated
 kill -0 "$unrelated"

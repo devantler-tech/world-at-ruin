@@ -16,7 +16,7 @@ mkdir -p "${bin_dir}" "${fixture_root}/client/tests"
 # Use a deliberately curated PATH so GNU timeout/gtimeout are absent even on
 # Linux CI. The runner must supervise Godot itself rather than accidentally
 # succeeding because the host happens to carry coreutils.
-for utility in grep mkfifo mktemp rm sed sleep tail tee; do
+for utility in awk dirname grep mkfifo mktemp ps rm sed sleep tail tee; do
 	utility_path="$(command -v "${utility}")"
 	ln -s "${utility_path}" "${bin_dir}/${utility}"
 done
@@ -81,6 +81,7 @@ failures=0
 case_status=0
 case_output=""
 
+# Record one failed behavioral assertion without hiding later independent cases.
 fail() {
 	printf 'run-client-test regression: FAIL — %s\n' "$1" >&2
 	failures=$((failures + 1))
@@ -104,6 +105,7 @@ elif [ "${marker_line}" -ge "${term_line}" ]; then
 	fail "the timeout verdict is not published before TERM can wake the waiter"
 fi
 
+# Execute the real runner against one fixture mode and capture its status and output.
 run_case() {
 	local label="$1"
 	local mode="$2"
