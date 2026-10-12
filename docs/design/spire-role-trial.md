@@ -1,7 +1,7 @@
 # Disposable attested-role experiment
 
-Issue #1344 and [ADR 0046](../adr/0046-prove-attested-roles-before-launch-composition.md)
-exercise the issuer assumption behind the private server foundation. This is
+Issues #1344/#1367 and [ADR 0046](../adr/0046-prove-attested-roles-before-launch-composition.md)
+exercise role issuance and private-claim TLS interoperability behind the server foundation. This is
 independent of the forty-scenario native Nakama suite and cannot activate a server.
 
 Build and run on native Linux amd64 or arm64 with Docker:
@@ -26,7 +26,7 @@ The amd64-musl archive SHA256 is
 `ca1a4d1155317bdd2afc7f36663828a10410c7c840e54725b90b4064b0a301c7`;
 arm64-musl is
 `a9982b3ca7de489def22265fd4586d8e13091ecb6fddf6adcea9291313b18886`.
-Both binaries are verified before execution. SPIRE and go-spiffe **v2.7.0** use
+Both binaries are verified before execution. SPIRE and go-spiffe **v2.8.2** use
 Apache-2.0 licensing; dependencies and the Go toolchain live solely in this
 experiment's module/build graph. No downloaded executable is committed or
 included in normal gameplay/Nakama images.
@@ -53,8 +53,44 @@ valid credential and succeeds. SPIRE can share/cache an SVID and key for this
 role. This control proves why role identity alone cannot bind original launch,
 process lifetime, allocation ownership, custody or receipt authority.
 
+## Private claim interoperability
+
+A separate native proof registers distinct zone, wrong-zone, claims-server and server-control
+UIDs. The zone has the sole URI `spiffe://war-fixture.test/zone/world/uid-1`; the claims server
+has the sole URI `spiffe://war-fixture.test/claims/private` and the fixed DNS SAN
+`claims.fixture.test`. These names are disposable fixture policy, not production enrollment.
+Each worker obtains its own certificate and key through its own attested Workload API connection.
+Keys stay in that worker; the controller receives aggregate verdicts and non-secret receipt fences.
+
+The client snapshots its issued chain/key and fetched issuer roots into static TLS material.
+Ordinary Go chain and DNS verification stays enabled; an additive check requires the exact server
+URI. The owned loopback endpoint uses the fixed TLS server name and does not resolve external DNS.
+The server uses `RequireAndVerifyClientCert`, so Go populates actual `VerifiedChains` before the
+unchanged private handler applies its one exact zone-URI check. Callback-only SPIFFE verification
+cannot substitute for this evidence.
+
+The actual `claimrpc.NewClient` selects `/v2/claim` through `ClaimWithReceipt`. The actual handler
+uses the shared **synthetic Nakama storage fake** and a synthetic resolver. The calling process
+validates the originating response; the controller compares its version and generation with the
+server's stored claim. Replay must preserve that original receipt without another storage write.
+This proves TLS and handler/client response interoperability, not native Nakama acknowledgement
+provenance, original launch, custody, or completion authority.
+
+Mandatory controls use actual issued supervisor, child, wrong-zone, wrong-server and URI-only-server
+credentials, two independent issuer roots, and missing/mismatched keys. Expected DNS and server URI
+controls remain independent. Refusals return no receipt and preserve both accepted-claim counts and
+the observed storage version/generation. The alternate issuer must also supply its own successful
+zone/server positive. A malformed multiple-URI certificate is a separately labelled SDK parser
+fixture; it is never presented as an invalid SVID issued by SPIRE.
+
+The wrapper requires both named native proofs and both verdict markers. Missing the private-claim
+proof fails acceptance. The ordinary server module is unchanged; only this separate trial module
+imports the real client/handler through a local module replacement.
+
+## Deadlines and validation
+
 Server startup is bounded to thirty seconds, role startup/replies to ten seconds,
-requests to three seconds, and the native suite to four minutes inside a
+requests to three seconds, and each native proof to four minutes inside a shared
 five-minute test timeout and twelve-minute CI job. Owned process handles receive
 TERM, then KILL if needed, with bounded join before private-state removal.
 Failed retirement fails the experiment. Issuer logs, bootstrap tokens and
@@ -79,7 +115,7 @@ GOOS=linux CGO_ENABLED=0 govulncheck -test -tags=war_spire_trial ./...
 ```
 
 CI requires native amd64 and arm64 results and scans the tagged module on PRs and
-main. Original-child enforcement remains #1345; launch-to-custody integration
+main. Original-child enforcement is implemented by #1345; launch-to-custody integration
 remains #1346; protected acknowledgement pins and independent monotonic witness
 remain #1341/#1336. This experiment supplies no production enrollment, completion,
 recovery or rollback resistance. #1192 owns its eventual retirement.
