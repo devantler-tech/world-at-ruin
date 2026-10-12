@@ -31,11 +31,17 @@ import (
 
 type command struct {
 	Op, Address, Server, Method, Path, Credential, TrustBundle string
+	DNS                                                        string
+	Expiry                                                     int64
 }
 type response struct {
-	ID, Address, Error, Code string
-	Status                   int
-	Effects                  uint64
+	ID, Address, Error, Code   string
+	Status                     int
+	Effects                    uint64
+	Claimed, Receipt, Verified bool
+	Version                    string
+	Writes                     uint64
+	Generation, Expiry         int64
 }
 
 // roleUID maps fixed diagnostic roles to disjoint users; unknown roles refuse.
@@ -49,6 +55,16 @@ func roleUID(role string) uint32 {
 		return 10103
 	case "unregistered":
 		return 10104
+	case "zone":
+		return 10105
+	case "wrong-zone":
+		return 10106
+	case "claims":
+		return 10107
+	case "URI-only-claims":
+		return 10108
+	case "wrong-claims":
+		return 10109
 	default:
 		return 0
 	}
@@ -56,6 +72,18 @@ func roleUID(role string) uint32 {
 
 // roleID constructs the exact test-domain principal used by both independent issuers.
 func roleID(role string) spiffeid.ID {
+	switch role {
+	case "zone":
+		return spiffeid.RequireFromString("spiffe://war-fixture.test/zone/world/uid-1")
+	case "wrong-zone":
+		return spiffeid.RequireFromString("spiffe://war-fixture.test/zone/world/uid-2")
+	case "claims":
+		return spiffeid.RequireFromString("spiffe://war-fixture.test/claims/private")
+	case "URI-only-claims":
+		return spiffeid.RequireFromString("spiffe://war-fixture.test/claims/uri-only")
+	case "wrong-claims":
+		return spiffeid.RequireFromString("spiffe://war-fixture.test/claims/other")
+	}
 	return spiffeid.RequireFromString("spiffe://war-fixture.test/role/" + role)
 }
 
@@ -149,6 +177,12 @@ func runWorker(role, api, private string) int {
 		return fail(errors.New("issuer did not supply the exact role principal"), "Principal")
 	}
 	svid := material.DefaultSVID()
+	if role == "zone" || role == "wrong-zone" {
+		return runClaimCaller(material, out)
+	}
+	if role == "claims" || role == "URI-only-claims" || role == "wrong-claims" {
+		return runClaimServer(material, out)
+	}
 	cfg := tlsconfig.MTLSServerConfig(svid, material.Bundles, tlsconfig.AuthorizeID(roleID(expectedCaller(role))))
 	cfg.MinVersion = tls.VersionTLS13
 	cfg.SessionTicketsDisabled = true
@@ -185,6 +219,8 @@ func runWorker(role, api, private string) int {
 			r.Effects = atomic.LoadUint64(&effects)
 		case "call":
 			r = callDiagnostic(c, material)
+		case "claim":
+			r = callPrivateClaim(c, material)
 		default:
 			r.Error = "unknown private diagnostic command"
 		}

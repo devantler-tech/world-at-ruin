@@ -965,9 +965,15 @@ the permanent blocking policy.
   retain no effective/permitted/inheritable/ambient capabilities. Both native
   architectures are required by CI. Diagnostic mTLS enforces the exact caller,
   expected server and POST /diagnostic, with issuer/key/refusal controls and
-  joined cleanup. The same-role second-process positive establishes no original
+  joined cleanup. A separate required native private-claim proof fetches each zone/server
+  credential in its own process, snapshots static TLS with ordinary DNS/chain verification
+  plus exact server URI authorization, and uses `RequireAndVerifyClientCert` so the unchanged
+  handler sees real verified chains. The real v2 client/handler response and replay are checked
+  against explicitly synthetic storage. Issued role/zone/server/root and key controls preserve
+  zero accepted effects; malformed multiple-URI evidence stays parser-only. Both native proofs
+  and their complete verdicts are mandatory. The same-role second-process positive establishes no original
   process or launch ownership. See ADR 0046 and `docs/design/spire-role-trial.md`;
-  #1345/#1346 and #1341 remain separate gates.
+  #1345 supplies the independent original-child outcome; #1346 and #1341 remain separate gates.
 - **Native owned-child acceptance:** the separate `tools/owned-child-trial`
   module/image requires explicit build and run opt-in. Its trusted controller
   uses the existing SETUID/SETGID/KILL profile; every diagnostic sender has empty
@@ -987,7 +993,7 @@ the permanent blocking policy.
   failed-observation controls and a separate parent-death containment refusal.
   See ADRs 0047–0049 and `docs/design/owned-child-trial.md`.
   This is a diagnostic process boundary, with no serving caller or publication.
-  Gameplay admission remains #1345; custody composition and witness authority remain
+  This supplies #1345's original-child outcome; custody composition and witness authority remain
   #1346/#1341. Retire the experimental tooling through #1192 after adoption.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`

@@ -11,7 +11,7 @@ case "$kind" in
 spire)
   refusal='SPIRE trial requires explicit opt-in before any state or process'
   proof='SPIRE NATIVE PASS:'
-  tests=(TestNativeSPIREAttestedRoles)
+  tests=(TestNativeSPIREAttestedRoles TestNativeSPIREPrivateClaim)
   ;;
 owned-child)
   refusal='owned child trial requires explicit opt-in before any process'
@@ -82,6 +82,10 @@ for required in "${tests[@]}"; do
     exit 1
   fi
 done
+if [[ $kind == spire ]] && ! grep -q '^SPIRE CLAIM NATIVE PASS:' "$state/trial.log"; then
+  echo 'native acceptance lacks the issued private-claim proof' >&2
+  exit 1
+fi
 if [[ $kind == owned-child ]]; then
   retire_container
   trial_id=$(create_trial -war-orphan-scenario)

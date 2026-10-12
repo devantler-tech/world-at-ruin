@@ -29,6 +29,8 @@ case "$1 $2" in
     fi
     if [[ $HARNESS_KIND == spire ]]; then
       echo '--- PASS: TestNativeSPIREAttestedRoles (0.1s)'; echo 'SPIRE NATIVE PASS: fixture'
+      if [[ $HARNESS_FAILURE != missing-claim ]]; then echo '--- PASS: TestNativeSPIREPrivateClaim (0.1s)'; fi
+      if [[ $HARNESS_FAILURE != missing-claim-verdict ]]; then echo 'SPIRE CLAIM NATIVE PASS: fixture'; fi
     else
       echo '--- PASS: TestNativeOwnedChild (0.1s)'; echo 'OWNED CHILD NATIVE PASS: fixture'
       if [[ $HARNESS_FAILURE != missing ]]; then echo '--- PASS: TestNativeOwnedRetirement (0.1s)'; fi
@@ -64,6 +66,14 @@ for kind in spire owned-child; do
   fi
   grep -Fq 'rm -f fixture-owned-id' "$HARNESS_RECORD"
   grep -Fq 'container ls --all --filter id=fixture-owned-id' "$HARNESS_RECORD"
+done
+export HARNESS_KIND=spire
+for failure in missing-claim missing-claim-verdict; do
+  export HARNESS_FAILURE=$failure
+  if bash "$root/tools/smoke-native-private-server.sh" spire fixture --experimental >"$scratch/result" 2>&1; then
+    echo "TEST FAIL -- SPIRE wrapper accepted $failure" >&2
+    exit 1
+  fi
 done
 export HARNESS_KIND=owned-child
 for failure in start missing missing-exec missing-arch missing-abi missing-table missing-fork orphan-output orphan-zero remove unreadable retained; do

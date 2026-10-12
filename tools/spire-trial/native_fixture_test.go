@@ -259,8 +259,12 @@ plugins {
 	}
 	tokenFile := filepath.Join(private, "join-token")
 	f.write(tokenFile, token.Value, 0600)
-	for _, role := range []string{"supervisor", "custodian", "child"} {
-		_ = f.cli("entry", "create", "-socketPath", socket, "-parentID", "spiffe://war-fixture.test/spire/agent/join_token/"+token.Value, "-spiffeID", roleID(role).String(), "-selector", fmt.Sprintf("unix:uid:%d", roleUID(role)), "-x509SVIDTTL", "300")
+	for _, role := range []string{"supervisor", "custodian", "child", "zone", "wrong-zone", "claims", "URI-only-claims", "wrong-claims"} {
+		args := []string{"entry", "create", "-socketPath", socket, "-parentID", "spiffe://war-fixture.test/spire/agent/join_token/" + token.Value, "-spiffeID", roleID(role).String(), "-selector", fmt.Sprintf("unix:uid:%d", roleUID(role)), "-x509SVIDTTL", "300"}
+		if role == "claims" || role == "wrong-claims" {
+			args = append(args, "-dns", claimsFixtureDNS)
+		}
+		_ = f.cli(args...)
 	}
 	api := filepath.Join(public, "api.sock")
 	agentConf := filepath.Join(private, "agent.conf")
@@ -354,7 +358,8 @@ func (f *nativeFixture) startWorker(role string, issuer nativeIssuer) *nativeWor
 		}
 	}
 	w.ready = w.receive()
-	if role != "unregistered" && (w.ready.Error != "" || w.ready.ID != roleID(role).String() || w.ready.Address == "") {
+	callerOnly := role == "zone" || role == "wrong-zone"
+	if role != "unregistered" && (w.ready.Error != "" || w.ready.ID != roleID(role).String() || (!callerOnly && w.ready.Address == "")) {
 		f.t.Fatal("attested worker startup failed:", role, w.ready.Error)
 	}
 	return w

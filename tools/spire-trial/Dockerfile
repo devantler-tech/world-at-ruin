@@ -4,10 +4,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG EXPERIMENTAL=false
 ARG TARGETARCH
 RUN test "$EXPERIMENTAL" = true
-WORKDIR /source
+WORKDIR /source/tools/spire-trial
+COPY server/go.mod server/go.sum /source/server/
 COPY tools/spire-trial/go.mod tools/spire-trial/go.sum ./
 RUN go mod download
 COPY tools/spire-trial/ ./
+COPY server/ /source/server/
 RUN gofmt -l . > /tmp/unformatted && test ! -s /tmp/unformatted \
     && go vet -tags=war_spire_trial ./... \
     && go test -race -mod=readonly ./... \
