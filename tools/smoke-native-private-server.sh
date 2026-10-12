@@ -25,6 +25,13 @@ owned-child)
 esac
 state=$(mktemp -d)
 trial_id=""
+create_trial() {
+  docker create --user 0:0 --network none --read-only --cap-drop ALL \
+    --cap-add SETUID --cap-add SETGID --cap-add KILL \
+    --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
+    --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777 \
+    "$image" -war-experimental "$@"
+}
 retire_container() {
   if ! docker rm -f "$trial_id" >/dev/null 2>&1; then
     echo 'owned native container retirement failed; preserving diagnostics' >&2
@@ -61,11 +68,7 @@ if [[ $refused != 2 ]] || ! grep -Fxq "$refusal" "$state/default.log"; then
   echo 'native trial default invocation did not refuse missing opt-in' >&2
   exit 1
 fi
-trial_id=$(docker create --user 0:0 --network none --read-only --cap-drop ALL \
-  --cap-add SETUID --cap-add SETGID --cap-add KILL \
-  --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
-  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777 \
-  "$image" -war-experimental -test.v -test.timeout=5m)
+trial_id=$(create_trial -test.v -test.timeout=5m)
 docker start -a "$trial_id" | tee "$state/trial.log"
 if [[ $(docker inspect --format '{{.State.ExitCode}}' "$trial_id") != 0 ]] ||
   ! grep -q "^$proof" "$state/trial.log" ||
@@ -81,11 +84,7 @@ for required in "${tests[@]}"; do
 done
 if [[ $kind == owned-child ]]; then
   retire_container
-  trial_id=$(docker create --user 0:0 --network none --read-only --cap-drop ALL \
-    --cap-add SETUID --cap-add SETGID --cap-add KILL \
-    --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
-    --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777 \
-    "$image" -war-experimental -war-orphan-scenario)
+  trial_id=$(create_trial -war-orphan-scenario)
   if docker start -a "$trial_id" | tee "$state/orphan.log"; then
     attached=0
   else
