@@ -50,6 +50,7 @@ type forkEvidence struct {
 	CloneResult                               int64
 	Existing                                  []int
 	Bounding                                  string
+	Filters                                   string
 }
 
 // forkOwned belongs only to the original worker that performed clone.
@@ -122,7 +123,7 @@ func startFork(socket int, mode string) (child *forkOwned, proof *forkEvidence, 
 	runtime.KeepAlive(message)
 	runtime.KeepAlive(record)
 	proof = &forkEvidence{SavedMask: args.Saved, RestoredMask: args.Restored, CloneResult: args.Result,
-		Existing: []int{installer, tasks[0].tid, tasks[1].tid}, Bounding: parentStatus["CapBnd"]}
+		Existing: []int{installer, tasks[0].tid, tasks[1].tid}, Bounding: parentStatus["CapBnd"], Filters: parentStatus["Seccomp_filters"]}
 	if closeErr := unix.Close(pipe[1]); closeErr != nil {
 		err = closeErr
 	}
@@ -213,10 +214,10 @@ func (c *forkOwned) stop() error {
 		return err
 	}
 	if !joined {
-		if err = unix.PidfdSendSignal(c.fd, unix.SIGKILL, nil, 0); err != nil {
+		if err = unix.PidfdSendSignal(c.fd, unix.SIGKILL, nil, 0); err != nil && !errors.Is(err, unix.ESRCH) {
 			return err
 		}
-		c.proof.Killed = true
+		c.proof.Killed = err == nil
 		joined, err = c.terminal(time.Now().Add(3 * time.Second))
 		if err != nil || !joined {
 			return errors.Join(err, errors.New("fork join deadline; ownership retained"))

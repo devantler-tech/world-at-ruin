@@ -55,7 +55,7 @@ func TestNativeForkSender(t *testing.T) {
 				t.Fatal("original positive refused")
 			}
 			proof := forkReply(t, original, "fork:"+mode)
-			if !proof.Complete || proof.Refused || proof.PID <= 0 || proof.PID == int64(first.sender.pid) || proof.Send != int64(len(diagnostic)) || validateIdentity(reply{Status: proof.Status}) != nil || proof.Bounding == "" || proof.Status["CapBnd"] != proof.Bounding {
+			if !proof.Complete || proof.Refused || proof.PID <= 0 || proof.PID == int64(first.sender.pid) || proof.Send != int64(len(diagnostic)) || validateIdentity(reply{Status: proof.Status}) != nil || proof.Bounding == "" || proof.Status["CapBnd"] != proof.Bounding || proof.Filters == "" || proof.Status["Seccomp_filters"] != proof.Filters || proof.Status["Seccomp"] != "2" {
 				t.Fatal("real raw fork observation incomplete")
 			}
 			forkFrame, accepted := requirePacket(t, original, receiver)
