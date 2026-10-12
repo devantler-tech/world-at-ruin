@@ -25,7 +25,7 @@ case "$1 $2" in
     if [[ $HARNESS_FAILURE == start ]]; then exit 1; fi
     if [[ -f $HARNESS_RECORD.orphan ]]; then
       if [[ $HARNESS_FAILURE != orphan-output ]]; then echo 'EXPECTED FORK REFUSAL: original joined; descendant join unproved; containment retained'; fi
-      exit 0
+      exit 1
     fi
     if [[ $HARNESS_KIND == spire ]]; then
       echo '--- PASS: TestNativeSPIREAttestedRoles (0.1s)'; echo 'SPIRE NATIVE PASS: fixture'

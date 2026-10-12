@@ -86,8 +86,12 @@ if [[ $kind == owned-child ]]; then
     --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
     --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777 \
     "$image" -war-experimental -war-orphan-scenario)
-  docker start -a "$trial_id" | tee "$state/orphan.log"
-  if [[ $(docker inspect --format '{{.State.ExitCode}}' "$trial_id") != 1 ]] ||
+  if docker start -a "$trial_id" | tee "$state/orphan.log"; then
+    attached=0
+  else
+    attached=$?
+  fi
+  if [[ $attached != 1 || $(docker inspect --format '{{.State.ExitCode}}' "$trial_id") != 1 ]] ||
     ! grep -Fxq 'EXPECTED FORK REFUSAL: original joined; descendant join unproved; containment retained' "$state/orphan.log"; then
     echo 'native orphan scenario lacks its separate expected refusal' >&2
     exit 1
