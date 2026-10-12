@@ -8,9 +8,20 @@ fi
 kind=$1
 image=$2
 case "$kind" in
-  spire) refusal='SPIRE trial requires explicit opt-in before any state or process'; proof='SPIRE NATIVE PASS:'; tests=(TestNativeSPIREAttestedRoles) ;;
-  owned-child) refusal='owned child trial requires explicit opt-in before any process'; proof='OWNED CHILD NATIVE PASS:'; tests=(TestNativeOwnedChild TestNativeOwnedRetirement TestNativeOwnedCleanupFaults) ;;
-  *) echo 'unknown native diagnostic fixture' >&2; exit 2 ;;
+spire)
+  refusal='SPIRE trial requires explicit opt-in before any state or process'
+  proof='SPIRE NATIVE PASS:'
+  tests=(TestNativeSPIREAttestedRoles)
+  ;;
+owned-child)
+  refusal='owned child trial requires explicit opt-in before any process'
+  proof='OWNED CHILD NATIVE PASS:'
+  tests=(TestNativeOwnedChild TestNativeOwnedRetirement TestNativeOwnedCleanupFaults TestNativeExecSeal TestNativeExecSealArchitectureMismatch TestNativeExecSealABIReports TestExecSealFilterTable)
+  ;;
+*)
+  echo 'unknown native diagnostic fixture' >&2
+  exit 2
+  ;;
 esac
 state=$(mktemp -d)
 trial_id=""
@@ -37,7 +48,7 @@ if [[ $(docker image inspect --format '{{.Config.User}}' "$image") != 10001:1000
 fi
 if docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 256m \
-  "$image" > "$state/default.log" 2>&1; then
+  "$image" >"$state/default.log" 2>&1; then
   refused=0
 else
   refused=$?
@@ -52,8 +63,8 @@ trial_id=$(docker create --user 0:0 --network none --read-only --cap-drop ALL \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777 \
   "$image" -war-experimental -test.v -test.timeout=5m)
 docker start -a "$trial_id" | tee "$state/trial.log"
-if [[ $(docker inspect --format '{{.State.ExitCode}}' "$trial_id") != 0 ]] || \
-  ! grep -q "^$proof" "$state/trial.log" || \
+if [[ $(docker inspect --format '{{.State.ExitCode}}' "$trial_id") != 0 ]] ||
+  ! grep -q "^$proof" "$state/trial.log" ||
   ! grep -q '^PASS$' "$state/trial.log"; then
   echo 'native acceptance lacks a complete passing verdict' >&2
   exit 1

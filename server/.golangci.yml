@@ -83,6 +83,20 @@ linters:
         linters: [noctx]
         text: 'os/exec\.Command must not be called\. use os/exec\.CommandContext'
         source: 'cmd := exec\.Command\("/out/owned-child\.test", "-war-experimental", "-war-worker="\+mode, "-war-address="\+address\)'
+      # Raw TSYNC must retain the positive failing-TID return, unavailable from
+      # a prctl-only wrapper. The fixed bounded program and its slice remain
+      # alive through the synchronous syscall; no outside input supplies pointers.
+      - path: ^(\.\./tools/owned-child-trial/)?seal_linux_test\.go$
+        linters: [gosec]
+        text: "G103: Use of unsafe calls should be audited"
+        source: 'value, _, errno := unix\.RawSyscall\(unix\.SYS_SECCOMP, unix\.SECCOMP_SET_MODE_FILTER, flags, uintptr\(unsafe\.Pointer\(&program\)\)\)'
+      # Direct same-process exec controls use a fixed immutable static ELF,
+      # pre-opened FD and NUL-terminated fixture-owned argv/envp buffers kept
+      # alive through the syscall. Ordinary os/exec would prove a different child.
+      - path: ^(\.\./tools/owned-child-trial/)?native_exec_test\.go$
+        linters: [gosec]
+        text: "G103: Use of unsafe calls should be audited"
+        source: '_, _, errno = unix\.RawSyscall(6)?\(unix\.SYS_EXECVE(AT)?, '
       # The private claim endpoint is immutable constructor configuration,
       # validated as HTTPS with a fixed path and no redirects. Player payloads
       # cannot influence its destination; private service addresses are intended.

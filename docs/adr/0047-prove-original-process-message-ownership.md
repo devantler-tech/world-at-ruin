@@ -56,8 +56,9 @@ production images and player data remain intact; no production activation follow
 
 ## Limits and follow-up
 
-A pidfd identifies a process lifetime, not an immutable executable. Executable
-sealing, raw fork without exec, TSYNC and gameplay admission remain #1345.
+A pidfd identifies a process lifetime, not an immutable executable. Trusted
+startup TSYNC exec sealing is specified separately in [ADR 0048](0048-seal-owned-child-exec-before-diagnostic-admission.md).
+Raw fork without exec and gameplay admission remain #1345.
 In-process code and the original child's proxying remain outside this proof.
 The same-user inherited replacement is a distinct exec-launched process; it is
 not a raw-fork control. PID reuse protection follows the kernel handle contract;
