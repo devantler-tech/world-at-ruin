@@ -62,8 +62,10 @@ The bake writes `humanoid_base.glb`, `humanoid_base_report.txt`, the `equipment/
 `equipment.json`, and the `skins/` textures and `skins.json`. To update the committed kit, transfer
 the **complete generated output** into `client/assets/characters/humanoid_kit/`, renaming the report
 to `kit_report.txt`. Compare the fresh output's file inventory with the tracked baked files:
-remove obsolete generated assets and their `.import` sidecars in the same change, including removed
-or renamed equipment and skins. Preserve existing Godot texture import sidecars only for assets
+remove only obsolete, unreferenced generated files or superseded paths and their `.import` sidecars
+in the same change. Preserve shipped equipment/skin registry keys and every asset required by
+supported historical saves; cleanup must not make an existing character unreadable.
+Preserve existing Godot texture import sidecars only for assets
 that still exist in the fresh bake; preserve authored `PROVENANCE.md` and other documentation.
 Do not use a whole-directory replacement that deletes those authored files. Review the whole diff,
 including both registries and their provenance checksums. Ship regenerated files with the manifest
