@@ -39,6 +39,30 @@ linters:
   exclusions:
     warn-unused: true
     rules:
+      # The separate issuer experiment needs a traversable public ancestor;
+      # its issuer/admin state stays 0700 and logs/token files stay 0600.
+      - path: ^(\.\./tools/spire-trial/)?native_fixture_test\.go$
+        linters: [gosec]
+        text: "G302: Expect file permissions to be 0600 or less"
+        source: 'if err = os\.Chmod\(dir, 0755\); err != nil'
+      # Fixed pinned issuer binaries and this test's own executable receive
+      # only fixture-owned paths/role options. No player input chooses a command.
+      - path: ^(\.\./tools/spire-trial/)?native_fixture_test\.go$
+        linters: [gosec]
+        text: "G204: Subprocess launched with variable"
+        source: 'exec\.CommandContext\(f\.ctx, ("/opt/spire/bin/spire-(server|agent)"|binary),'
+      # This helper's executable is immutable; callers are test-controller
+      # administrative operations, and their output is never printed publicly.
+      - path: ^(\.\./tools/spire-trial/)?native_test\.go$
+        linters: [gosec]
+        text: "G204: Subprocess launched with variable"
+        source: 'c := exec\.CommandContext\(ctx, "/opt/spire/bin/spire-server", args\.\.\.\)'
+      # Permission-refusal probe opens the controller's known-existing private
+      # directory without reading or exporting any content.
+      - path: ^(\.\./tools/spire-trial/)?native_worker_test\.go$
+        linters: [gosec]
+        text: "G304: Potential file inclusion via variable"
+        source: 'd, err := os\.Open\(private\)'
       # The private claim endpoint is immutable constructor configuration,
       # validated as HTTPS with a fixed path and no redirects. Player payloads
       # cannot influence its destination; private service addresses are intended.

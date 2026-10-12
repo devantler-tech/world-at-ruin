@@ -958,6 +958,16 @@ the permanent blocking policy.
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
   and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
+- **Native SPIRE role acceptance:** the separate `tools/spire-trial` module
+  and unpublished image require explicit experimental build/run opt-in. Pinned
+  SPIRE Server/Agent attest three distinct unprivileged UIDs, each fetching its
+  own Workload API SVID/key. The controller has only SETUID/SETGID/KILL; roles
+  retain no effective/permitted/inheritable/ambient capabilities. Both native
+  architectures are required by CI. Diagnostic mTLS enforces the exact caller,
+  expected server and POST /diagnostic, with issuer/key/refusal controls and
+  joined cleanup. The same-role second-process positive establishes no original
+  process or launch ownership. See ADR 0046 and `docs/design/spire-role-trial.md`;
+  #1345/#1346 and #1341 remain separate gates.
 - **Adding a test needs NO `ci.yaml` edit:** name the scene `<name>_test.tscn` and put it directly
   under `client/tests/` — CI's "Regression tests" step auto-discovers `client/tests/*_test.tscn`
   (issue #50; the old hardcoded list forced every parallel test-adding PR to collide on one line).
