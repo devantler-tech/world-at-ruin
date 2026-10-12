@@ -16,7 +16,8 @@ wins.
 > **Status: pre-alpha — "Ashfall Reach".** You wake in the starter cave, shape your character
 > (body, face, equipment, skin — all persisted forward-only per the product law), and step out
 > into a procedurally generated ruin field: the Wardens' shrine, a seeded settlement, and
-> drifters in the open land. No combat, no networking yet — those arrive issue by issue via the
+> drifters in the open land. Ordinary play is local; combat and shared online progression are still
+> in development. Those arrive issue by issue via the
 > [roadmap](https://github.com/devantler-tech/world-at-ruin/issues?q=label%3Aroadmap); the
 > in-game dev log (`L`) is the precise changelog.
 
@@ -28,7 +29,13 @@ frames of the character and the cave, rendered from the running game.
 **macOS only for now** — one universal build covers Apple Silicon and Intel, and needs macOS 11 or
 newer. Windows and Linux builds aren't exported yet.
 
-**Homebrew** is the easiest way in, and the only one that keeps you on the newest build:
+**Homebrew** installs the published macOS build and supplies upgrades. Before installing, decide
+whether you trust this publisher: the build is ad-hoc signed, not notarized. The cask checks the
+pinned release checksum and then removes macOS quarantine for those bytes. A matching checksum
+confirms the downloaded release, but does not replace notarization or your trust decision.
+
+The `brew trust` command below records trust for **this one cask** if Homebrew requires it; it does
+not trust every package in the tap. If you prefer not to grant that trust, use the source path below.
 
 ```sh
 brew tap devantler-tech/tap
@@ -36,24 +43,30 @@ brew trust --cask devantler-tech/tap/world-at-ruin
 brew install --cask world-at-ruin
 ```
 
-From then on `brew upgrade --cask world-at-ruin` pulls each new release. (`brew trust` matters only
-if your Homebrew is set to require trusting third-party taps — running it either way is harmless.
-It's scoped to this one cask on purpose: trusting the whole tap would also cover everything else
-it ships, now and in future.)
+From then on `brew upgrade --cask world-at-ruin` installs available cask updates.
 
 Manual GitHub Release downloads are not currently supported. The build is ad-hoc signed rather
 than notarized, so macOS will quarantine it; do not clear that quarantine yourself on an unverified
 download. Use the Homebrew cask above: it verifies the pinned release checksum, then removes
 quarantine for those verified bytes. Or run the game from source below.
 
-**Or run it from source** — requires [Godot 4.7+](https://godotengine.org)
-(macOS: `brew install --cask godot`):
+**Or run it from source** — install [Godot **4.7.1**](https://godotengine.org/download/archive/)
+(the version used by CI), and make its executable available as `godot`. Check `godot --version`
+before continuing; a package manager may supply a different version. On macOS you can use
+`/Applications/Godot.app/Contents/MacOS/Godot` in place of `godot`.
+
+Run these commands in a terminal. Importing the project first creates the local asset cache:
 
 ```sh
 git clone https://github.com/devantler-tech/world-at-ruin.git
 cd world-at-ruin
-godot client   # or: /Applications/Godot.app/Contents/MacOS/Godot client
+godot --headless --editor --quit --path client
+godot --path client
 ```
+
+The game opens the starter cave and saves your character locally between launches. For development
+or a disposable trial, follow the [isolated save setup in CONTRIBUTING.md](CONTRIBUTING.md#run-the-client-with-disposable-saves)
+before launching, so a test cannot change your regular character.
 
 To build your own `.app` instead, export with the `macOS` preset in `client/export_presets.cfg`
 (needs the 4.7.1 export templates installed in the Godot editor).
@@ -112,3 +125,6 @@ or release uncertain allocations.
 
 The full settled design — engine choice, art pipeline, server architecture, economy laws, and
 combat design — lives in [AGENTS.md](AGENTS.md).
+
+To propose a change, start with [CONTRIBUTING.md](CONTRIBUTING.md): it covers the licence and CLA,
+safe local setup, focused checks, and the path from an issue to a reviewed pull request.

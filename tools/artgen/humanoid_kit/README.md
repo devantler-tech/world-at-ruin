@@ -37,15 +37,31 @@ names are the stable public API for recipes: **never rename or remove a shipped 
 
 ## Usage
 
+This optional pipeline regenerates art; it is not needed to play the game or make a documentation
+change. Run from the **repository root** with Blender **5.2.0 LTS** available as `blender`, plus
+`curl`, `jq`, `unzip`, and either `sha256sum` or `shasum`. Bootstrap verifies its pinned downloads,
+installs MPFB into your local Blender `user_default` extension repository, and downloads the
+ignored input packs into this kit directory. Review those local changes before running it.
+
 ```sh
-./bootstrap.sh                                  # one-time: install pinned MPFB into Blender
-blender --background --python bake.py -- /abs/path/humanoid_base.glb
+tools/artgen/humanoid_kit/bootstrap.sh
+mkdir -p build/humanoid-kit-check/a build/humanoid-kit-check/b
+blender --background --python tools/artgen/humanoid_kit/bake.py -- "${PWD}/build/humanoid-kit-check/a/humanoid_base.glb"
+blender --background --python tools/artgen/humanoid_kit/bake.py -- "${PWD}/build/humanoid-kit-check/b/humanoid_base.glb"
+diff -r build/humanoid-kit-check/a build/humanoid-kit-check/b
 ```
 
-The bake prints `BAKE_REPORT` lines and writes `humanoid_base_report.txt` next to the GLB. To
-update the committed kit: run the bake, copy the GLB and report into
-`client/assets/characters/humanoid_kit/` (report renamed `kit_report.txt`), and ship both in the
-same PR as the manifest change that caused them.
+Each bake must finish with `RESULT: SUCCESS`; the recursive comparison must exit zero without
+differences. A missing prerequisite, failed download, bake error, or difference is a failure to
+investigate, not a reason to copy partial output. Use fresh output directories for each comparison.
+
+The bake writes `humanoid_base.glb`, `humanoid_base_report.txt`, the `equipment/` GLBs and
+`equipment.json`, and the `skins/` textures and `skins.json`. To update the committed kit, transfer
+the **complete generated output** into `client/assets/characters/humanoid_kit/`, renaming the report
+to `kit_report.txt`. Preserve existing Godot texture import sidecars, and review the whole diff,
+including both registries and their provenance checksums. Ship regenerated files with the manifest
+change that caused them; never hand-edit generated assets or registries. The artgen workflow checks
+the repeated bake, report, and both registries, while client CI checks importing and using the kit.
 
 Pinned toolchain: Blender **5.2.0 LTS**, MPFB **2.0.16**
 (sha256 `b5cdc8b08147e0c6463e4faa01147491b13a0b062f73415363f029debd11c934`).
