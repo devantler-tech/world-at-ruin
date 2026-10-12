@@ -57,6 +57,7 @@ phase_state="$(mktemp -d "${TMPDIR:-/tmp}/trusted-regression-phase.XXXXXX")"
 verdict_record="$phase_state/verdict"
 launching=true
 cancel_pending=false
+# Release phase state only after a readable direct-child verdict confirms its join.
 acknowledge_child() {
   local verdict
   if [ ! -f "$verdict_record" ] || ! verdict="$(cat "$verdict_record")" ||
@@ -70,6 +71,7 @@ acknowledge_child() {
   rm -rf "$phase_state"
 }
 # shellcheck disable=SC2329 # Invoked by the signal trap.
+# Retire the captured phase group and preserve unacknowledged private state.
 cancel() {
   cancel_pending=true
   # A signal can arrive after spawn but before $! is published to the owner.

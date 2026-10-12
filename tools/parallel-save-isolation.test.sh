@@ -10,6 +10,7 @@ source "$root/tools/process-group-lifecycle.sh"
 active=()
 cleanup_uncertain=0
 war_cancel_init
+# Join both verdict runners and retain captures when either refuses cleanup.
 cleanup() {
 	trap '' INT TERM
 	local status=$cleanup_status pid
@@ -33,6 +34,7 @@ if ! command -v "${godot_bin}" >/dev/null 2>&1; then
 	exit 2
 fi
 
+# Require a successful runner exit and an explicit scene verdict in its capture.
 check_run() {
 	local log="$1"
 	local status="$2"
@@ -102,6 +104,7 @@ run_pair() {
 	fi
 }
 
+# Require the intentional isolation breach to fail for its expected scene diagnosis.
 check_failure_path() {
 	local log="${logs}/vault-restore-failure-path.log"
 	local status=0

@@ -5,6 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 sha=0123456789abcdef0123456789abcdef01234567
+# Invoke the actual gate with valid defaults and the case's explicit evidence overrides.
 run() {
   env EXPECTED_SHA="$sha" ORDINARY_RESULT=success SANDBOX_RESULT=success \
     ORDINARY_COMPLETE=true SANDBOX_COMPLETE=true ORDINARY_SHA="$sha" SANDBOX_SHA="$sha" \

@@ -7,12 +7,13 @@ trusted_cancel_pending=false
 trusted_cleanup_started=false
 # shellcheck disable=SC2034 # EXIT traps and cleanup functions in sourced callers use this.
 trusted_cleanup_status=0
+# Latch controller cancellation until the active child's handle is available.
 trusted_request_cancel() {
   trusted_cancel_pending=true
   if [ "$trusted_cleanup_started" = true ]; then return; fi
   if [ "$trusted_launching" != true ]; then exit 130; fi
 }
-# Run one child asynchronously so controller cancellation can interrupt its wait.
+# Run one child asynchronously and preserve both its status and any cleanup refusal.
 trusted_wait() {
   trusted_launching=true
   "$@" &
@@ -53,6 +54,7 @@ trusted_stop_child() {
   fi
 }
 # shellcheck disable=SC2329 # Sourced controllers invoke this through their EXIT traps.
+# Stop the owned child, remove recorded containers, and retain state on uncertain cleanup.
 trusted_cleanup_controller() {
   local state="$1" phase="$2" records="$3" result=$trusted_cleanup_status
   trap - EXIT

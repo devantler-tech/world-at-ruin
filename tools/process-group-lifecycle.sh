@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Observe terminal members before releasing invocation-private state. A zombie
 # has acknowledged exit; its reaper may be outside this process group.
+# Initialize the caller's launch, cancellation and saved-exit state.
 war_cancel_init() {
   launching="${1:-false}"
   cancel_pending=false
@@ -8,12 +9,14 @@ war_cancel_init() {
   # shellcheck disable=SC2034 # The caller's EXIT trap consumes this saved status.
   cleanup_status=0
 }
+# Defer cancellation until child handles are published, then enter cleanup once.
 war_request_cancel() {
   # shellcheck disable=SC2034 # Callers check this deferred intent after publishing handles.
   cancel_pending=true
   if [ "$cleanup_started" = true ]; then return; fi
   if [ "$launching" != true ]; then trap '' INT TERM; exit 130; fi
 }
+# Return 0 for live group members, 1 for terminal members, or 2 for unknown inspection.
 war_group_active() {
   local snapshot
   snapshot="$(ps -axo pgid=,stat=)" || return 2
@@ -23,6 +26,7 @@ war_group_active() {
     END {if (NR == 0 || bad) exit 2; exit live ? 0 : 1}
   ' <<< "$snapshot"
 }
+# Send TERM with bounded grace, escalate to KILL and require observed group retirement.
 war_retire_group() {
   local group="$1" grace="$2" attempt rc=0 failed=0
   [[ $group =~ ^[1-9][0-9]*$ && $grace =~ ^[1-5]$ ]] || return 2

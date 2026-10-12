@@ -16,6 +16,7 @@ if [[ ${1:-} == --nested-int ]]; then runner="$root/tools/run-client-test.sh"; k
 tmp="$(mktemp -d)"
 canary=''
 real_ps="$(command -v ps)"
+# Remove only recorded test-owned processes, the canary and this invocation's fixtures.
 cleanup() {
   local record owned_pid
   for record in "$tmp"/*/engine* "$tmp"/*/child*; do
@@ -57,6 +58,7 @@ trap 'if [[ "$0" == "$CAPTURE_TARGET" && "$BASH_COMMAND" == "$CAPTURE_COMMAND" &
   kill -TERM "$$"
 fi' DEBUG
 CAPTURE
+# Return success only when the recorded PID is absent or has acknowledged terminal exit.
 terminal() {
   local snapshot
   snapshot="$("$real_ps" -axo pid=,stat=)" || return 2

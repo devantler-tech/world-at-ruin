@@ -12,22 +12,21 @@ for candidate in env genv; do
 done
 if [ -z "$signal_env" ]; then echo '::error::phase child requires GNU coreutils env for normal signals' >&2; exit 2; fi
 cancelled=false
-launching=true
 # shellcheck disable=SC2329 # The signal trap invokes this during the launch/wait lifecycle.
+# Latch a launch-window signal until the direct child's handle is captured.
 mark_cancel() {
   cancelled=true
-  if [ "$launching" != true ]; then trap '' INT TERM; fi
 }
 trap 'trap ":" INT TERM; mark_cancel' INT TERM
 "$signal_env" --default-signal=INT,TERM "$@" &
 child=$!
-launching=false
-if [ "$cancelled" = true ]; then trap '' INT TERM; kill -TERM "$child" 2>/dev/null || true; fi
+# The phase owner signals the entire group, including the child. Keep this
+# join immune to those signals: an interrupted Bash wait can cache 143 even
+# when the native child acknowledged TERM and exited zero. The owner still
+# escalates to KILL within its bound if the child does not retire.
+trap '' INT TERM
+if [ "$cancelled" = true ]; then kill -TERM "$child" 2>/dev/null || true; fi
 status=0
 wait "$child" || status=$?
-if [ "$cancelled" = true ]; then
-  status=0
-  wait "$child" || status=$?
-fi
 printf '%s\n' "$status" > "$record"
 exit "$status"

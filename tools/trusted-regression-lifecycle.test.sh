@@ -5,6 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lifecycle="${1:-$root/tools/trusted-regression-lifecycle.sh}"
 tmp="$(mktemp -d)"
 child=''
+# Retire the test's direct child and remove only its invocation-owned fixtures.
 cleanup() {
   if [[ -n $child ]]; then kill -KILL "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi
   rm -rf "$tmp"
@@ -60,7 +61,7 @@ child=''
 # GNU timeout replaces a cancellation status; the phase must preserve the
 # child's separate private cleanup verdict after an actual join.
 rm "$tmp/ready"
-READY="$tmp/ready" bash "$root/tools/trusted-regression-phase.sh" 'ordinary client step' bash -c 'trap "exit 2" TERM; touch "$READY"; while :; do sleep 0.1; done' > "$tmp/phase-refused" 2>&1 & child=$!
+READY="$tmp/ready" TMPDIR="$tmp" bash "$root/tools/trusted-regression-phase.sh" 'ordinary client step' bash -c 'trap "exit 2" TERM; touch "$READY"; while :; do sleep 0.1; done' > "$tmp/phase-refused" 2>&1 & child=$!
 for ((i=0;i<100;i++)); do [[ -f $tmp/ready ]] && break; sleep 0.05; done
 [[ -f $tmp/ready ]]
 kill -TERM "$child"
@@ -68,4 +69,5 @@ status=0
 wait "$child" || status=$?
 child=''
 [[ $status == 2 ]]
+compgen -G "$tmp/trusted-regression-phase.*" >/dev/null
 echo 'TEST PASS -- controller preserves cleanup refusals and the complete exit-observation budget'

@@ -81,6 +81,7 @@ failures=0
 case_status=0
 case_output=""
 
+# Record one failed behavioral assertion without hiding later independent cases.
 fail() {
 	printf 'run-client-test regression: FAIL — %s\n' "$1" >&2
 	failures=$((failures + 1))
@@ -104,6 +105,7 @@ elif [ "${marker_line}" -ge "${term_line}" ]; then
 	fail "the timeout verdict is not published before TERM can wake the waiter"
 fi
 
+# Execute the real runner against one fixture mode and capture its status and output.
 run_case() {
 	local label="$1"
 	local mode="$2"

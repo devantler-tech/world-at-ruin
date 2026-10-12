@@ -86,6 +86,7 @@ trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image
 image="$(cat "$tmp/image")"
 cd "$tmp/work"
 # Require a concrete refusal from one real containment control.
+# Display private probe captures and fail without accepting incomplete containment evidence.
 probe_failure() {
   cat "$tmp/import.log" "$tmp/run.log" 2>/dev/null || true
   exit 1
@@ -115,6 +116,7 @@ HELD
 status=0
 # This intentional refusal has its own latch; unexpected refusals elsewhere
 # still prevent the containing trial from releasing its private state.
+# Bound a real held engine while keeping this expected refusal's latch local.
 run_held_control() {
   local trusted_cleanup_uncertain=0
   GODOT_SANDBOX_IMAGE="$image" WAR_TRUSTED_PROBE_SECONDS=1 trusted_wait bash "$root/tools/sandbox-godot.sh" --headless --path client --script res://tests/held.gd

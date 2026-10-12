@@ -87,6 +87,7 @@ tee_pid=""
 watchdog_pid=""
 war_cancel_init true
 
+# Retire the engine group and join capture/watchdog children before removing scratch.
 cleanup() {
 	trap '' INT TERM
 	local status=$cleanup_status
@@ -130,6 +131,7 @@ set +m
 	watchdog_sleep_pid=""
 	watchdog_launching=false
 	watchdog_cancel_pending=$cancel_pending
+	# Defer cancellation through sleep-handle capture, then stop and join that sleep.
 	watchdog_cancel() {
 		watchdog_cancel_pending=true
 		if [ "$watchdog_launching" = true ]; then return; fi
@@ -141,6 +143,7 @@ set +m
 		exit 0
 	}
 	trap 'trap ":" INT TERM; watchdog_cancel' INT TERM
+	# Wait for one owned sleep while preserving cancellation and its exit status.
 	watchdog_wait() {
 		watchdog_launching=true
 		sleep "$1" &

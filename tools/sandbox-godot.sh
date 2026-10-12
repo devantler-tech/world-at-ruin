@@ -98,6 +98,7 @@ if [ ! -d "$records" ] || [ -L "$records" ]; then
 fi
 : >"$records/$container"
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
+# Join the sandbox client and verify owned-container removal before releasing records.
 cleanup() {
   result=$trusted_cleanup_status
   trap - EXIT
