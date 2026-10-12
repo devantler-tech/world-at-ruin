@@ -130,7 +130,7 @@ echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves 
 FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
 # A phase returns as soon as every member of its process group acknowledges TERM.
-FAKE_READY="$tmp/phase-ready" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap '\''trap "" TERM; exit 130'\'' TERM; touch "$FAKE_READY"; while :; do sleep 0.1; done' >"$tmp/phase-fast.log" 2>&1 &
+FAKE_READY="$tmp/phase-ready" FAKE_ACK="$tmp/phase-ack" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap '\''trap "" TERM; printf acknowledged > "$FAKE_ACK"; exit 130'\'' TERM; touch "$FAKE_READY"; while :; do :; done' >"$tmp/phase-fast.log" 2>&1 &
 phase_pid=$!
 for ((tries=0;tries<50;tries++)); do
   [ ! -f "$tmp/phase-ready" ] || break
@@ -141,7 +141,8 @@ start=$SECONDS
 kill -TERM "$phase_pid"
 status=0
 wait "$phase_pid" || status=$?
-test "$status" -eq 130
+if [ "$status" -ne 130 ]; then cat "$tmp/phase-fast.log"; echo "TEST FAIL -- acknowledged phase returned $status" >&2; exit 1; fi
+test "$(cat "$tmp/phase-ack")" = acknowledged
 elapsed=$((SECONDS-start))
 if [ "$elapsed" -gt 2 ]; then
   echo "TEST FAIL -- acknowledged phase group took ${elapsed}s to cancel" >&2

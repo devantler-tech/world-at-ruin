@@ -3,6 +3,8 @@
 Trusted setup and cleanup finish within finite host-owned budgets. A failed setup prints its phase
 and exits nonzero without claiming that a scene ran. GNU coreutils `timeout` is required on the
 host; hosted Ubuntu supplies it, and macOS developers can install coreutils through Homebrew.
+The phase launcher also uses GNU `env` (or Homebrew's `genv`) to restore normal INT/TERM
+before exec without moving the child out of the owned process group.
 
 | Phase | Budget | Purpose |
 | --- | --- | --- |

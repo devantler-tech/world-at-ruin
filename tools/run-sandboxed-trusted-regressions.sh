@@ -11,17 +11,7 @@ source "$root/tools/trusted-regression-lifecycle.sh"
 bin="$(mktemp -d)"
 mkdir "$bin/containers"
 export GODOT_SANDBOX_CONTAINERS="$bin/containers"
-# shellcheck disable=SC2329 # Invoked by the EXIT trap.
-cleanup() {
-  result=$trusted_cleanup_status
-  trap - EXIT
-  trap ':' INT TERM
-  trusted_stop_child || result=2
-  if ! bash "$root/tools/trusted-regression-phase.sh" "sandbox cleanup" bash "$root/tools/trusted-regression-phase.sh" --cleanup-containers "$GODOT_SANDBOX_CONTAINERS"; then result=2; fi
-  if [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then rm -rf "$bin"; fi
-  exit "$result"
-}
-trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
+trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; trusted_cleanup_controller "$bin" "$root/tools/trusted-regression-phase.sh" "$GODOT_SANDBOX_CONTAINERS"' EXIT
 trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 GOTOOLCHAIN=local GOWORK=off trusted_wait bash "$root/tools/trusted-regression-phase.sh" "host cache guard build" go build -o "$bin/cache-guard" "$root/tools/trusted-regression-cache.go"
 mkdir "$bin/import-metadata"
