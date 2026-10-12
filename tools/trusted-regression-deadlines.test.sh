@@ -7,6 +7,24 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/work/client/tests" "$tmp/work/server/wire" "$tmp/work/.github/workflows" "$tmp/metadata" "$tmp/containers"
 mkdir "$tmp/state"
 export TMPDIR="$tmp/state"
+# A cooperative process handles repeated TERM atomically in its native signal
+# handler. Shell trap dispatch can instead exit by signal before its body runs.
+cat >"$tmp/cooperative.go" <<'GO'
+package main
+import (
+  "os"
+  "os/signal"
+  "syscall"
+)
+func main() {
+  signals := make(chan os.Signal, 8)
+  signal.Notify(signals, syscall.SIGTERM)
+  if os.WriteFile(os.Getenv("FAKE_READY"), []byte("ready"), 0600) != nil { os.Exit(2) }
+  <-signals
+  if os.WriteFile(os.Getenv("FAKE_ACK"), []byte("acknowledged"), 0600) != nil { os.Exit(2) }
+}
+GO
+GOTOOLCHAIN=local GOWORK=off CGO_ENABLED=0 timeout --kill-after=2s 30s go build -o "$tmp/cooperative" "$tmp/cooperative.go"
 printf 'source
 ' >"$tmp/work/server/wire/wire.go"
 printf 'source
@@ -130,7 +148,7 @@ echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves 
 FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
 # A phase returns as soon as every member of its process group acknowledges TERM.
-FAKE_READY="$tmp/phase-ready" FAKE_ACK="$tmp/phase-ack" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' bash -c 'trap '\''trap "" TERM; printf acknowledged > "$FAKE_ACK"; exit 130'\'' TERM; touch "$FAKE_READY"; while :; do :; done' >"$tmp/phase-fast.log" 2>&1 &
+FAKE_READY="$tmp/phase-ready" FAKE_ACK="$tmp/phase-ack" WAR_TRUSTED_TERMINATION_SECONDS=5 WAR_TRUSTED_PROBE_SECONDS=60 bash "$root/tools/trusted-regression-phase.sh" 'sandbox execution' "$tmp/cooperative" >"$tmp/phase-fast.log" 2>&1 &
 phase_pid=$!
 for ((tries=0;tries<50;tries++)); do
   [ ! -f "$tmp/phase-ready" ] || break
