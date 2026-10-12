@@ -25,8 +25,8 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
-if [[ $(docker image inspect --format '{{.Config.User}}' "$image") != 0:0 ]]; then
-  echo 'SPIRE controller image must declare its root credential-switch identity' >&2
+if [[ $(docker image inspect --format '{{.Config.User}}' "$image") != 10001:10001 ]]; then
+  echo 'SPIRE image must use its safe non-root default identity' >&2
   exit 1
 fi
 if docker run --rm --network none --read-only --cap-drop ALL \
@@ -40,7 +40,7 @@ if [[ $refused != 2 ]] || ! grep -q '^SPIRE trial requires explicit opt-in befor
   echo 'SPIRE trial default invocation did not refuse missing opt-in' >&2
   exit 1
 fi
-trial_id=$(docker create --network none --read-only --cap-drop ALL \
+trial_id=$(docker create --user 0:0 --network none --read-only --cap-drop ALL \
   --cap-add SETUID --cap-add SETGID --cap-add KILL \
   --security-opt no-new-privileges:true --pids-limit 256 --memory 1g --cpus 2 \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777 \

@@ -18,7 +18,8 @@ Register three distinct unprivileged users as supervisor, custodian and child.
 Each process fetches its own X.509 SVID and key from the Workload API; no delegated
 identity API, controller-distributed private key or fixture CA supplies a positive.
 
-The isolated controller retains its own child process handles and needs only
+The image defaults to a non-root user. Only the explicitly enabled disposable
+runner selects the root controller. That controller retains its own child process handles and needs only
 SETUID, SETGID and KILL. Role processes have empty supplementary groups, no
 effective, permitted, inheritable or ambient capabilities, and inherited
 no-new-privileges. Issuer state is root-only; the public Workload API socket has
@@ -50,6 +51,12 @@ startup, individual requests, suite execution and stop/join. Signal only retaine
 handles of processes this invocation started. Join every child before removing
 private state; failed retirement must fail the trial. The ordinary server/Nakama
 graphs, serving images and forty-scenario native suite remain unchanged.
+
+Pin disposable Server-cache and Agent-entry synchronization to one-second
+intervals. Socket existence is transport readiness only: every registered role
+must fetch its own exact SVID within the unchanged eight-second credential bound.
+Decode the unregistered refusal after its joined exit through a controller-owned
+pipe; process reaping must not discard its unread response.
 
 The separate experiment is not a production issuer or credential configuration.
 Original child ownership remains #1345; authenticated launch-to-custody composition

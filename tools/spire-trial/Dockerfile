@@ -1,5 +1,6 @@
 # Disposable role-issuer acceptance only. Never publish this image.
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG EXPERIMENTAL=false
 ARG TARGETARCH
 RUN test "$EXPERIMENTAL" = true
@@ -29,7 +30,7 @@ FROM scratch
 COPY --from=build /out/spire-trial.test /out/spire-trial.test
 COPY --from=build /opt/spire/bin/ /opt/spire/bin/
 COPY --from=build /out/tmp/ /tmp/
-USER 0:0
+USER 10001:10001
 ENTRYPOINT ["/out/spire-trial.test"]
 # Refuses missing explicit opt-in before starting issuer or role processes.
 CMD []

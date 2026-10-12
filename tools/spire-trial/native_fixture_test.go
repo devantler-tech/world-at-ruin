@@ -24,6 +24,7 @@ type ownedProcess struct {
 	done   chan error
 	joined bool
 	log    *os.File
+	output *os.File
 }
 type nativeFixture struct {
 	t      *testing.T
@@ -93,6 +94,12 @@ func (f *nativeFixture) stop(p *ownedProcess) {
 			}
 			p.log = nil
 		}
+		if p.output != nil {
+			if err := p.output.Close(); err != nil {
+				f.t.Error(err)
+			}
+			p.output = nil
+		}
 		return
 	}
 	select {
@@ -125,6 +132,12 @@ func (f *nativeFixture) stop(p *ownedProcess) {
 			f.t.Error(err)
 		}
 		p.log = nil
+		if p.output != nil {
+			if err := p.output.Close(); err != nil {
+				f.t.Error(err)
+			}
+			p.output = nil
+		}
 	}
 }
 func (f *nativeFixture) close() {
@@ -180,6 +193,7 @@ func (f *nativeFixture) startIssuer(name string, port int) nativeIssuer {
  trust_domain="war-fixture.test"
  data_dir=%q
  log_level="ERROR"
+ experimental { cache_reload_interval="1s" }
 }
 plugins {
  DataStore "sql" { plugin_data { database_type="sqlite3" connection_string=%q } }
@@ -240,6 +254,7 @@ plugins {
  join_token_file=%q
  disable_sds_api=true
  log_level="ERROR"
+ experimental { sync_interval="1s" }
 }
 plugins {
  NodeAttestor "join_token" { plugin_data {} }
@@ -275,12 +290,31 @@ func (f *nativeFixture) startWorker(role string, issuer nativeIssuer) *nativeWor
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	output, err := cmd.StdoutPipe()
+	output, childOutput, err := os.Pipe()
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	started := false
+	defer func() {
+		if err := childOutput.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			f.t.Error(err)
+		}
+		if !started {
+			if err := output.Close(); err != nil {
+				f.t.Error(err)
+			}
+		}
+	}()
+	// Cmd.Wait must not close the controller's unread response bytes. The
+	// parent's pipe endpoints have an explicit lifetime independent of Wait.
+	cmd.Stdout = childOutput
 	w := &nativeWorker{f: f, cmd: cmd, input: input, output: json.NewDecoder(output)}
 	w.process = f.start(cmd)
+	w.process.output = output
+	started = true
+	if err := childOutput.Close(); err != nil {
+		f.t.Fatal(err)
+	}
 	if role == "unregistered" {
 		// Consume the mandatory refusal only after its process has fully exited.
 		// The controller must still own the unread stdout bytes after Cmd.Wait.

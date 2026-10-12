@@ -11,7 +11,9 @@ docker build --build-arg EXPERIMENTAL=true -f tools/spire-trial/Dockerfile -t wa
 bash tools/smoke-spire-native.sh war-spire:local --experimental
 ```
 
-Missing either explicit opt-in refuses. The wrapper uses no external network,
+Missing either explicit opt-in refuses. The image defaults to a non-root user;
+only the enabled disposable wrapper selects the root credential-switch controller.
+The wrapper uses no external network,
 no published ports, no host mounts and no shared credentials. The root filesystem
 is read-only; state lives in private bounded tmpfs. Only the test controller has
 SETUID, SETGID and KILL. Every role checks its real credentials, empty groups,
@@ -57,6 +59,15 @@ five-minute test timeout and twelve-minute CI job. Owned process handles receive
 TERM, then KILL if needed, with bounded join before private-state removal.
 Failed retirement fails the experiment. Issuer logs, bootstrap tokens and
 token-bearing CLI replies stay private and are never printed into CI.
+
+The disposable Server cache reload and Agent entry synchronization intervals
+are explicitly one second. SPIRE's separate default five-second cycles can leave
+an initially empty authorized-entry cache beyond the eight-second credential
+bound. Socket existence therefore establishes transport only; each registered
+role's own exact SVID fetch establishes its actual readiness. That credential
+bound and the single-shot unregistered refusal remain unchanged. Worker stdout
+uses an explicitly owned pipe whose bytes survive process exit and Cmd.Wait;
+the unregistered control is deliberately decoded only after joined exit.
 
 Local source checks:
 
