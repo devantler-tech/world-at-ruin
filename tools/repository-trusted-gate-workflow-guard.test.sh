@@ -12,6 +12,9 @@ bash "$guard" "$workflow" >"$work/log" 2>&1 || { cat "$work/log"; fail 'reviewed
 yq -o=json '.' "$workflow" | jq -S . >"$work/baseline.json"
 count=0
 for mutation in \
+  '.jobs.evaluate.steps[0].uses="step-security/harden-runner@main"' \
+  '.jobs.publish.steps[0].uses="step-security/harden-runner@0000000000000000000000000000000000000000"' \
+  '.jobs.publish.steps[0].with."egress-policy"="block"' \
   '.on.workflow_run.workflows=["Fake CI"]' \
   '.on.workflow_run.types=["requested"]' \
   '.on.workflow_dispatch={}' \
