@@ -85,24 +85,16 @@ timeout_marker="${run_dir}/timed-out"
 test_pid=""
 tee_pid=""
 watchdog_pid=""
-launching=true
-cancel_pending=false
-cleanup_started=false
-cleanup_status=0
-request_cancel() {
-	cancel_pending=true
-	if [ "$cleanup_started" = true ]; then return; fi
-	if [ "$launching" != true ]; then exit 130; fi
-}
+war_cancel_init true
 
 cleanup() {
-	trap ':' INT TERM
+	trap '' INT TERM
 	local status=$cleanup_status
 	local cleanup_failed=0
 	trap - EXIT
 	# A group signal and timeout's forwarding can deliver TERM twice. Do not
 	# let that second signal interrupt retirement of the separate engine group.
-	trap ':' INT TERM
+	trap '' INT TERM
 	if [ -n "${test_pid}" ]; then
 		war_retire_group "$test_pid" 2 || cleanup_failed=1
 	fi
@@ -119,7 +111,7 @@ cleanup() {
 	exit "$status"
 }
 trap 'cleanup_status=$? cleanup_started=true; cleanup' EXIT
-trap 'trap ":" INT TERM; request_cancel' INT TERM
+trap 'trap ":" INT TERM; war_request_cancel' INT TERM
 
 mkfifo "${output_fifo}"
 tee "${log}" <"${output_fifo}" &
@@ -141,7 +133,7 @@ set +m
 	watchdog_cancel() {
 		watchdog_cancel_pending=true
 		if [ "$watchdog_launching" = true ]; then return; fi
-		trap ':' INT TERM
+		trap '' INT TERM
 		if [ -n "$watchdog_sleep_pid" ]; then
 			kill "$watchdog_sleep_pid" 2>/dev/null || true
 			wait "$watchdog_sleep_pid" 2>/dev/null || true

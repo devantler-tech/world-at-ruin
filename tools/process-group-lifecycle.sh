@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Observe terminal members before releasing invocation-private state. A zombie
 # has acknowledged exit; its reaper may be outside this process group.
+war_cancel_init() {
+  launching="${1:-false}"
+  cancel_pending=false
+  cleanup_started=false
+  # shellcheck disable=SC2034 # The caller's EXIT trap consumes this saved status.
+  cleanup_status=0
+}
+war_request_cancel() {
+  # shellcheck disable=SC2034 # Callers check this deferred intent after publishing handles.
+  cancel_pending=true
+  if [ "$cleanup_started" = true ]; then return; fi
+  if [ "$launching" != true ]; then trap '' INT TERM; exit 130; fi
+}
 war_group_active() {
   local snapshot
   snapshot="$(ps -axo pgid=,stat=)" || return 2

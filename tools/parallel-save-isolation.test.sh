@@ -5,22 +5,16 @@ godot_bin="${GODOT_BIN:-godot}"
 timeout_seconds=180
 logs="$(mktemp -d)"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tools/process-group-lifecycle.sh
+source "$root/tools/process-group-lifecycle.sh"
 active=()
 cleanup_uncertain=0
-launching=false
-cancel_pending=false
-cleanup_started=false
-cleanup_status=0
-request_cancel() {
-	cancel_pending=true
-	if [ "$cleanup_started" = true ]; then return; fi
-	if [ "$launching" != true ]; then exit 130; fi
-}
+war_cancel_init
 cleanup() {
-	trap ':' INT TERM
+	trap '' INT TERM
 	local status=$cleanup_status pid
 	trap - EXIT
-	trap ':' INT TERM
+	trap '' INT TERM
 	for pid in ${active[@]+"${active[@]}"}; do kill -TERM "$pid" 2>/dev/null || true; done
 	for pid in ${active[@]+"${active[@]}"}; do
 		local joined=0
@@ -32,7 +26,7 @@ cleanup() {
 	exit "$status"
 }
 trap 'cleanup_status=$? cleanup_started=true; cleanup' EXIT
-trap 'trap ":" INT TERM; request_cancel' INT TERM
+trap 'trap ":" INT TERM; war_request_cancel' INT TERM
 
 if ! command -v "${godot_bin}" >/dev/null 2>&1; then
 	echo "::error::Godot is unavailable at '${godot_bin}'"

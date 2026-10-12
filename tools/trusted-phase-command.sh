@@ -5,10 +5,17 @@ set -euo pipefail
 record="${1:?private verdict record required}"
 shift
 cancelled=false
-trap 'cancelled=true; trap ":" INT TERM' INT TERM
+launching=true
+# shellcheck disable=SC2329 # The signal trap invokes this during the launch/wait lifecycle.
+mark_cancel() {
+  cancelled=true
+  if [ "$launching" != true ]; then trap '' INT TERM; fi
+}
+trap 'trap ":" INT TERM; mark_cancel' INT TERM
 "$@" &
 child=$!
-if [ "$cancelled" = true ]; then kill -TERM "$child" 2>/dev/null || true; fi
+launching=false
+if [ "$cancelled" = true ]; then trap '' INT TERM; kill -TERM "$child" 2>/dev/null || true; fi
 status=0
 wait "$child" || status=$?
 if [ "$cancelled" = true ]; then

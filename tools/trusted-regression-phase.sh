@@ -74,7 +74,7 @@ cancel() {
   cancel_pending=true
   # A signal can arrive after spawn but before $! is published to the owner.
   if [ "$launching" = true ]; then return; fi
-  trap ':' INT TERM
+  trap '' INT TERM
   if [ -n "$pid" ]; then
     war_retire_group "$pid" "$grace" || exit 2
     wait "$pid" 2>/dev/null || true

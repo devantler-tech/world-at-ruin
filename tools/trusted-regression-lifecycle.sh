@@ -52,3 +52,14 @@ trusted_stop_child() {
     return 2
   fi
 }
+# shellcheck disable=SC2329 # Sourced controllers invoke this through their EXIT traps.
+trusted_cleanup_controller() {
+  local state="$1" phase="$2" records="$3" result=$trusted_cleanup_status
+  trap - EXIT
+  # Cleanup launches a bounded phase; its child must inherit normal TERM.
+  trap ':' INT TERM
+  trusted_stop_child || result=2
+  if ! bash "$phase" "sandbox cleanup" bash "$phase" --cleanup-containers "$records"; then result=2; fi
+  if [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then rm -rf "$state"; fi
+  exit "$result"
+}
