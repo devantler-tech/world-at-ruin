@@ -405,7 +405,7 @@ the full native server/plugin for reachable vulnerabilities.
 ### Identity SDK runtime compatibility
 
 The fixed `issued` profile uses the separate nested module
-`server/nakama-issued-runtime`, Nakama 3.41/runtime API 1.48, SPIFFE SDK 2.8.2
+`server/nakama-issued-runtime`, Nakama 3.41/runtime API 1.48, SPIFFE SDK 2.9.0
 and gRPC 1.84. Its Go-generated locks include the complete binary/plugin union;
 the local server replacement also contributes its own recorded lock hashes.
 The builder requires SDK presence in the actual compiled plugin. From `server/`:
