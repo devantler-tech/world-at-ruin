@@ -4,8 +4,10 @@ FROM golang:1.27.1@sha256:e0174e51e81218523251d85d248a90d24c3d5e81543b4f07a5d662
 FROM ubuntu:24.04@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd752c61b60
 # Minimal Ubuntu has no CA store: preserve HTTPS and package signature checks.
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-# Retain exact package versions after live update pockets advance.
-RUN printf 'APT::Snapshot "20261003T000000Z";\n' > /etc/apt/apt.conf.d/50snapshot \
+# Every locked runtime dependency resolves from main. Restrict index acquisition
+# to that component while retaining the immutable snapshot and all package checks.
+RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \
+    && printf 'APT::Snapshot "20261003T000000Z";\n' > /etc/apt/apt.conf.d/50snapshot \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     libfontconfig1=2.15.0-1.1ubuntu2 libx11-6=2:1.8.7-1build1 \
