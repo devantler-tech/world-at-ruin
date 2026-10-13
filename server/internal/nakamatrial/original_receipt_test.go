@@ -61,6 +61,7 @@ func TestNativeOriginalClaimCustody(t *testing.T) {
 			t.Cleanup(acceptedEnrollment.allow)
 			t.Cleanup(claimed.allow)
 			pins := make(chan zonecustody.Pins, 1)
+			receipts := make(chan zoneclaim.Receipt, 1)
 			var claimCalls, receiptCalls, pinCalls atomic.Int32
 			var original zoneclaim.Receipt
 			control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,18 +79,19 @@ func TestNativeOriginalClaimCustody(t *testing.T) {
 						w.WriteHeader(409)
 						return
 					}
-					original, err = client.ClaimWithReceipt(r.Context(), binding, handoff.Token, 1)
-					if err != nil {
-						t.Error("native original claim refused", err)
+					receipt, claimErr := client.ClaimWithReceipt(r.Context(), binding, handoff.Token, 1)
+					if claimErr != nil {
+						t.Error("native original claim refused", claimErr)
 						w.WriteHeader(502)
 						return
 					}
+					receipts <- receipt
 					custodyControlHandler(map[string]*capabilityStage{r.URL.Path: claimed}, pins).ServeHTTP(httptest.NewRecorder(), r)
 					if fault == "lost-receipt" {
 						w.WriteHeader(502)
 						return
 					}
-					reply := original
+					reply := receipt
 					if fault == "changed-binding" {
 						reply.Fence.GameServerUID = "replacement-uid"
 					}
@@ -132,6 +134,7 @@ func TestNativeOriginalClaimCustody(t *testing.T) {
 				}
 				acceptedEnrollment.allow()
 				stageReached(t, claimed)
+				original = <-receipts
 				if fault == "source-death" {
 					killJoinedSource(t, source)
 				}
