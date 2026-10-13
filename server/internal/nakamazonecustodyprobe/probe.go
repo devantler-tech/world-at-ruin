@@ -111,13 +111,14 @@ func Run(ctx context.Context, storage Storage, report func(Report)) error {
 	}
 	var in input
 	control := env["WAR_ZONE_CUSTODY_PROBE_CONTROL"]
-	if decode(env["WAR_ZONE_CUSTODY_PROBE_INPUT"], &in) != nil || !localEndpoint(control) || !handoffidentity.CorrelationID(in.OwnerID) || !in.Receipt.Matches(in.Binding, in.Receipt.Observer) {
+	original, err := parseInput(env, &in)
+	if err != nil || !localEndpoint(control) || !handoffidentity.CorrelationID(in.OwnerID) {
 		return errors.New("zone custody probe: invalid input")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	b := &boundary{Storage: storage, control: control, owner: in.OwnerID, scenario: scenario, cancel: cancel}
-	_, err := zonecustody.NewOwner(zonecustody.Config{Enabled: true, Storage: storage, Binding: in.Binding, OwnerID: in.OwnerID, ChildIncarnation: in.ChildIncarnation})
+	_, err = zonecustody.NewOwner(zonecustody.Config{Enabled: true, Storage: storage, Binding: in.Binding, OwnerID: in.OwnerID, ChildIncarnation: in.ChildIncarnation})
 	if err != nil {
 		return errors.New("zone custody probe: invalid storage or binding")
 	}
@@ -146,6 +147,12 @@ func Run(ctx context.Context, storage Storage, report func(Report)) error {
 	}
 	if err = controlRequest(ctx, control, "/"+in.OwnerID+"-enrolled", nil); err != nil {
 		return err
+	}
+	if original != nil {
+		in.Receipt, err = forwardedReceipt(ctx, control, *original)
+		if err != nil {
+			return errors.New("zone custody probe: original receipt unknown")
+		}
 	}
 	err = enrolled.RetainOriginal(ctx, in.Receipt)
 	if err != nil {

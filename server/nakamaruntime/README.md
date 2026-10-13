@@ -26,13 +26,31 @@ and diagnostic pins delivered before exact source kill/join. Independent same-ke
 writers, same/changed-owner restart, ambiguous/canceled replies, private public-API
 isolation and faulty fresh readers must never replace the original documents.
 
-The lifetime/receipt inputs are diagnostic fixtures. This experiment does not
-obtain a native originating private claim, authenticate a supervisor, launch a
-child or establish independently protected production custody/rollback resistance.
+The default lifetime/receipt inputs are diagnostic fixtures. The explicitly
+selected `WAR_ZONE_CUSTODY_PROBE_RECEIPT_SOURCE=control` mode instead supplies only
+`Binding`, `Observer`, `OwnerID` and `ChildIncarnation` and obtains one complete
+actual private claim response from the disposable controller after originating
+enrollment acceptance. Its original enrollment process persists that unchanged
+receipt and exports pins only after its originating custody ACK. The controller
+uses verified fixture-CA TLS; receipt forwarding is bounded literal-loopback test
+coordination, not an authenticated production custody path.
+
+`TestNativeOriginalClaimCustody` is additionally mandatory on both architectures.
+It joins the actual native private claim to native custody, independently checks
+the full receipt and storage versions against PostgreSQL, and holds the committed
+enrollment before its ACK to require zero claim calls. Lost/canceled storage ACKs,
+lost or changed forwarded responses, source death and rejected pin delivery keep
+uncertainty terminal. Same-correlation and changed-child restarts cannot retrieve
+the receipt or reconstruct the original enrollment from visible rows.
+
+Neither mode authenticates a supervisor, launches a child or establishes
+independently protected production custody/rollback resistance.
 Even successful fresh readback returns diagnostics only. See ADR 0045 and #1342;
 authenticated original launch remains #1340, witness prerequisites #1341/#1336,
-and completion #1318/#567. The native bundle remains unpublished and retirement
-is tracked in #1192. No production infrastructure or credentials are configured.
+and completion #1318/#567. The receipt join is specified by ADR 0050/#1371; full
+authenticated original-child composition remains #1346. The native bundle remains
+unpublished and retirement is tracked in #1192. No production infrastructure or
+credentials are configured.
 
 ## Build and configure
 
