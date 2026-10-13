@@ -18,7 +18,8 @@ import (
 // ClaimsTLSMaterial is a static, inspectable credential snapshot. Expectations
 // are independently pinned configuration, not identity inferred from the leaf.
 // The runtime owns cloned DER and its fixed TLS policy; the caller retains the
-// signing object for the entire initialized lifetime. This conveys no issuance,
+// signing object for the entire initialized lifetime. Input buffers and slice
+// headers must stay stable until initialization returns. This conveys no issuance,
 // attestation, key-transfer, rotation or recovery authority.
 type ClaimsTLSMaterial struct {
 	CertificateChainDER  [][]byte

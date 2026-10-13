@@ -201,8 +201,9 @@ allocator and unwrap-key configuration still applies. Listener preparation,
 registration rollback, request/connection limits and actual shutdown drain use
 the same runtime owner as projected initialization.
 
-Input DER mutation or replacing the input signer field cannot replace the
-retained configuration. The signer object itself cannot be cloned: underlying
+Keep input buffers and slice headers stable until initialization returns. Later
+DER mutation or replacing the input signer field cannot replace the retained
+configuration. The signer object itself cannot be cloned: underlying
 key mutation can cause handshake refusal, and the caller must retain its valid
 handle until owned shutdown completes. There is no credential watcher, refresh,
 rotation or revocation guarantee in this entry.
