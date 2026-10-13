@@ -19,8 +19,29 @@ import (
 
 const toolchain = "go1.27.2"
 
+type runtimeProfile struct {
+	name, directory, modfile, nakama, api string
+	locks                                 []string
+	dependencies                          map[string]string
+}
+
+// Profiles fix the entire graph and entrypoint; callers cannot supply versions
+// or substitute arbitrary modules through command-line overrides.
+func selectProfile(name string) (runtimeProfile, error) {
+	switch name {
+	case "native":
+		return runtimeProfile{name: name, modfile: "nakama-runtime/go.mod", nakama: "v3.40.0", api: "v1.47.0", locks: []string{"nakama-runtime/go.mod", "nakama-runtime/go.sum"}, dependencies: map[string]string{"github.com/heroiclabs/nakama/v3": "v3.40.0", "github.com/heroiclabs/nakama-common": "v1.47.0"}}, nil
+	case "issued":
+		return runtimeProfile{name: name, directory: "nakama-issued-runtime", modfile: "go.mod", nakama: "v3.41.0", api: "v1.48.0", locks: []string{"nakama-issued-runtime/go.mod", "nakama-issued-runtime/go.sum", "go.mod", "go.sum"}, dependencies: map[string]string{"github.com/heroiclabs/nakama/v3": "v3.41.0", "github.com/heroiclabs/nakama-common": "v1.48.0", "github.com/spiffe/go-spiffe/v2": "v2.8.2", "google.golang.org/grpc": "v1.84.0"}}, nil
+	default:
+		return runtimeProfile{}, errors.New("native Nakama build profile refused")
+	}
+}
+
 type bundleEvidence struct {
 	Schema         int               `json:"schema"`
+	Profile        string            `json:"profile"`
+	Dependencies   map[string]string `json:"dependencies"`
 	GoVersion      string            `json:"go_version"`
 	OS             string            `json:"os"`
 	Architecture   string            `json:"architecture"`
@@ -31,7 +52,7 @@ type bundleEvidence struct {
 }
 
 // build uses one immutable graph and identical shared-package compiler settings.
-func build(ctx context.Context, source, output string, out io.Writer) error {
+func build(ctx context.Context, source, output string, out io.Writer, profile runtimeProfile) error {
 	source, err := filepath.Abs(source)
 	if err != nil {
 		return err
@@ -41,7 +62,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 		return err
 	}
 	graph := map[string][]byte{}
-	for _, name := range []string{"nakama-runtime/go.mod", "nakama-runtime/go.sum"} {
+	for _, name := range profile.locks {
 		graph[name], err = os.ReadFile(filepath.Join(source, name))
 		if err != nil {
 			return errors.New("native Nakama build locked graph unavailable")
@@ -52,7 +73,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 	env := nativeEnvironment(os.Environ())
 	run := func(args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, "go", args...)
-		cmd.Dir, cmd.Env = source, env
+		cmd.Dir, cmd.Env = filepath.Join(source, profile.directory), env
 		bytes, e := cmd.CombinedOutput()
 		if e != nil {
 			_, _ = out.Write(bytes)
@@ -64,14 +85,12 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if strings.Fields(string(version))[2] != toolchain {
+	fields := strings.Fields(string(version))
+	if len(fields) < 3 || fields[2] != toolchain {
 		return errors.New("native Nakama build requires Go 1.27.2")
 	}
-	for _, dependency := range []struct{ path, version string }{
-		{"github.com/heroiclabs/nakama/v3", "v3.40.0"},
-		{"github.com/heroiclabs/nakama-common", "v1.47.0"},
-	} {
-		selected, e := run("list", "-mod=readonly", "-modfile=nakama-runtime/go.mod", "-m", "-json", dependency.path)
+	for path, expected := range profile.dependencies {
+		selected, e := run("list", "-mod=readonly", "-modfile="+profile.modfile, "-m", "-json", path)
 		if e != nil {
 			return e
 		}
@@ -79,7 +98,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 			Path, Version string
 			Replace       *json.RawMessage
 		}
-		if json.Unmarshal(selected, &module) != nil || module.Path != dependency.path || module.Version != dependency.version || module.Replace != nil {
+		if json.Unmarshal(selected, &module) != nil || module.Path != path || module.Version != expected || module.Replace != nil {
 			return errors.New("native Nakama build requires the compatible locked runtime graph")
 		}
 	}
@@ -95,8 +114,8 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 	if err := os.Mkdir(filepath.Join(output, "modules"), 0750); err != nil {
 		return err
 	}
-	common := []string{"build", "-mod=readonly", "-modfile=nakama-runtime/go.mod", "-trimpath", "-buildvcs=false"}
-	binary := append(append([]string{}, common...), "-ldflags=-X main.version=3.40.0 -X main.commitID=war-native-trial", "-o", filepath.Join(output, "nakama"), "github.com/heroiclabs/nakama/v3")
+	common := []string{"build", "-mod=readonly", "-modfile=" + profile.modfile, "-trimpath", "-buildvcs=false"}
+	binary := append(append([]string{}, common...), "-ldflags=-X main.version="+strings.TrimPrefix(profile.nakama, "v")+" -X main.commitID=war-native-trial", "-o", filepath.Join(output, "nakama"), "github.com/heroiclabs/nakama/v3")
 	if _, err := run(binary...); err != nil {
 		return err
 	}
@@ -104,7 +123,7 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 	if _, err := run(plugin...); err != nil {
 		return err
 	}
-	evidence := bundleEvidence{Schema: 1, GoVersion: toolchain, OS: runtime.GOOS, Architecture: runtime.GOARCH, Nakama: "v3.40.0", RuntimeAPI: "v1.47.0", GraphSHA256: map[string]string{}, ArtifactSHA256: map[string]string{}}
+	evidence := bundleEvidence{Schema: 1, Profile: profile.name, Dependencies: profile.dependencies, GoVersion: toolchain, OS: runtime.GOOS, Architecture: runtime.GOARCH, Nakama: profile.nakama, RuntimeAPI: profile.api, GraphSHA256: map[string]string{}, ArtifactSHA256: map[string]string{}}
 	for name, before := range graph {
 		after, e := os.ReadFile(filepath.Join(source, name))
 		if e != nil || string(before) != string(after) {
@@ -121,12 +140,25 @@ func build(ctx context.Context, source, output string, out io.Writer) error {
 		}
 		matched := false
 		for _, dependency := range info.Deps {
-			if dependency.Path == "github.com/heroiclabs/nakama-common" && dependency.Version == "v1.47.0" && dependency.Replace == nil {
+			if dependency.Path == "github.com/heroiclabs/nakama-common" && dependency.Version == profile.api && dependency.Replace == nil {
 				matched = true
 			}
 		}
 		if !matched {
 			return errors.New("native Nakama build artifact runtime graph mismatch")
+		}
+		if profile.name == "issued" && name == "modules/world_at_ruin.so" {
+			for _, path := range []string{"github.com/spiffe/go-spiffe/v2", "google.golang.org/grpc"} {
+				found := false
+				for _, dep := range info.Deps {
+					if dep.Path == path && dep.Version == profile.dependencies[path] && dep.Replace == nil {
+						found = true
+					}
+				}
+				if !found {
+					return errors.New("issued native plugin SDK graph mismatch")
+				}
+			}
 		}
 		bytes, e := os.ReadFile(filepath.Join(output, name))
 		if e != nil {

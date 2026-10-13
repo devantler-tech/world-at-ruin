@@ -13,6 +13,15 @@ updates:
       exclude:
         - "github.com/devantler-tech/*"
 
+  # The explicitly experimental issued runtime has independent module locks.
+  - package-ecosystem: gomod
+    directory: /server/nakama-issued-runtime
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+
   # Workflow validation is an independent Go tool, not part of the game server.
   - package-ecosystem: gomod
     directory: /.github/scripts/release-credential-boundary

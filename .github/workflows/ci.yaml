@@ -1335,6 +1335,10 @@ jobs:
             directory: tools/owned-child-trial
             go-version-file: tools/owned-child-trial/go.mod
             cache-dependency-path: tools/owned-child-trial/go.sum
+          - name: Issued native runtime
+            directory: server/nakama-issued-runtime
+            go-version-file: server/nakama-issued-runtime/go.mod
+            cache-dependency-path: server/nakama-issued-runtime/go.sum
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1391,6 +1395,13 @@ jobs:
           version: v2.14.0
           working-directory: tools/spire-trial
           args: --config ../../server/.golangci.yml --build-tags=war_spire_trial ./...
+      - name: Issued runtime source correctness lint
+        if: matrix.module.name == 'Issued native runtime'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          working-directory: server/nakama-issued-runtime
+          args: --config ../.golangci.yml --build-tags=war_native_trial ./...
 
   zone-container:
     name: Zone container (${{ matrix.arch }})
@@ -1417,11 +1428,13 @@ jobs:
         run: bash tools/smoke-zone-container.sh world-at-ruin-zone:ci
 
   nakama-native:
-    name: Nakama native (${{ matrix.arch }})
+    name: Nakama native (${{ matrix.arch }}, ${{ matrix.profile }})
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        profile: [native, issued]
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -1437,11 +1450,20 @@ jobs:
         with:
           context: .
           file: server/Dockerfile.nakama-native
-          build-args: EXPERIMENTAL=true
+          build-args: |
+            EXPERIMENTAL=true
+            RUNTIME_PROFILE=${{ matrix.profile }}
           load: true
           tags: world-at-ruin-nakama-native:ci
+      - name: Prove native profile acceptance refuses partial observations
+        run: bash tools/nakama-native-harness.test.sh
       - name: Exercise the actual packaged runtime against disposable PostgreSQL
-        run: bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:ci --experimental
+        env:
+          NATIVE_PROFILE: ${{ matrix.profile }}
+        run: |
+          args=()
+          if [[ $NATIVE_PROFILE == issued ]]; then args+=(--issued); fi
+          bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:ci --experimental "${args[@]}"
 
   spire-native:
     name: SPIRE native (${{ matrix.arch }})

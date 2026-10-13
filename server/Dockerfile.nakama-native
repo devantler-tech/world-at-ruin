@@ -1,12 +1,19 @@
 # Explicit disposable acceptance image; this is not a production deployment target.
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS trial
 ARG EXPERIMENTAL=false
+ARG RUNTIME_PROFILE=native
 RUN test "$EXPERIMENTAL" = true
 WORKDIR /source/server
 COPY server/go.mod server/go.sum ./
 COPY server/nakama-runtime/ ./nakama-runtime/
-RUN sha256sum nakama-runtime/go.mod nakama-runtime/go.sum > /tmp/locked-graph.sha256 \
-    && go mod download -modfile=nakama-runtime/go.mod \
+COPY server/nakama-issued-runtime/go.mod server/nakama-issued-runtime/go.sum ./nakama-issued-runtime/
+RUN sha256sum go.mod go.sum nakama-runtime/go.mod nakama-runtime/go.sum \
+      nakama-issued-runtime/go.mod nakama-issued-runtime/go.sum > /tmp/locked-graph.sha256 \
+    && case "$RUNTIME_PROFILE" in \
+      native) go mod download -modfile=nakama-runtime/go.mod ;; \
+      issued) go -C nakama-issued-runtime mod download ;; \
+      *) exit 1 ;; \
+    esac \
     && sha256sum -c /tmp/locked-graph.sha256
 COPY server/ ./
 COPY tools/nakama-runtime-build/ /source/tools/nakama-runtime-build/
@@ -18,17 +25,27 @@ RUN mkdir -p /out \
     && go -C /source/tools/gameserver-commit-trial build -mod=readonly -trimpath -buildvcs=false -o /out/gameserver-fixture ./cmd/nativefixture
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/zone ./cmd/zone \
  && sha256sum /out/zone > /out/zone.sha256
-RUN GOBIN=/out go install golang.org/x/vuln/cmd/govulncheck@v1.7.0 \
-    && GOFLAGS='-mod=readonly -modfile=nakama-runtime/go.mod' /out/govulncheck \
-      github.com/heroiclabs/nakama/v3 ./cmd/nakama
+RUN GOBIN=/out go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 RUN go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
-      -experimental -source . -output /out/bundle \
-    && go test -mod=readonly -modfile=nakama-runtime/go.mod -tags=war_native_trial \
-      ./internal/nakamacapabilityprobe ./internal/nakamazonecustodyprobe \
-    && go test -mod=readonly -modfile=nakama-runtime/go.mod -tags=war_native_trial \
-      -c -o /out/native-trial.test ./internal/nakamatrial \
+      -experimental -profile "$RUNTIME_PROFILE" -source . -output /out/bundle \
+    && case "$RUNTIME_PROFILE" in \
+      native) graph=nakama-runtime/go.mod; tags=war_native_trial ;; \
+      issued) cd nakama-issued-runtime; graph=go.mod; tags=war_native_trial,war_issued_trial; \
+        go test -race -mod=readonly ./cmd/nakama \
+        && go vet -tags="$tags" -mod=readonly ./cmd/nakama || exit 1 ;; \
+      *) exit 1 ;; \
+    esac \
+    && GOFLAGS="-mod=readonly -modfile=$graph" /out/govulncheck -tags "$tags" \
+      github.com/heroiclabs/nakama/v3 ./cmd/nakama \
+    && GOFLAGS="-mod=readonly -modfile=$graph" /out/govulncheck -tags "$tags" -test \
+      github.com/devantler-tech/world-at-ruin/server/internal/nakamatrial \
+    && go test -mod=readonly -modfile="$graph" -tags="$tags" \
+      github.com/devantler-tech/world-at-ruin/server/internal/nakamacapabilityprobe \
+      github.com/devantler-tech/world-at-ruin/server/internal/nakamazonecustodyprobe \
+    && go test -mod=readonly -modfile="$graph" -tags="$tags" \
+      -c -o /out/native-trial.test github.com/devantler-tech/world-at-ruin/server/internal/nakamatrial \
     && mkdir /out/bundle/mismatched-modules \
-    && go build -mod=readonly -modfile=nakama-runtime/go.mod -trimpath -buildvcs=false \
+    && go build -mod=readonly -modfile="$graph" -trimpath -buildvcs=false \
       -race -buildmode=plugin -o /out/bundle/mismatched-modules/world_at_ruin.so ./cmd/nakama
 RUN mkdir -p /var/run/secrets/kubernetes.io/serviceaccount \
     && chown 10001:10001 /var/run/secrets/kubernetes.io/serviceaccount \

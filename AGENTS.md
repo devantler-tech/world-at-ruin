@@ -963,6 +963,19 @@ the permanent blocking policy.
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
   and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
+- **Issued native runtime compatibility:** the separate nested
+  `server/nakama-issued-runtime` module selects Nakama 3.41/runtime API 1.48,
+  SPIFFE SDK 2.8.2 and gRPC 1.84. The fixed `issued` builder profile records
+  nested and inherited server locks, checks SDK presence in the compiled
+  plugin and preserves the old native and normal graphs. Both native architectures
+  require all 41 storage scenarios plus actual SDK unavailable-issuer startup
+  refusal; ordinary plugin builds exclude SDK dependencies and native writers.
+  `WAR_ISSUED_SDK_PROBE_ENABLED` is default-off. Its enabled diagnostic request
+  precedes initialization and always refuses serving authority, even on success.
+  Build with `RUNTIME_PROFILE=issued`; run the native wrapper with `--issued`.
+  This establishes compatibility and SDK failure behavior only. Successful
+  issuance/native custody remains #1374, gameplay admission #1346 and retirement
+  #1192. See ADR 0051 and `server/nakamaruntime/README.md`.
 - **Native SPIRE role acceptance:** the separate `tools/spire-trial` module
   and unpublished image require explicit experimental build/run opt-in. Pinned
   SPIRE Server/Agent attest three distinct unprivileged UIDs, each fetching its

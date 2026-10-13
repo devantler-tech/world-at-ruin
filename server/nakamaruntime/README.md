@@ -357,6 +357,42 @@ substitute the ordinary graph for the full runtime graph. The container build
 checks that dependency download leaves both lock files byte-identical and scans
 the full native server/plugin for reachable vulnerabilities.
 
+### Identity SDK runtime compatibility
+
+The fixed `issued` profile uses the separate nested module
+`server/nakama-issued-runtime`, Nakama 3.41/runtime API 1.48, SPIFFE SDK 2.8.2
+and gRPC 1.84. Its Go-generated locks include the complete binary/plugin union;
+the local server replacement also contributes its own recorded lock hashes.
+The builder requires SDK presence in the actual compiled plugin. From `server/`:
+
+```sh
+go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
+  -experimental -profile issued -source . -output /tmp/new-war-issued-bundle
+```
+
+To exercise the distinct unpublished image from the repository root:
+
+```sh
+docker build -f server/Dockerfile.nakama-native --build-arg EXPERIMENTAL=true \
+  --build-arg RUNTIME_PROFILE=issued -t world-at-ruin-nakama-issued:trial .
+bash tools/smoke-nakama-native.sh world-at-ruin-nakama-issued:trial --experimental --issued
+```
+
+Both native architectures run the complete 41-scenario storage suite, plus
+the SDK startup boundary. Its separate entry has a default-off diagnostic
+`WAR_ISSUED_SDK_PROBE_ENABLED` flag. Absent/false ignores malformed socket
+settings. With `true`, `WAR_ISSUED_SDK_PROBE_SOCKET` names an absolute Unix
+socket; a real request runs within three seconds before shared initialization.
+Unavailable issuers refuse startup with a sanitized verdict, without provider
+effects or a private claim listener. Even successful fetches grant no serving
+authority. Ordinary plugin artifacts contain no identity SDK.
+
+This is runtime compatibility and unavailable-issuer proof. It does not prove
+successful issuance, issued claims TLS or the combined original custody path.
+Those outcomes remain #1374; protected forwarding, gameplay admission and the
+independent rollback witness remain #1346/#1341. Experimental retirement is #1192.
+See ADR 0051 for the artifact and authority boundaries.
+
 These disposable checks establish behavior of the identified candidate artifacts.
 They do not establish adoption by production serving artifacts or compatibility of
 the actual retained rollback artifact. Production serving artifacts,
