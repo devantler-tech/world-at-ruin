@@ -1,6 +1,6 @@
 //go:build war_native_trial
 
-package main
+package nakamaplugin
 
 import (
 	"context"

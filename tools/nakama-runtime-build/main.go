@@ -18,11 +18,16 @@ func execute(ctx context.Context, args []string, out io.Writer) error {
 	experimental := flags.Bool("experimental", false, "explicitly build the disposable native trial bundle")
 	source := flags.String("source", "server", "server source directory")
 	output := flags.String("output", "", "new, absent bundle directory")
+	profileName := flags.String("profile", "native", "fixed experimental profile: native or issued")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if !*experimental {
 		return errors.New("native Nakama build requires -experimental")
+	}
+	profile, err := selectProfile(*profileName)
+	if err != nil {
+		return err
 	}
 	if *output == "" || flags.NArg() != 0 {
 		return errors.New("native Nakama build requires an absent -output directory")
@@ -30,12 +35,12 @@ func execute(ctx context.Context, args []string, out io.Writer) error {
 	if _, err := os.Lstat(*output); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("native Nakama build output must be absent")
 	}
-	for _, name := range []string{"nakama-runtime/go.mod", "nakama-runtime/go.sum"} {
+	for _, name := range profile.locks {
 		if info, err := os.Stat(filepath.Join(*source, name)); err != nil || !info.Mode().IsRegular() {
 			return errors.New("native Nakama build locked graph unavailable")
 		}
 	}
-	return build(ctx, *source, *output, out)
+	return build(ctx, *source, *output, out, profile)
 }
 
 // main reports refusals and build failures as unsuccessful command execution.

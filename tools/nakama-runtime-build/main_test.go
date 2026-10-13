@@ -48,3 +48,32 @@ func TestBuildRefusesMissingLockedGraph(t *testing.T) {
 		t.Fatalf("missing graph: %v", err)
 	}
 }
+
+// The issued lane must select its own locks rather than silently falling back
+// to the older native graph, even when that graph is available.
+func TestIssuedProfileRequiresItsOwnGraph(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "nakama-runtime"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"go.mod", "go.sum"} {
+		if err := os.WriteFile(filepath.Join(base, "nakama-runtime", file), []byte("old native graph"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := execute(context.Background(), []string{"-experimental", "-profile", "issued", "-source", base, "-output", filepath.Join(base, "bundle")}, &bytes.Buffer{})
+	if err == nil || err.Error() != "native Nakama build locked graph unavailable" {
+		t.Fatalf("issued graph fallback: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(base, "bundle")); !os.IsNotExist(err) {
+		t.Fatal("missing graph created output")
+	}
+}
+
+func TestUnknownProfileRefusesBeforeSourceAccess(t *testing.T) {
+	base := t.TempDir()
+	err := execute(context.Background(), []string{"-experimental", "-profile", "arbitrary", "-source", filepath.Join(base, "absent"), "-output", filepath.Join(base, "bundle")}, &bytes.Buffer{})
+	if err == nil || err.Error() != "native Nakama build profile refused" {
+		t.Fatalf("unknown profile: %v", err)
+	}
+}
