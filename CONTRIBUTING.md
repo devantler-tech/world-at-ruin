@@ -22,10 +22,22 @@ provenance rules.
 
 ## Install only the tools your change needs
 
+- Every contribution, including documentation, needs Git, **Node.js 24** with npm, **Go 1.27.2**
+  and the GitHub CLI for the universal duplication checks. Run `gh auth status` to confirm the CLI
+  can read this repository's cleanup issue. The duplication test also uses Go's race detector:
+  cgo must be enabled, with GCC or Clang installed on Linux. These are contributor tools;
+  playing the client alone does not need them.
 - Client work uses **Godot 4.7.1**, matching client CI. Install it from the
   [official archive](https://godotengine.org/download/archive/) and check `godot --version`.
   On macOS, `/Applications/Godot.app/Contents/MacOS/Godot` can replace `godot` in the commands below.
+  Also export `GODOT_BIN=/Applications/Godot.app/Contents/MacOS/Godot` in that terminal so the
+  Bash test wrappers use the same executable instead of looking for `godot` on `PATH`.
   Exporting needs the matching **4.7.1** export templates; running from source does not.
+  GDScript lint uses **Python 3.13** and **gdtoolkit 4.5.0**. Its hash lock targets **Linux x86_64**;
+  in that environment, use a virtual environment and the hash-locked installation command from the
+  [CI GDScript lint job](.github/workflows/ci.yaml), then run `bash tools/gdscript-lint.test.sh` and
+  `bash tools/gdscript-lint.sh client`. On macOS or another platform, use a Linux x86_64 development
+  environment or obtain the lint result from that CI job; the Linux wheel hashes are not portable.
 - Server work uses **Go 1.27.2**, as declared in `server/go.mod`. Check `go version`; automatic
   toolchain selection may download the pinned version when you enter the module. Race tests need
   cgo enabled (`go env CGO_ENABLED` must print `1`); on Linux, install a C compiler such as GCC or
@@ -38,8 +50,8 @@ provenance rules.
   [trial guide](tools/gameserver-commit-trial/README.md). They are separate from ordinary client play.
 
 The [CI workflow](.github/workflows/ci.yaml) records the other check-tool pins, including
-gdtoolkit **4.5.0**, golangci-lint **2.14.0**, and the duplication scanner. Follow the hash-locked
-GDScript setup there rather than installing an arbitrary latest linter. You do not need to run an
+gdtoolkit **4.5.0**, golangci-lint **2.14.0**, and the duplication scanner. Follow the Linux x86_64
+hash-locked GDScript setup there rather than installing an arbitrary latest linter. You do not need to run an
 art bake, install a cluster, or obtain production access for a documentation-only contribution.
 
 ## Run the client with disposable saves
@@ -89,6 +101,21 @@ and rejects test failures and script errors; that scene does not enter the playe
 character saves. Run the Go command for server changes; it must print `ok` for the simulation
 package and exit zero.
 Neither check proves the full game or server is ready.
+
+For **every** contribution, install and run the locked duplication checks from the repository root:
+
+```sh
+npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund
+GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.test.sh
+war_duplication_dir=$(mktemp -d)
+DUPLICATION_REPORT_ROOT="$war_duplication_dir" GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.sh
+```
+
+The test must report `TEST PASS` and the real-tree guard must exit zero. Keep `origin/main`
+available for its base comparison; the guard reads the open cleanup issue through the GitHub CLI.
+Create a fresh report directory for every real-tree scan; the guard refuses to reuse an old scan.
+Do not refresh the catalog or suppress duplicates to make a check pass. The explicit toolchain
+selection uses the CI Go version even for these root-level checks outside the server module.
 
 Before submitting, follow the full applicable [Maintenance checks](AGENTS.md#maintenance): the
 client import, an isolated 120-frame boot with `BOOT_OK` and no script errors, the complete client

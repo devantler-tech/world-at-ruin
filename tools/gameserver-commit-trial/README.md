@@ -3,6 +3,8 @@
 This optional storage trial supports **Darwin arm64 and Linux amd64**. Run from the
 **repository root** with Go **1.27.2** (the server and trial module pin), `curl`, `tar`, and
 `shasum`. Linux amd64 additionally needs `sha256sum` for the Helm archive check.
+Race-enabled trial tests require cgo (`go -C tools/gameserver-commit-trial env CGO_ENABLED` must
+print `1`) and GCC or Clang on Linux; see the [Go race-detector requirements](https://go.dev/doc/articles/race_detector#Requirements).
 Darwin arm64 also needs Helm **v4.3.0** installed; Linux amd64 downloads and
 verifies that Helm version. The runner downloads and verifies envtest **v1.37.0**, so allow
 network access and local scratch space before starting.
