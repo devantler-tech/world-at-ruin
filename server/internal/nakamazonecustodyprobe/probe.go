@@ -228,16 +228,26 @@ func controlRequest(ctx context.Context, control, path string, pins *zonecustody
 	if err != nil {
 		return err
 	}
-	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	res, err := client.Do(req)
+	res, closeResponse, err := controlResponse(req)
 	if err != nil {
 		return errors.New("zone custody probe: control unknown")
 	}
-	defer func() { _ = res.Body.Close() }()
+	defer closeResponse()
 	if res.StatusCode != http.StatusNoContent {
 		return errors.New("zone custody probe: control refused")
 	}
 	return nil
+}
+
+// controlResponse owns a fresh proxy-free connection and its complete cleanup
+// for both stage acknowledgments and the separately validated original receipt.
+func controlResponse(req *http.Request) (*http.Response, func(), error) {
+	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext, DisableCompression: true}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(req)
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, nil, err
+	}
+	return response, func() { _ = response.Body.Close(); transport.CloseIdleConnections() }, nil
 }

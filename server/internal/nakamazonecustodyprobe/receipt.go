@@ -8,9 +8,7 @@ import (
 	"errors"
 	"io"
 	"mime"
-	"net"
 	"net/http"
-	"time"
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage"
@@ -62,14 +60,11 @@ func forwardedReceipt(ctx context.Context, control string, original originalInpu
 	if err != nil {
 		return receipt, err
 	}
-	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(req)
+	response, closeResponse, err := controlResponse(req)
 	if err != nil {
 		return receipt, errors.New("receipt response unknown")
 	}
-	defer func() { _ = response.Body.Close() }()
+	defer closeResponse()
 	media, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" || response.StatusCode != http.StatusOK {
 		return receipt, errors.New("receipt response refused")
