@@ -27,6 +27,10 @@ type config struct {
 // readConfig validates enabled runtime settings before any dependency is acquired.
 // A disabled module ignores the settings for its optional workers and listener.
 func readConfig(env map[string]string) (config, error) {
+	return readConfigForMaterial(env, false)
+}
+
+func readConfigForMaterial(env map[string]string, useMaterial bool) (config, error) {
 	var cfg config
 	switch env["WAR_HANDOFF_ENABLED"] {
 	case "", "false":
@@ -93,7 +97,7 @@ func readConfig(env map[string]string) (config, error) {
 			return config{}, invalidConfig("WAR_HANDOFF_RPC_TIMEOUT")
 		}
 	}
-	cfg.claims, err = readPrivateConfig(env)
+	cfg.claims, err = readPrivateConfigForMaterial(env, useMaterial)
 	cfg.claims.allocatorCA, cfg.claims.allocatorCert = cfg.allocatorCA, cfg.allocatorCert
 	if err == nil {
 		cfg.orphans, err = readOrphanConfig(env)

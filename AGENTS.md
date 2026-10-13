@@ -963,6 +963,18 @@ the permanent blocking policy.
   architectures feed the required CI aggregate. The tagged process suite fails
   on missing inputs rather than skipping. See `server/nakamaruntime/README.md`
   and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
+- **Static claims material:** `InitializeWithClaimsMaterial` explicitly accepts
+  bounded inspectable DER, a retained signing handle and independently pinned
+  server DNS/URI expectations under the existing handoff/claims opt-ins. It
+  clones/reparses certificates and verifies chain, purposes, signer, exact
+  identity and allocator-key separation before reserving the listener. Current
+  plugin entries keep projected credentials. The existing registration, rollback
+  and actual-drain owner applies; no watcher, refresh or adoption authority is
+  added. Run `go -C server test -race -count=1 -timeout 5m ./nakamaruntime`
+  and the required native suites. This establishes fixture-backed material/TLS
+  adaptation, not successful issuer/native custody composition or gameplay
+  admission. #1374/#1346 and retirement #1192 remain open. See ADR 0052 and
+  `server/nakamaruntime/README.md` for bounds and signer-lifetime limits.
 - **Issued native runtime compatibility:** the separate nested
   `server/nakama-issued-runtime` module selects Nakama 3.41/runtime API 1.48,
   SPIFFE SDK 2.8.2 and gRPC 1.84. The fixed `issued` builder profile records
