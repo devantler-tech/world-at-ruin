@@ -94,6 +94,17 @@ type custodyRow struct {
 func custodyRows(t *testing.T, f *fixture, enrollment, custody int, expected zonecustody.Observation) map[string]custodyRow {
 	t.Helper()
 	b, r := custodyInput()
+	result := custodyRowsFor(t, f, b, r, enrollment, custody, expected)
+	if allocations, requests := f.counts(); allocations != 0 || requests != 0 {
+		t.Fatal("custody persistence issued provider side effects")
+	}
+	return result
+}
+
+// custodyRowsFor compares actual committed storage to independently retained
+// original inputs, including the native claim receipt in the joined experiment.
+func custodyRowsFor(t *testing.T, f *fixture, b agones.ClaimBinding, r zoneclaim.Receipt, enrollment, custody int, expected zonecustody.Observation) map[string]custodyRow {
+	t.Helper()
 	result := map[string]custodyRow{}
 	for collection, want := range map[string]int{zonecustody.EnrollmentCollection: enrollment, zonecustody.CustodyCollection: custody} {
 		var count int
@@ -115,7 +126,7 @@ func custodyRows(t *testing.T, f *fixture, enrollment, custody int, expected zon
 		} else {
 			p, err := zonecustody.DecodeCustody(row.Value)
 			if err != nil || p.Enrollment != expected || !p.Receipt.Equal(r) {
-				t.Fatal("native custody changed complete diagnostic receipt")
+				t.Fatal("native custody changed complete original receipt")
 			}
 		}
 		result[collection] = row
@@ -125,9 +136,6 @@ func custodyRows(t *testing.T, f *fixture, enrollment, custody int, expected zon
 		if err != nil || p.EnrollmentVersion != result[zonecustody.EnrollmentCollection].Version {
 			t.Fatal("native custody lost originating enrollment version")
 		}
-	}
-	if allocations, requests := f.counts(); allocations != 0 || requests != 0 {
-		t.Fatal("custody persistence issued provider side effects")
 	}
 	return result
 }

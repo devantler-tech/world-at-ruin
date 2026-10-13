@@ -699,12 +699,17 @@ the permanent blocking policy.
   bootstrap/child launch sequencing, protected ACK custody, rollback witness and
   completion outside this source delivery; fixture storage is not native proof.
   The native-only `WAR_ZONE_CUSTODY_PROBE_ENABLED` experiment uses diagnostic
-  lifetime/receipt fixtures against actual Nakama/PostgreSQL. Require its five
+  lifetime/receipt fixtures against actual Nakama/PostgreSQL. Require its six
   mandatory amd64/arm64 scenarios for private create-only writes, competing
   processes, lost/canceled replies, exact source death and complete fresh-reader
-  refusals. Only its storage ACKs originate natively; it proves neither a native
-  private claim, issuer identity, protected production custody nor exclusive
-  child launch. Normal artifacts have no probe/writer dependency. ADR 0045/#1342
+  refusals and the original private-claim receipt/storage ACK join. The separate
+  `WAR_ZONE_CUSTODY_PROBE_RECEIPT_SOURCE=control` mode accepts a receipt-free
+  binding/observer input and consumes one complete actual private claim response
+  after the original enrollment ACK. Require its committed-before-ACK hold,
+  reply-loss/cancellation, changed-binding, source-death and restart controls.
+  Its fixture CA and loopback coordination prove neither issuer identity,
+  protected production custody nor exclusive child launch. Normal artifacts have
+  no probe/writer dependency. ADR 0045/#1342 and ADR 0050/#1371
   preserve #1340/#1341/#1336/#1318/#567 authority gates; #1192 owns retirement.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
