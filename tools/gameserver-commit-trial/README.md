@@ -1,9 +1,26 @@
 # Exact GameServer commit trial
 
-Run `tools/test-gameserver-commit.sh` from any directory. Darwin arm64 requires
-Helm v4.3.0; Linux amd64 downloads and verifies that version. Go follows the
-server and trial module pins. `WAR_ENVTEST_ARCHIVE` can select an already downloaded
-archive; its platform-specific SHA-512 is still verified before execution.
+This optional storage trial supports **Darwin arm64 and Linux amd64**. Run from the
+**repository root** with Go **1.27.2** (the server and trial module pin), `curl`, `tar`, and
+`shasum`. Linux amd64 additionally needs `sha256sum` for the Helm archive check.
+Race-enabled trial tests require cgo (`go -C tools/gameserver-commit-trial env CGO_ENABLED` must
+print `1`) and GCC or Clang on Linux; see the [Go race-detector requirements](https://go.dev/doc/articles/race_detector#Requirements).
+Darwin arm64 also needs Helm **v4.3.0** installed; Linux amd64 downloads and
+verifies that Helm version. The runner downloads and verifies envtest **v1.37.0**, so allow
+network access and local scratch space before starting.
+
+Download the server modules first: rendering the Agones **v1.61.0** CRD reads the module cache.
+
+```sh
+go -C server mod download
+bash tools/test-gameserver-commit.sh
+```
+
+Success means the tests report `PASS`, the command exits zero, and the runner reports
+`Trial cleanup: verified retirement and removed private state`. Unsupported hosts, missing tools,
+checksum failures, test failures, or unverified cleanup exit nonzero. Do not count a partial run as
+a passing storage proof. `WAR_ENVTEST_ARCHIVE` can select an already downloaded archive; its
+platform-specific SHA-512 is still verified before execution.
 
 The runner creates private scratch storage, renders the declared Agones CRD and
 starts only local kube-apiserver/etcd. It never loads a kubeconfig or contacts a
