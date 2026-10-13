@@ -120,3 +120,37 @@ func TestProfilesMatchSelectedModuleGraphs(t *testing.T) {
 		})
 	}
 }
+
+// Module selection alone cannot prove that an externally built command is a
+// retained root. Resolve the actual binary/plugin targets without lock edits.
+func TestProfilesResolveArtifactTargetsWithReadonlyLocks(t *testing.T) {
+	for _, name := range []string{"native", "issued"} {
+		t.Run(name, func(t *testing.T) {
+			profile, err := selectProfile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := filepath.Join("..", "..", "server")
+			before := map[string][]byte{}
+			for _, lock := range profile.locks {
+				before[lock], err = os.ReadFile(filepath.Join(source, lock))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "list", "-mod=readonly", "-modfile="+profile.modfile, "-tags=war_native_trial", "-deps", "github.com/heroiclabs/nakama/v3", "./cmd/nakama")
+			cmd.Dir = filepath.Join(source, profile.directory)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("artifact targets unavailable under readonly locks: %v\n%s", err, output)
+			}
+			for lock, original := range before {
+				after, err := os.ReadFile(filepath.Join(source, lock))
+				if err != nil || !bytes.Equal(after, original) {
+					t.Errorf("artifact resolution changed %s: %v", lock, err)
+				}
+			}
+		})
+	}
+}

@@ -47,3 +47,6 @@ The issued profile selects SPIFFE SDK 2.9.0 with matching module locks and
 artifact expectations. The runtime-union and authority boundaries above remain
 unchanged. A selected-module conformance test requires dependency updates to
 advance the explicit profile together with the immutable graph.
+The issued module declares Nakama as a Go tool dependency, retaining the
+separately built binary target through module maintenance. Artifact-target
+resolution must succeed under read-only locks for both binary and plugin.
