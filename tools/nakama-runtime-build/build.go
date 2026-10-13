@@ -32,7 +32,7 @@ func selectProfile(name string) (runtimeProfile, error) {
 	case "native":
 		return runtimeProfile{name: name, modfile: "nakama-runtime/go.mod", nakama: "v3.40.0", api: "v1.47.0", locks: []string{"nakama-runtime/go.mod", "nakama-runtime/go.sum"}, dependencies: map[string]string{"github.com/heroiclabs/nakama/v3": "v3.40.0", "github.com/heroiclabs/nakama-common": "v1.47.0"}}, nil
 	case "issued":
-		return runtimeProfile{name: name, directory: "nakama-issued-runtime", modfile: "go.mod", nakama: "v3.41.0", api: "v1.48.0", locks: []string{"nakama-issued-runtime/go.mod", "nakama-issued-runtime/go.sum", "go.mod", "go.sum"}, dependencies: map[string]string{"github.com/heroiclabs/nakama/v3": "v3.41.0", "github.com/heroiclabs/nakama-common": "v1.48.0", "github.com/spiffe/go-spiffe/v2": "v2.8.2", "google.golang.org/grpc": "v1.84.0"}}, nil
+		return runtimeProfile{name: name, directory: "nakama-issued-runtime", modfile: "go.mod", nakama: "v3.41.0", api: "v1.48.0", locks: []string{"nakama-issued-runtime/go.mod", "nakama-issued-runtime/go.sum", "go.mod", "go.sum"}, dependencies: map[string]string{"github.com/heroiclabs/nakama/v3": "v3.41.0", "github.com/heroiclabs/nakama-common": "v1.48.0", "github.com/spiffe/go-spiffe/v2": "v2.9.0", "google.golang.org/grpc": "v1.84.0"}}, nil
 	default:
 		return runtimeProfile{}, errors.New("native Nakama build profile refused")
 	}

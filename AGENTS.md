@@ -965,7 +965,7 @@ the permanent blocking policy.
   and ADRs 0022–0024; production activation and build-flag retirement remain #1177/#1192.
 - **Issued native runtime compatibility:** the separate nested
   `server/nakama-issued-runtime` module selects Nakama 3.41/runtime API 1.48,
-  SPIFFE SDK 2.8.2 and gRPC 1.84. The fixed `issued` builder profile records
+  SPIFFE SDK 2.9.0 and gRPC 1.84. The fixed `issued` builder profile records
   nested and inherited server locks, checks SDK presence in the compiled
   plugin and preserves the old native and normal graphs. Both native architectures
   require all 41 storage scenarios plus actual SDK unavailable-issuer startup
