@@ -64,6 +64,8 @@ func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtim
 	return initializeWithClaimsMaterial(ctx, nk, initializer, connect, nil, loggers...)
 }
 
+// initializeWithClaimsMaterial shares acquisition, registration, rollback and
+// shutdown ownership between projected and explicitly selected static material.
 func initializeWithClaimsMaterial(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer, connect connector, material *ClaimsTLSMaterial, loggers ...runtime.Logger) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
 	cfg, err := readConfigForMaterial(env, material != nil)

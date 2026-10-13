@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"net/url"
 	"path"
 	"reflect"
@@ -32,7 +33,7 @@ type ClaimsTLSMaterial struct {
 // claimsMaterialTLS validates every supplied certificate before socket
 // reservation. It never accepts caller-controlled verification or TLS policy.
 func claimsMaterialTLS(cfg privateConfig, material ClaimsTLSMaterial) (*tls.Config, error) {
-	if !handoffidentity.DNSSubdomain(material.ExpectedServerDNS) || !claimsServerURI(material.ExpectedServerURI, cfg.trustDomain) || nilSigningHandle(material.Signer) {
+	if !handoffidentity.DNSSubdomain(material.ExpectedServerDNS) || net.ParseIP(material.ExpectedServerDNS) != nil || !claimsServerURI(material.ExpectedServerURI, cfg.trustDomain) || nilSigningHandle(material.Signer) {
 		return nil, errMaterial
 	}
 	chainDER, rootDER, err := cloneClaimsDER(material)
@@ -107,6 +108,8 @@ func cloneClaimsDER(material ClaimsTLSMaterial) ([][]byte, [][]byte, error) {
 	return clone(material.CertificateChainDER), clone(material.ClientAuthoritiesDER), nil
 }
 
+// parseClaimsDER refuses malformed or currently invalid certificates before
+// they can become retained listener material.
 func parseClaimsDER(group [][]byte, now time.Time) ([]*x509.Certificate, error) {
 	result := make([]*x509.Certificate, 0, len(group))
 	for _, der := range group {
@@ -160,6 +163,8 @@ func clientAuthorityPool(roots []*x509.Certificate, now time.Time) (*x509.CertPo
 	return pool, nil
 }
 
+// claimsAllocatorCertificates reads the separate allocator identities used
+// to refuse key reuse across the two roles.
 func claimsAllocatorCertificates(cfg privateConfig) ([]*x509.Certificate, error) {
 	var certificates []*x509.Certificate
 	for _, file := range []string{cfg.allocatorCA, cfg.allocatorCert} {
@@ -176,6 +181,7 @@ func claimsAllocatorCertificates(cfg privateConfig) ([]*x509.Certificate, error)
 	return certificates, nil
 }
 
+// verifiedClaimsTLS fixes transport policy for both supported material sources.
 func verifiedClaimsTLS(pair tls.Certificate, roots *x509.CertPool) *tls.Config {
 	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}, ClientCAs: roots, ClientAuth: tls.RequireAndVerifyClientCert, NextProtos: []string{"http/1.1"}}
 }

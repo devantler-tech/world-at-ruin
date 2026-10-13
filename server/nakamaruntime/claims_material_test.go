@@ -64,6 +64,7 @@ func newMaterialFixture(t *testing.T) materialFixture {
 	return materialFixture{listenerFixture: f, material: material, root: root, rootKey: rootKey, leaf: cryptotest.Parse(t, leafDER)}
 }
 
+// startMaterial registers the actual listener and retains its shutdown owner.
 func (f materialFixture) startMaterial(t *testing.T) *registration {
 	t.Helper()
 	r := &registration{}
@@ -74,6 +75,7 @@ func (f materialFixture) startMaterial(t *testing.T) *registration {
 	return r
 }
 
+// Disabled switches must dominate even malformed caller-supplied material.
 func TestClaimsMaterialDefaultOff(t *testing.T) {
 	for _, value := range []string{"", "false"} {
 		env := validEnvironment()
@@ -90,6 +92,7 @@ func TestClaimsMaterialDefaultOff(t *testing.T) {
 	f.startMaterial(t)
 }
 
+// Selecting material must not recover from missing input by reading key files.
 func TestClaimsMaterialDoesNotFallBackToProjectedCredentials(t *testing.T) {
 	f := newMaterialFixture(t)
 	r := &registration{}
@@ -153,6 +156,7 @@ func (f materialFixture) changeLeaf(t *testing.T, material *ClaimsTLSMaterial, m
 	material.CertificateChainDER = [][]byte{cryptotest.Issue(t, &leaf, f.root, material.Signer.Public(), f.rootKey)}
 }
 
+// changeRoot reissues a signed authority to isolate each root-policy refusal.
 func (f materialFixture) changeRoot(t *testing.T, material *ClaimsTLSMaterial, mutate func(*x509.Certificate)) {
 	t.Helper()
 	root := *f.root
@@ -181,6 +185,13 @@ func TestClaimsMaterialRefusesInvalidSnapshotsBeforeServing(t *testing.T) {
 		"different signer":        func(m *ClaimsTLSMaterial) { m.Signer = cryptotest.NewKey(t) },
 		"missing DNS expectation": func(m *ClaimsTLSMaterial) { m.ExpectedServerDNS = "" },
 		"wrong DNS expectation":   func(m *ClaimsTLSMaterial) { m.ExpectedServerDNS = "other.example" },
+		"IP DNS expectation": func(m *ClaimsTLSMaterial) {
+			m.ExpectedServerDNS = "192.0.2.1"
+			f.changeLeaf(t, m, func(c *x509.Certificate) {
+				c.DNSNames = []string{m.ExpectedServerDNS}
+				c.IPAddresses = []net.IP{net.ParseIP(m.ExpectedServerDNS)}
+			})
+		},
 		"missing URI expectation": func(m *ClaimsTLSMaterial) { m.ExpectedServerURI = "" },
 		"wrong URI expectation":   func(m *ClaimsTLSMaterial) { m.ExpectedServerURI = "spiffe://claims.example/role/other" },
 		"other trust domain":      func(m *ClaimsTLSMaterial) { m.ExpectedServerURI = "spiffe://other.example/role/claims-server" },
@@ -294,6 +305,7 @@ func TestClaimsMaterialRefusesInvalidSnapshotsBeforeServing(t *testing.T) {
 	}
 }
 
+// zoneCertificate signs each changed principal under the real fixture issuer.
 func (f materialFixture) zoneCertificate(t *testing.T, identity string) tls.Certificate {
 	t.Helper()
 	key := cryptotest.NewKey(t)
@@ -398,6 +410,7 @@ func TestClaimsMaterialVerifiedTransportRefusesChangedPrincipals(t *testing.T) {
 	}
 }
 
+// Listener and registration failures must roll back the same acquired scope.
 func TestClaimsMaterialStartupRollbackUsesTheExistingOwner(t *testing.T) {
 	for _, stage := range []string{"occupied", "rpc", "shutdown"} {
 		t.Run(stage, func(t *testing.T) {
@@ -455,14 +468,7 @@ func TestClaimsMaterialShutdownRetainsDependenciesUntilActualDrain(t *testing.T)
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(storage.release) }) }
 	t.Cleanup(func() { release(); f.shutdown(r) })
-	result := make(chan error, 1)
-	client := f.client(t, f.tls)
-	go func() { result <- client.Claim(t.Context(), f.binding, f.token, 1) }()
-	select {
-	case <-storage.started:
-	case <-time.After(time.Second):
-		t.Fatal("claim did not enter actual storage")
-	}
+	result := f.claimOnceStarted(t, storage.started)
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
 	defer cancel()
 	r.shutdown(ctx, nil, nil, storage)
@@ -495,6 +501,8 @@ type materialHeldStorage struct {
 	finished                   atomic.Bool
 }
 
+// StorageRead retains the admitted handler beyond its canceled hook until the
+// test releases the actual storage operation.
 func (s *materialHeldStorage) StorageRead(ctx context.Context, _ []*runtime.StorageRead) ([]*api.StorageObject, error) {
 	close(s.started)
 	<-ctx.Done()

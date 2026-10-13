@@ -30,6 +30,8 @@ func readConfig(env map[string]string) (config, error) {
 	return readConfigForMaterial(env, false)
 }
 
+// readConfigForMaterial preserves all runtime policy while allowing only the
+// explicit material entry to omit projected claims credential paths.
 func readConfigForMaterial(env map[string]string, useMaterial bool) (config, error) {
 	var cfg config
 	switch env["WAR_HANDOFF_ENABLED"] {
