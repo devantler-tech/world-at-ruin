@@ -199,6 +199,16 @@ func TestClaimsMaterialRefusesInvalidSnapshotsBeforeServing(t *testing.T) {
 		"query":                   func(m *ClaimsTLSMaterial) { m.ExpectedServerURI += "?source=fixture" },
 		"fragment":                func(m *ClaimsTLSMaterial) { m.ExpectedServerURI += "#fixture" },
 		"dot path":                func(m *ClaimsTLSMaterial) { m.ExpectedServerURI = "spiffe://claims.example/role/../claims-server" },
+		"legacy URI character": func(m *ClaimsTLSMaterial) {
+			m.ExpectedServerURI = "spiffe://claims.example/role/claims~server"
+			f.changeLeaf(t, m, func(c *x509.Certificate) {
+				u, err := url.Parse(m.ExpectedServerURI)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c.URIs = []*url.URL{u}
+			})
+		},
 		"expired leaf": func(m *ClaimsTLSMaterial) {
 			f.changeLeaf(t, m, func(c *x509.Certificate) { c.NotAfter = time.Now().Add(-time.Minute) })
 		},

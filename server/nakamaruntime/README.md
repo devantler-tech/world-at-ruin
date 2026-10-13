@@ -185,7 +185,7 @@ paths ignore even malformed supplied material.
 | `Signer` | Matching signing handle retained by the initializing process for the runtime lifetime. |
 | `ClientAuthoritiesDER` | One to 32 inspectable client-authority certificates; no opaque root pool. |
 | `ExpectedServerDNS` | Independently pinned exact DNS SAN; wildcard-only matches and IP substitutions are refused. |
-| `ExpectedServerURI` | Independently pinned canonical SPIFFE URI in the configured claims trust domain; exactly one leaf URI must match. |
+| `ExpectedServerURI` | Independently pinned canonical SPIFFE URI in the configured claims trust domain; exactly one leaf URI must match. Path segments use letters, digits, dots, dashes and underscores; legacy charset mode is refused. |
 
 Each DER certificate is at most 64 KiB, and both groups together are at most
 256 KiB. The runtime clones and reparses the bytes before verifying validity,

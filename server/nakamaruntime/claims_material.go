@@ -123,7 +123,8 @@ func parseClaimsDER(group [][]byte, now time.Time) ([]*x509.Certificate, error) 
 }
 
 // claimsServerURI accepts canonical, bounded SPIFFE paths in the configured
-// trust domain. The exact expected path remains operator policy.
+// trust domain using the strict path alphabet, without legacy charset mode.
+// The exact expected path remains operator policy.
 func claimsServerURI(value, trustDomain string) bool {
 	if len(value) > 2048 || !handoffidentity.DNSSubdomain(trustDomain) {
 		return false
@@ -133,7 +134,7 @@ func claimsServerURI(value, trustDomain string) bool {
 		return false
 	}
 	for _, c := range u.Path {
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("/-._~", c) {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("/-._", c) {
 			continue
 		}
 		return false
