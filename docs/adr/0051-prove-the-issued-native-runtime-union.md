@@ -40,3 +40,13 @@ issued-zone/native-storage claim, protected receipt forwarding or gameplay
 admission. Those outcomes remain #1374/#1346. Production rollout and
 experimental retirement remain #1192. No shared credential or serving image
 changes. The independent monotonic witness remains a separate prerequisite.
+
+## Dependency update — 2026-10-13
+
+The issued profile selects SPIFFE SDK 2.9.0 with matching module locks and
+artifact expectations. The runtime-union and authority boundaries above remain
+unchanged. A selected-module conformance test requires dependency updates to
+advance the explicit profile together with the immutable graph.
+The issued module declares Nakama as a Go tool dependency, retaining the
+separately built binary target through module maintenance. Artifact-target
+resolution must succeed under read-only locks for both binary and plugin.

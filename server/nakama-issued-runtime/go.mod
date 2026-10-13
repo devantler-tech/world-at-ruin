@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	github.com/devantler-tech/world-at-ruin/server v0.0.0
 	github.com/heroiclabs/nakama-common v1.48.0
-	github.com/spiffe/go-spiffe/v2 v2.8.2
+	github.com/spiffe/go-spiffe/v2 v2.9.0
 	google.golang.org/grpc v1.84.0
 )
 
@@ -150,3 +150,5 @@ require (
 )
 
 replace github.com/devantler-tech/world-at-ruin/server => ..
+
+tool github.com/heroiclabs/nakama/v3
