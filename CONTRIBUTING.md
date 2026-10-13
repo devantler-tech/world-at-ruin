@@ -23,8 +23,9 @@ provenance rules.
 ## Install only the tools your change needs
 
 - Every contribution, including documentation, needs Git, **Node.js 24** with npm, **Go 1.27.2**
-  and the GitHub CLI for the universal duplication checks. Run `gh auth status` to confirm the CLI
-  can read this repository's cleanup issue. The duplication test also uses Go's race detector:
+  and the GitHub CLI for the universal duplication checks. Verify the cleanup request itself with
+  `GH_HOST=github.com gh api repos/devantler-tech/world-at-ruin/issues/276 > /dev/null`.
+  The duplication test also uses Go's race detector:
   cgo must be enabled, with GCC or Clang installed on Linux. These are contributor tools;
   playing the client alone does not need them.
 - Client work uses **Godot 4.7.1**, matching client CI. Install it from the
@@ -108,7 +109,7 @@ For **every** contribution, install and run the locked duplication checks from t
 npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund
 GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.test.sh
 war_duplication_dir=$(mktemp -d)
-DUPLICATION_REPORT_ROOT="$war_duplication_dir" GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.sh
+GH_HOST=github.com DUPLICATION_REPORT_ROOT="$war_duplication_dir" GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.sh
 ```
 
 The test must report `TEST PASS` and the real-tree guard must exit zero. Keep `origin/main`

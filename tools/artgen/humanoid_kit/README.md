@@ -44,19 +44,28 @@ installs MPFB into your local Blender `user_default` extension repository, and d
 ignored input packs into this kit directory. Review those local changes before running it.
 
 ```sh
-tools/artgen/humanoid_kit/bootstrap.sh
-mkdir -p build/humanoid-kit-check
-war_bake_dir=$(mktemp -d "${PWD}/build/humanoid-kit-check/run.XXXXXX")
-mkdir "$war_bake_dir/a" "$war_bake_dir/b"
-blender --background --python tools/artgen/humanoid_kit/bake.py -- "$war_bake_dir/a/humanoid_base.glb"
-blender --background --python tools/artgen/humanoid_kit/bake.py -- "$war_bake_dir/b/humanoid_base.glb"
-diff -r "$war_bake_dir/a" "$war_bake_dir/b"
+(
+  set -eu
+  tools/artgen/humanoid_kit/bootstrap.sh
+  mkdir -p build/humanoid-kit-check
+  war_bake_dir=$(mktemp -d "${PWD}/build/humanoid-kit-check/run.XXXXXX")
+  printf 'Bake check directory: %s\n' "$war_bake_dir"
+  mkdir "$war_bake_dir/a" "$war_bake_dir/b"
+  blender --background --python tools/artgen/humanoid_kit/bake.py -- "$war_bake_dir/a/humanoid_base.glb" > "$war_bake_dir/a.log" 2>&1
+  grep -Fx 'RESULT: SUCCESS' "$war_bake_dir/a.log"
+  blender --background --python tools/artgen/humanoid_kit/bake.py -- "$war_bake_dir/b/humanoid_base.glb" > "$war_bake_dir/b.log" 2>&1
+  grep -Fx 'RESULT: SUCCESS' "$war_bake_dir/b.log"
+  diff -r "$war_bake_dir/a" "$war_bake_dir/b"
+)
 ```
 
-Each bake must finish with `RESULT: SUCCESS`; the recursive comparison must exit zero without
+The subshell stops on a failed bootstrap, bake, or missing success marker; its printed directory
+holds both logs for inspection. Each bake must finish with `RESULT: SUCCESS`; the comparison must exit zero without
 differences. A missing prerequisite, failed download, bake error, or difference is a failure to
 investigate, not a reason to copy partial output. The unique directory gives each comparison fresh
-outputs, so an older file cannot survive into both bakes and hide a removed or renamed artifact.
+outputs, so files from earlier runs cannot affect the determinism check. The comparison cannot
+detect an artifact omitted by both bakes; compare the fresh inventory with tracked baked files to
+verify completeness before transferring output.
 
 The bake writes `humanoid_base.glb`, `humanoid_base_report.txt`, the `equipment/` GLBs and
 `equipment.json`, and the `skins/` textures and `skins.json`. To update the committed kit, transfer

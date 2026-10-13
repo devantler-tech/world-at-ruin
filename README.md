@@ -57,6 +57,10 @@ before continuing; a package manager may supply a different version. On macOS yo
 
 Run these commands in a terminal. Importing the project first creates the local asset cache:
 
+The bare `godot --path client` launch uses your regular character saves. For development or a
+disposable trial, follow the [isolated save setup in CONTRIBUTING.md](CONTRIBUTING.md#run-the-client-with-disposable-saves)
+before launching, so a test cannot change your regular character.
+
 ```sh
 git clone https://github.com/devantler-tech/world-at-ruin.git
 cd world-at-ruin
@@ -64,9 +68,7 @@ godot --headless --editor --quit --path client
 godot --path client
 ```
 
-The game opens the starter cave and saves your character locally between launches. For development
-or a disposable trial, follow the [isolated save setup in CONTRIBUTING.md](CONTRIBUTING.md#run-the-client-with-disposable-saves)
-before launching, so a test cannot change your regular character.
+The game opens the starter cave and saves your character locally between launches.
 
 To build your own `.app` instead, export with the `macOS` preset in `client/export_presets.cfg`
 (needs the 4.7.1 export templates installed in the Godot editor).
