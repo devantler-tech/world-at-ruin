@@ -25,11 +25,12 @@ type privateConfig struct {
 	// allocatorCA and allocatorCert are the allocator credentials the claim
 	// listener must never share trust or keys with.
 	allocatorCA, allocatorCert string
+	material                   *ClaimsTLSMaterial
 }
 
-// readPrivateConfig requires a deliberate address and dedicated credentials.
+// readPrivateConfigForMaterial requires a deliberate address and credentials.
 // Disabled mode ignores all listener configuration and performs no I/O.
-func readPrivateConfig(env map[string]string) (privateConfig, error) {
+func readPrivateConfigForMaterial(env map[string]string, useMaterial bool) (privateConfig, error) {
 	var cfg privateConfig
 	switch env["WAR_HANDOFF_CLAIMS_ENABLED"] {
 	case "", "false":
@@ -45,14 +46,16 @@ func readPrivateConfig(env map[string]string) (privateConfig, error) {
 	if err != nil || net.ParseIP(host) == nil || portErr != nil || number == 0 {
 		return privateConfig{}, invalidConfig("WAR_HANDOFF_CLAIMS_ADDRESS")
 	}
-	for name, target := range map[string]*string{
-		"WAR_HANDOFF_CLAIMS_CA_FILE":   &cfg.ca,
-		"WAR_HANDOFF_CLAIMS_CERT_FILE": &cfg.cert,
-		"WAR_HANDOFF_CLAIMS_KEY_FILE":  &cfg.key,
-	} {
-		*target = env[name]
-		if !validPath(*target) {
-			return privateConfig{}, invalidConfig(name)
+	if !useMaterial {
+		for name, target := range map[string]*string{
+			"WAR_HANDOFF_CLAIMS_CA_FILE":   &cfg.ca,
+			"WAR_HANDOFF_CLAIMS_CERT_FILE": &cfg.cert,
+			"WAR_HANDOFF_CLAIMS_KEY_FILE":  &cfg.key,
+		} {
+			*target = env[name]
+			if !validPath(*target) {
+				return privateConfig{}, invalidConfig(name)
+			}
 		}
 	}
 	cfg.trustDomain = env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"]
@@ -65,6 +68,9 @@ func readPrivateConfig(env map[string]string) (privateConfig, error) {
 // privateTLS loads bounded projected files before binding any socket. The roots
 // authorize workload clients only; allocator trust and credentials stay separate.
 func privateTLS(cfg privateConfig) (*tls.Config, error) {
+	if cfg.material != nil {
+		return claimsMaterialTLS(cfg, *cfg.material)
+	}
 	now := time.Now()
 	ca, err := readMaterial(cfg.ca)
 	if err != nil {
@@ -74,22 +80,11 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, errMaterial
 	}
-	pool := x509.NewCertPool()
-	for _, root := range roots {
-		// A root that is stale, not yet valid, not allowed to sign certificates, or
-		// restricted to purposes other than client authentication would start a
-		// listener that rejects every workload, so it fails startup and the module
-		// rolls back instead.
-		if !root.IsCA || !currentlyValid(root, now) || root.KeyUsage != 0 && root.KeyUsage&x509.KeyUsageCertSign == 0 || !anchorsClientAuth(root) {
-			return nil, errMaterial
-		}
-		pool.AddCert(root)
-	}
-	allocatorCA, err := readMaterial(cfg.allocatorCA)
+	pool, err := clientAuthorityPool(roots, now)
 	if err != nil {
-		return nil, errMaterial
+		return nil, err
 	}
-	allocatorRoots, err := parseCertificates(allocatorCA)
+	allocatorKeys, err := claimsAllocatorCertificates(cfg)
 	if err != nil {
 		return nil, errMaterial
 	}
@@ -121,23 +116,18 @@ func privateTLS(cfg privateConfig) (*tls.Config, error) {
 		chain = append(chain, certificate)
 	}
 	leaf := chain[0]
-	allocatorCert, err := readMaterial(cfg.allocatorCert)
-	if err != nil {
-		return nil, errMaterial
-	}
-	allocatorLeaves, err := parseCertificates(allocatorCert)
 	// Claims material and allocator material share no key in either direction: a
 	// leaked server key must not mint allocator credentials or workload identities,
 	// and a leaked allocator key must not mint workload identities. The server key
 	// is also no workload root, so it cannot issue the identities it admits.
 	claimsKeys := append(slices.Clone(roots), leaf)
-	if err != nil || sharesKey(claimsKeys, slices.Concat(allocatorRoots, allocatorLeaves)) || sharesKey([]*x509.Certificate{leaf}, roots) {
+	if sharesKey(claimsKeys, allocatorKeys) || sharesKey([]*x509.Certificate{leaf}, roots) {
 		return nil, errMaterial
 	}
 	if len(leaf.DNSNames)+len(leaf.IPAddresses) == 0 || len(leaf.ExtKeyUsage) > 0 && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageAny) {
 		return nil, errMaterial
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert, NextProtos: []string{"http/1.1"}}, nil
+	return verifiedClaimsTLS(pair, pool), nil
 }
 
 // parseCertificates decodes every certificate in a PEM bundle. Unlike a cert

@@ -51,14 +51,28 @@ func InitializeWithLogger(ctx context.Context, logger runtime.Logger, nk runtime
 	return initialize(ctx, nk, initializer, connectRuntime, logger)
 }
 
+// InitializeWithClaimsMaterial explicitly selects a static in-process claims
+// credential snapshot. Both handoff flags still default off. The caller owns
+// the signing handle for the initialized lifetime; no claims key file is read.
+func InitializeWithClaimsMaterial(ctx context.Context, logger runtime.Logger, nk runtime.NakamaModule, initializer runtime.Initializer, material ClaimsTLSMaterial) error {
+	return initializeWithClaimsMaterial(ctx, nk, initializer, connectRuntime, &material, logger)
+}
+
 // initialize composes dependencies and registers admission and shutdown before
 // starting workers. Failed registration cancels admission and retires resources.
 func initialize(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer, connect connector, loggers ...runtime.Logger) error {
+	return initializeWithClaimsMaterial(ctx, nk, initializer, connect, nil, loggers...)
+}
+
+// initializeWithClaimsMaterial shares acquisition, registration, rollback and
+// shutdown ownership between projected and explicitly selected static material.
+func initializeWithClaimsMaterial(ctx context.Context, nk runtime.NakamaModule, initializer runtime.Initializer, connect connector, material *ClaimsTLSMaterial, loggers ...runtime.Logger) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
-	cfg, err := readConfig(env)
+	cfg, err := readConfigForMaterial(env, material != nil)
 	if err != nil || !cfg.enabled {
 		return err
 	}
+	cfg.claims.material = material
 	if nk == nil || initializer == nil {
 		return errors.New("nakama handoff: runtime dependencies required")
 	}

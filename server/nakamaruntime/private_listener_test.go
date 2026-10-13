@@ -710,14 +710,7 @@ func TestPrivateListenerShutdownCancelsClaimsBeforeClosingDependencies(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { r.shutdown(context.Background(), nil, nil, storage) })
-	result := make(chan error, 1)
-	client := f.client(t, f.tls)
-	go func() { result <- client.Claim(t.Context(), f.binding, f.token, 1) }()
-	select {
-	case <-storage.started:
-	case <-time.After(time.Second):
-		t.Fatal("claim never reached storage")
-	}
+	result := f.claimOnceStarted(t, storage.started)
 	r.shutdown(context.Background(), nil, nil, storage)
 	select {
 	case err := <-result:
@@ -730,6 +723,21 @@ func TestPrivateListenerShutdownCancelsClaimsBeforeClosingDependencies(t *testin
 	if closed.Load() != 1 {
 		t.Fatal("shutdown did not retire dependencies once")
 	}
+}
+
+// claimOnceStarted proves the real transport has entered the supplied storage
+// operation before a shutdown control is allowed to proceed.
+func (f listenerFixture) claimOnceStarted(t *testing.T, started <-chan struct{}) <-chan error {
+	t.Helper()
+	result := make(chan error, 1)
+	client := f.client(t, f.tls)
+	go func() { result <- client.Claim(t.Context(), f.binding, f.token, 1) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("claim did not enter actual storage")
+	}
+	return result
 }
 
 // start initializes the private listener using the fixture's real storage and injected transport

@@ -170,6 +170,51 @@ network exposure: deployment must restrict reachability and issue attested
 per-GameServer identities. No platform resource is changed by this option.
 See [ADR 0009](../../docs/adr/0009-host-private-claims-in-the-nakama-runtime.md).
 
+### Static material initialization
+
+`InitializeWithClaimsMaterial(ctx, logger, nk, initializer, material)` explicitly
+selects a static `ClaimsTLSMaterial` snapshot. `Initialize` and
+`InitializeWithLogger` keep projected-file behavior. No current plugin entry
+selects material mode. Both `WAR_HANDOFF_ENABLED=true` and
+`WAR_HANDOFF_CLAIMS_ENABLED=true` are required for its private listener; disabled
+paths ignore even malformed supplied material.
+
+| Material field | Contract |
+| --- | --- |
+| `CertificateChainDER` | Leaf first, then its ordered issuers; one to eight certificates. |
+| `Signer` | Matching signing handle retained by the initializing process for the runtime lifetime. |
+| `ClientAuthoritiesDER` | One to 32 inspectable client-authority certificates; no opaque root pool. |
+| `ExpectedServerDNS` | Independently pinned exact DNS SAN; wildcard-only matches and IP substitutions are refused. |
+| `ExpectedServerURI` | Independently pinned canonical SPIFFE URI in the configured claims trust domain; exactly one leaf URI must match. Path segments use letters, digits, dots, dashes and underscores; legacy charset mode is refused. |
+
+Each DER certificate is at most 64 KiB, and both groups together are at most
+256 KiB. The runtime clones and reparses the bytes before verifying validity,
+signatures, purposes, signer equality and the server's anchored chain. It checks
+all supplied authority/chain keys against allocator roots/leaves, and the server
+leaf against issuer keys. The fixed TLS policy requires verified client
+certificates, TLS 1.2 or later and HTTP/1.1. Caller TLS configuration or
+verification callbacks are not accepted.
+
+Material mode ignores the three claims credential-file settings and never falls
+back to them on a missing/invalid snapshot. Existing address, trust-domain,
+allocator and unwrap-key configuration still applies. Listener preparation,
+registration rollback, request/connection limits and actual shutdown drain use
+the same runtime owner as projected initialization.
+
+Keep input buffers and slice headers stable until initialization returns. Later
+DER mutation or replacing the input signer field cannot replace the retained
+configuration. The signer object itself cannot be cloned: underlying
+key mutation can cause handshake refusal, and the caller must retain its valid
+handle until owned shutdown completes. There is no credential watcher, refresh,
+rotation or revocation guarantee in this entry.
+
+The verified-TLS tests exercise complete claim receipts with fixture storage and
+refusal/rollback/drain controls. This does not establish successful WorkloadAPI
+issuance inside Nakama, process attestation/key ownership, native PostgreSQL
+custody, role-private controller cleanup, protected forwarding, gameplay admission
+or rollback-resistant recovery. Those remain #1374/#1346; retirement remains
+#1192. See [ADR 0052](../../docs/adr/0052-accept-inspectable-claims-material-under-one-runtime-owner.md).
+
 ## Orphan supervision
 
 With `WAR_HANDOFF_ENABLED=true`, these runtime.env settings enable the existing
