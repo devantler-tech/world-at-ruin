@@ -195,7 +195,16 @@ func (f *nativeFixture) startIssuer(name string, port int) nativeIssuer {
 		}
 		entries = append(entries, entry)
 	}
-	issuer := spire.Start(f.t, f.ctx, f.dir, name, port, entries, func(cmd *exec.Cmd) func() bool {
+	launch := func(program spire.Program, configuration string) func() bool {
+		var cmd *exec.Cmd
+		switch program {
+		case spire.Server:
+			cmd = exec.CommandContext(f.ctx, "/opt/spire/bin/spire-server", "run", "-config", configuration)
+		case spire.Agent:
+			cmd = exec.CommandContext(f.ctx, "/opt/spire/bin/spire-agent", "run", "-config", configuration)
+		default:
+			f.t.Fatal("unknown private issuer program")
+		}
 		p := f.start(cmd)
 		return func() bool {
 			select {
@@ -205,7 +214,8 @@ func (f *nativeFixture) startIssuer(name string, port int) nativeIssuer {
 			}
 			return p.joined
 		}
-	})
+	}
+	issuer := spire.Start(f.t, f.ctx, f.dir, name, port, entries, spire.Runner{Launch: launch, Admin: runCLI})
 	return nativeIssuer{api: issuer.API, bundle: issuer.Bundle, private: issuer.Private}
 }
 

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,15 +26,29 @@ type Entry struct {
 // Issuer exposes only a public socket/bundle and the private-state refusal path.
 type Issuer struct{ API, Bundle, Private string }
 
+// Program selects one of the caller's pinned fixture executables.
+type Program uint8
+
+const (
+	Server Program = iota
+	Agent
+)
+
 // Launch must register the started process with the caller's stop/join owner
 // before returning. Its observer reports a completed Wait, without losing that
 // owner's knowledge that the process has been joined.
-type Launch func(*exec.Cmd) (exited func() bool)
+type Launch func(Program, string) (exited func() bool)
+
+// Runner keeps executable selection and private CLI execution with the caller.
+type Runner struct {
+	Launch Launch
+	Admin  func(context.Context, ...string) ([]byte, error)
+}
 
 // Start creates a fresh Server/Agent pair under the caller's owned scratch root.
 // Socket readiness is transport evidence only; each workload must fetch its own
 // exact SVID. The caller retains its existing process and whole-fixture deadline.
-func Start(t *testing.T, ctx context.Context, directory, name string, port int, entries []Entry, launch Launch) Issuer {
+func Start(t *testing.T, ctx context.Context, directory, name string, port int, entries []Entry, runner Runner) Issuer {
 	t.Helper()
 	private := filepath.Join(directory, name+"-private")
 	public := filepath.Join(directory, name+"-public")
@@ -57,7 +70,7 @@ func Start(t *testing.T, ctx context.Context, directory, name string, port int, 
 		t.Helper()
 		request, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		data, err := runCLI(request, args...)
+		data, err := runner.Admin(request, args...)
 		if err != nil {
 			t.Fatal("private SPIRE administrative operation failed")
 		}
@@ -80,7 +93,7 @@ plugins {
  KeyManager "memory" { plugin_data {} }
 }
 `, port, socket, filepath.Join(private, "server"), filepath.Join(private, "server", "store.sqlite3")), 0600)
-	serverExited := launch(exec.CommandContext(ctx, "/opt/spire/bin/spire-server", "run", "-config", serverConf))
+	serverExited := runner.Launch(Server, serverConf)
 	readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
@@ -88,7 +101,7 @@ plugins {
 			t.Fatal("SPIRE server exited before readiness")
 		}
 		attempt, stop := context.WithTimeout(readyCtx, time.Second)
-		_, err := runCLI(attempt, "healthcheck", "-socketPath", socket)
+		_, err := runner.Admin(attempt, "healthcheck", "-socketPath", socket)
 		stop()
 		if err == nil {
 			break
@@ -142,7 +155,7 @@ plugins {
  WorkloadAttestor "unix" { plugin_data { discover_workload_path=false } }
 }
 `, filepath.Join(private, "agent"), port, api, bundle, tokenFile, filepath.Join(private, "agent")), 0600)
-	agentExited := launch(exec.CommandContext(ctx, "/opt/spire/bin/spire-agent", "run", "-config", agentConf))
+	agentExited := runner.Launch(Agent, agentConf)
 	for {
 		if info, err := os.Stat(api); err == nil && info.Mode()&os.ModeSocket != 0 {
 			break
@@ -157,9 +170,4 @@ plugins {
 		}
 	}
 	return Issuer{API: api, Bundle: bundle, Private: private}
-}
-
-// runCLI keeps token-bearing output inside the disposable fixture, with no shell.
-func runCLI(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, "/opt/spire/bin/spire-server", args...).Output()
 }
