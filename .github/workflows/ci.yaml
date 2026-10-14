@@ -49,6 +49,8 @@ jobs:
         run: tools/test-cd-cask-rest-delivery.sh
       - name: Cask disarm survives an exhausted GraphQL budget
         run: tools/test-cd-cask-disarm-budget.sh
+      - name: Cask admission waits for primary and secondary request limits
+        run: tools/test-cd-cask-api-budget.sh
       - name: GHCR publication failures preserve the verified latest
         run: tools/test-cd-ghcr-verification-order.sh
       - name: GHCR latest converges to the newest immutable release
