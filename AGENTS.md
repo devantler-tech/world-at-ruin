@@ -1279,6 +1279,10 @@ the permanent blocking policy.
 - **Allocator peer transport:** `server/allocatorpeer/` is opt-in and has no production caller.
   Run `go -C server test -race -count=1 -timeout 2m ./allocatorpeer` for native mutual-TLS
   allocation, source/readiness changes, lost responses and the production-import guard.
+  Test setup first proves a complete bidirectional exchange on each owned private
+  candidate under a bounded budget, closes and joins unsuccessful probes, and
+  retains the same still-bound listener for TLS. Missing transport fails with a
+  sanitized explicit prerequisite error; it never skips or relaxes the TLS proof.
   [ADR 0018](docs/adr/0018-observe-pinned-generations-before-authenticated-allocator-calls.md)
   keeps bindings observational: no allocator error or discovery result grants quarantine release.
 - **Server save history:** every persisted server schema uses
