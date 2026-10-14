@@ -35,7 +35,7 @@ fi
 if ! jq -e --arg evaluate "$evaluate" --arg publish "$publish" --arg verdict "$verdict" --arg installer "$installer" '
   def harden:
     keys == ["name","uses","with"]
-    and .uses == "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed"
+    and .uses == "step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25"
     and .with == {"egress-policy":"audit"};
   def source_checkout:
     keys == ["name","uses","with"]
