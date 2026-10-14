@@ -65,15 +65,23 @@ func TestNativeOriginalClaimCustody(t *testing.T) {
 // Explicit dependencies let the real-issued trial reuse every original custody
 // assertion without copying the matrix or substituting a storage-derived receipt.
 type originalCustodyTrial struct {
-	f       *fixture
-	binding agones.ClaimBinding
-	claim   func(context.Context) (zoneclaim.Receipt, error)
-	peerEnv map[string]string
-	observe func(*testing.T, *nativeProcess)
+	f         *fixture
+	binding   agones.ClaimBinding
+	claim     func(context.Context) (zoneclaim.Receipt, error)
+	peerEnv   map[string]string
+	observe   func(*testing.T, *nativeProcess)
+	milestone func(string)
+}
+
+func (trial originalCustodyTrial) progress(stage string) {
+	if trial.milestone != nil {
+		trial.milestone(stage)
+	}
 }
 
 func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCustodyTrial) {
 	t.Helper()
+	trial.progress("original-enrollment-observation")
 	f, binding := trial.f, trial.binding
 	before, version, _, _ := f.row(binding.LeaseObjectID)
 	allocations, requests := f.counts()
@@ -152,6 +160,7 @@ func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCust
 	if strings.Contains(fault, "enrollment") {
 		wantClaim, wantCustody = 0, 0
 	} else {
+		trial.progress("original-claim-bridge")
 		stageReached(t, acceptedEnrollment)
 		if claimCalls.Load() != 0 {
 			t.Fatal("claim preceded acceptance callback")
@@ -167,6 +176,7 @@ func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCust
 			wantCustody = 0
 		}
 	}
+	trial.progress("original-source-verdict")
 	switch fault {
 	case "lost-receipt", "changed-binding":
 		custodyRefused(t, source, "original receipt unknown")
@@ -177,7 +187,9 @@ func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCust
 		awaitNativeProbeReady(t, source, "7360", custodyPass+" scenario="+mode)
 		killJoinedSource(t, source)
 	}
+	trial.progress("original-source-snapshot")
 	trial.observe(t, source)
+	trial.progress("original-storage-join")
 	rows := custodyRowsFor(t, f, binding, original, 1, wantCustody, expected)
 	if claimCalls.Load() != wantClaim || receiptCalls.Load() != wantClaim || len(pins) != 0 && fault != "complete" {
 		t.Fatal("uncertain source exported pins or retried claim")
@@ -214,6 +226,7 @@ func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCust
 	// Both same-correlation and replacement processes lose the immutable
 	// enrollment create before receipt retrieval; readback restores no handle.
 	for _, child := range []string{"no-gameplay-child", "replacement"} {
+		trial.progress("original-restart-refusal")
 		restart := maps.Clone(probeEnv)
 		restart["WAR_ZONE_CUSTODY_PROBE_SCENARIO"] = "complete"
 		if child == "replacement" {
@@ -221,8 +234,10 @@ func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCust
 		}
 		rejected := startRecoveryPeer(t, f, restart)
 		custodyRefused(t, rejected, "enrollment unknown")
+		trial.progress("original-restart-snapshot")
 		trial.observe(t, rejected)
 	}
+	trial.progress("original-effect-join")
 	if !equalCustodyRows(rows, custodyRowsFor(t, f, binding, original, 1, wantCustody, expected)) || claimCalls.Load() != wantClaim || receiptCalls.Load() != wantClaim {
 		t.Fatal("fresh process adopted custody or reclaimed the receipt")
 	}

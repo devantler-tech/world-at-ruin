@@ -98,7 +98,7 @@ type custodyIPCEvent struct {
 
 // The worker's main goroutine exclusively owns the private protocol. The native
 // subtest and its HTTP handlers exchange bounded events; they never use FD3.
-func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, decoder *json.Decoder) {
+func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, decoder *json.Decoder, milestone func(string)) {
 	if !containsCustodyCut(*issuedCut) {
 		t.Fatal("unknown original custody cut")
 	}
@@ -132,13 +132,25 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 	}
 	go func() {
 		done <- t.Run("owned-native", func(t *testing.T) {
+			milestone("original-fixture")
 			f := newFixture(t)
 			env := f.issuedClaimsEnv(*issuedAPI)
 			env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] = "war-fixture.test"
 			env["WAR_ISSUED_CLAIMS_SERVER_DNS"] = issuedServerDNS
 			env["WAR_ISSUED_CLAIMS_SERVER_URI"] = issuedServerURI
+			// Health and captured stdout are independent observations. Share the
+			// existing startup window instead of starting a second allowance.
+			milestone("original-main-startup")
+			startup, stopStartup := context.WithTimeout(ctx, 20*time.Second)
+			defer stopStartup()
 			main := f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
+			milestone("original-main-snapshot")
+			if err := awaitIssuedSnapshot(startup, main.done, main.log.String); err != nil {
+				t.Fatal("issued main snapshot readiness failed", err)
+			}
+			stopStartup()
 			issuedSnapshot(t, main)
+			milestone("original-handoff")
 			token, user := f.account("issued-original-receipt")
 			handoff := f.handoff(token)
 			gs := f.resource("zone-1")
@@ -150,9 +162,10 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 			if err != nil {
 				t.Fatal("original source readiness coordination failed")
 			}
+			milestone("original-custody-verification")
 			peerEnv := maps.Clone(env)
 			peerEnv["WAR_HANDOFF_CLAIMS_ADDRESS"] = "127.0.0.1:7444"
-			exerciseOriginalClaimCustody(t, *issuedCut, originalCustodyTrial{f: f, binding: binding, peerEnv: peerEnv, observe: issuedSnapshot, claim: func(parent context.Context) (zoneclaim.Receipt, error) {
+			exerciseOriginalClaimCustody(t, *issuedCut, originalCustodyTrial{f: f, binding: binding, peerEnv: peerEnv, observe: issuedSnapshot, milestone: milestone, claim: func(parent context.Context) (zoneclaim.Receipt, error) {
 				bridge, stop := context.WithTimeout(parent, 5*time.Second)
 				defer stop()
 				message := issuedMessage{Op: "claim", Case: *issuedCut, Seq: 2, Token: handoff.Token, Binding: binding, DNS: issuedServerDNS, URI: issuedServerURI}
@@ -162,6 +175,7 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 				}
 				return reply.Receipt, nil
 			}})
+			milestone("original-descendant-cleanup")
 		})
 	}()
 	phase := uint64(0)
@@ -226,7 +240,7 @@ func containsCustodyCut(cut string) bool {
 // A selected snapshot is not the later listener validation or original handle.
 func issuedSnapshot(t *testing.T, process *nativeProcess) {
 	t.Helper()
-	if strings.Count(process.log.String(), "ISSUED CLAIMS SNAPSHOT FETCHED") != 1 {
+	if strings.Count(process.log.String(), issuedSnapshotMarker) != 1 {
 		t.Fatal("exact native process did not select its own issued snapshot")
 	}
 }
