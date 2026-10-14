@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -20,6 +21,14 @@ import (
 type privateCandidate func(context.Context) (net.Listener, error)
 
 var errPrivateTransport = errors.New("native allocator transport prerequisite unavailable: complete bidirectional private IPv4 exchange required")
+var errPrivateCleanup = fmt.Errorf("%w: cleanup unknown", errPrivateTransport)
+
+func closeProbe(closer io.Closer) error {
+	if err := closer.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return errPrivateCleanup
+	}
+	return nil
+}
 
 // Every candidate is owned by this setup, proven before TLS, and either retained
 // still-bound or closed. A failed cleanup is never permission to try another.
@@ -40,8 +49,8 @@ func selectPrivateTransport(ctx context.Context, candidates []privateCandidate) 
 			return listener, nil
 		}
 		if listener != nil {
-			if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
-				return nil, errPrivateTransport
+			if closeErr := closeProbe(listener); closeErr != nil || errors.Is(err, errPrivateCleanup) {
+				return nil, errPrivateCleanup
 			}
 		}
 	}
@@ -62,8 +71,10 @@ func provePrivateTransport(ctx context.Context, listener net.Listener) (err erro
 	answer := sha256.Sum256(challenge)
 	retireListener := closeOnProbeCancellation(ctx, listener)
 	defer func() {
-		retireListener()
-		if ctx.Err() != nil {
+		if cleanupErr := retireListener(); cleanupErr != nil {
+			err = errPrivateCleanup
+		}
+		if ctx.Err() != nil && !errors.Is(err, errPrivateCleanup) {
 			err = errPrivateTransport
 		}
 	}()
@@ -75,7 +86,12 @@ func provePrivateTransport(ctx context.Context, listener net.Listener) (err erro
 				return err
 			}
 			retire := closeOnProbeCancellation(ctx, conn)
-			defer func() { retire(); err = errors.Join(err, conn.Close()) }()
+			defer func() {
+				callbackErr, closeErr := retire(), closeProbe(conn)
+				if callbackErr != nil || closeErr != nil {
+					err = errPrivateCleanup
+				}
+			}()
 			if err := conn.SetDeadline(deadline); err != nil {
 				return err
 			}
@@ -95,8 +111,10 @@ func provePrivateTransport(ctx context.Context, listener net.Listener) (err erro
 	}()
 	conn, dialErr := (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
 	if dialErr != nil {
-		_ = listener.Close()
-		<-done
+		closeErr, serverErr := closeProbe(listener), <-done
+		if closeErr != nil || errors.Is(serverErr, errPrivateCleanup) {
+			return errPrivateCleanup
+		}
 		return errPrivateTransport
 	}
 	retireClient := closeOnProbeCancellation(ctx, conn)
@@ -116,13 +134,16 @@ func provePrivateTransport(ctx context.Context, listener net.Listener) (err erro
 		}
 		return nil
 	}()
-	retireClient()
-	closeErr := conn.Close()
+	callbackErr, closeErr := retireClient(), closeProbe(conn)
+	var listenerCloseErr error
 	if exchangeErr != nil {
-		_ = listener.Close()
+		listenerCloseErr = closeProbe(listener)
 	}
 	serverErr := <-done
-	if exchangeErr != nil || closeErr != nil || serverErr != nil {
+	if callbackErr != nil || closeErr != nil || listenerCloseErr != nil || errors.Is(serverErr, errPrivateCleanup) {
+		return errPrivateCleanup
+	}
+	if exchangeErr != nil || serverErr != nil {
 		return errPrivateTransport
 	}
 	return nil
@@ -130,13 +151,14 @@ func provePrivateTransport(ctx context.Context, listener net.Listener) (err erro
 
 // A cancel callback is retired or joined, never left able to close a retained
 // listener after successful selection has handed it to the native TLS fixture.
-func closeOnProbeCancellation(ctx context.Context, closer io.Closer) func() {
-	done := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { _ = closer.Close(); close(done) })
-	return func() {
+func closeOnProbeCancellation(ctx context.Context, closer io.Closer) func() error {
+	done := make(chan error, 1)
+	stop := context.AfterFunc(ctx, func() { done <- closeProbe(closer) })
+	return func() error {
 		if !stop() {
-			<-done
+			return <-done
 		}
+		return nil
 	}
 }
 
@@ -165,6 +187,7 @@ type faultyProbeListener struct {
 	net.Listener
 	mode   string
 	closed atomic.Bool
+	closes atomic.Int32
 	writes atomic.Int32
 }
 type faultyProbeConnection struct {
@@ -184,7 +207,8 @@ func (l *faultyProbeListener) Accept() (net.Conn, error) {
 func (l *faultyProbeListener) Close() error {
 	l.closed.Store(true)
 	err := l.Listener.Close()
-	if l.mode == "listener-close-error" {
+	count := l.closes.Add(1)
+	if l.mode == "listener-close-error" || l.mode == "first-listener-close-error" && count == 1 {
 		return errors.New("private fixture cleanup failure")
 	}
 	return err
@@ -203,7 +227,7 @@ func (c *faultyProbeConnection) Write(p []byte) (int, error) {
 	switch c.owner.mode {
 	case "silent":
 		return len(p), nil
-	case "wrong", "listener-close-error":
+	case "wrong", "listener-close-error", "first-listener-close-error":
 		data := bytes.Clone(p)
 		data[0] ^= 1
 		return c.Conn.Write(data)
@@ -290,13 +314,17 @@ func TestPrivateTransportAbsenceAndCanceledSetup(t *testing.T) {
 }
 
 func TestPrivateTransportUnknownCleanupStopsSelection(t *testing.T) {
-	listener := &faultyProbeListener{Listener: nettest.Loopback(t), mode: "listener-close-error"}
-	later := false
-	got, err := selectPrivateTransport(t.Context(), []privateCandidate{
-		func(context.Context) (net.Listener, error) { return listener, nil },
-		func(context.Context) (net.Listener, error) { later = true; return nettest.Loopback(t), nil },
-	})
-	if got != nil || !errors.Is(err, errPrivateTransport) || later || !listener.closed.Load() {
-		t.Fatal("unknown cleanup permitted another listener")
+	for _, mode := range []string{"listener-close-error", "first-listener-close-error", "close-error"} {
+		t.Run(mode, func(t *testing.T) {
+			listener := &faultyProbeListener{Listener: nettest.Loopback(t), mode: mode}
+			later := false
+			got, err := selectPrivateTransport(t.Context(), []privateCandidate{
+				func(context.Context) (net.Listener, error) { return listener, nil },
+				func(context.Context) (net.Listener, error) { later = true; return nettest.Loopback(t), nil },
+			})
+			if got != nil || !errors.Is(err, errPrivateTransport) || later || !listener.closed.Load() {
+				t.Fatal("unknown cleanup permitted another listener")
+			}
+		})
 	}
 }

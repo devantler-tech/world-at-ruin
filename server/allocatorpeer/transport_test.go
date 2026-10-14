@@ -128,7 +128,7 @@ func privateListener(t *testing.T) net.Listener {
 	}
 	listener, err := selectPrivateTransport(t.Context(), candidates)
 	if err != nil {
-		t.Fatal(errPrivateTransport)
+		t.Fatal(err)
 	}
 	return listener
 }
