@@ -128,13 +128,7 @@ plugins {
 	}
 	tokenFile := filepath.Join(private, "join-token")
 	write(tokenFile, token.Value, 0600)
-	for _, entry := range entries {
-		args := []string{"entry", "create", "-socketPath", socket, "-parentID", "spiffe://war-fixture.test/spire/agent/join_token/" + token.Value, "-spiffeID", entry.ID, "-selector", fmt.Sprintf("unix:uid:%d", entry.UID), "-x509SVIDTTL", "300"}
-		if entry.DNS != "" {
-			args = append(args, "-dns", entry.DNS)
-		}
-		_ = cli(args...)
-	}
+	Register(t, ctx, Issuer{Private: private}, entries, runner)
 	api := filepath.Join(public, "api.sock")
 	agentConf := filepath.Join(private, "agent.conf")
 	write(agentConf, fmt.Sprintf(`agent {
@@ -149,6 +143,8 @@ plugins {
  log_level="ERROR"
  experimental { sync_interval="1s" }
 }
+
+
 plugins {
  NodeAttestor "join_token" { plugin_data {} }
  KeyManager "disk" { plugin_data { directory=%q } }
@@ -170,4 +166,26 @@ plugins {
 		}
 	}
 	return Issuer{API: api, Bundle: bundle, Private: private}
+}
+
+// Register adds exact caller-owned entries, including allocations learned after
+// issuer startup. Bootstrap material stays inside the controller's private tree.
+func Register(t *testing.T, ctx context.Context, issuer Issuer, entries []Entry, runner Runner) {
+	t.Helper()
+	token, err := os.ReadFile(filepath.Join(issuer.Private, "join-token"))
+	if err != nil || len(token) < 16 || strings.ContainsAny(string(token), " \r\n\t/") {
+		t.Fatal("private SPIRE registration bootstrap refused")
+	}
+	for _, entry := range entries {
+		args := []string{"entry", "create", "-socketPath", filepath.Join(issuer.Private, "server", "api.sock"), "-parentID", "spiffe://war-fixture.test/spire/agent/join_token/" + string(token), "-spiffeID", entry.ID, "-selector", fmt.Sprintf("unix:uid:%d", entry.UID), "-x509SVIDTTL", "300"}
+		if entry.DNS != "" {
+			args = append(args, "-dns", entry.DNS)
+		}
+		request, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := runner.Admin(request, args...)
+		cancel()
+		if err != nil {
+			t.Fatal("private SPIRE registration failed")
+		}
+	}
 }

@@ -1436,7 +1436,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        profile: [native, issued]
+        profile: [native, issued, issued-spire]
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -1465,6 +1465,7 @@ jobs:
         run: |
           args=()
           if [[ $NATIVE_PROFILE == issued ]]; then args+=(--issued); fi
+          if [[ $NATIVE_PROFILE == issued-spire ]]; then args+=(--spire); fi
           bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:ci --experimental "${args[@]}"
 
   spire-native:
