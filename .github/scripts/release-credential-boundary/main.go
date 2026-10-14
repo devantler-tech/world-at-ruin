@@ -18,8 +18,8 @@ import (
 const (
 	canonicalArtifact                = "client-macos-universal"
 	canonicalArtifactPath            = "build/WorldAtRuin-${{ steps.version.outputs.version }}-macOS-universal.zip"
-	expectedAttachReleaseSHA256      = "d14aaaf55f3bf13e8598dc5f727a91f2cc8d1c72f1f44aa02ca922d073b44b7e"
-	expectedPublishReleaseSHA256     = "6d168ba1488d1205e8a8987b6232ed16efe6f1ae12d1472720143231fca2e1bf"
+	expectedAttachReleaseSHA256      = "3112762cc82240350f01f3578dfb96898e65ba28b6892d51472ce6d15c6ae141"
+	expectedPublishReleaseSHA256     = "17c17e4a6da552e4abe73331449059ba9d6b98b89ccfd1112f1361b13cfeb26c"
 	attachReleaseJob                 = "attach-release"
 	publishReleaseJob                = "publish-release"
 	publishMacOSJob                  = "publish-macos"
@@ -88,6 +88,8 @@ func loadWorkflow(path string) (*workflow, error) {
 	return &workflow{root: root, jobs: jobs}, nil
 }
 
+// validate binds release-write jobs to their audited structure, artifact and
+// execution boundary, including the finite attachment recovery deadline.
 func (workflow *workflow) validate() error {
 	if _, exists := workflow.root["defaults"]; exists {
 		return errors.New("workflow-level defaults are forbidden because privileged run steps must use their audited shell")
@@ -137,7 +139,7 @@ func (workflow *workflow) validate() error {
 	if !reflect.DeepEqual(attachRelease["needs"], []any{publishMacOSJob}) {
 		return errors.New("attach-release must wait only for publish-macos")
 	}
-	if attachRelease["timeout-minutes"] != 15 {
+	if attachRelease["timeout-minutes"] != 20 {
 		return errors.New("attach-release timeout must cover the fail-closed retry budget")
 	}
 	if !hasExactPermissions(attachRelease, "contents", "write") {
