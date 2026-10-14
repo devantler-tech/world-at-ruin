@@ -38,6 +38,8 @@ case "$1 $2" in
     if [[ $HARNESS_PROFILE == issued ]]; then
       if [[ $HARNESS_FAILURE != missing-sdk ]]; then echo '--- PASS: TestNativeIssuedSDKStartupBoundary (0.1s)'; fi
       if [[ $HARNESS_FAILURE != missing-verdict ]]; then echo 'ISSUED SDK NATIVE PASS: loaded plugin; default off; actual WorkloadAPI unavailable; zero provider effects; no serving authority'; fi
+      if [[ $HARNESS_FAILURE != missing-claims ]]; then echo '--- PASS: TestNativeIssuedClaimsPlugin (0.1s)'; fi
+      if [[ $HARNESS_FAILURE != missing-claims-verdict ]]; then echo 'ISSUED CLAIMS NATIVE PASS: synthetic WorkloadAPI; loaded plugin; one fetch and closed stream; fixed verified TLS; native receipt and replay; refusal storage unchanged; owned shutdown'; fi
     fi
     echo PASS ;;
   'inspect --format') echo 0 ;;
@@ -55,7 +57,7 @@ for profile in native issued; do
   fi
   grep -Fq 'rm -f trial-id' "$HARNESS_RECORD"
   failures=(start missing-base)
-  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict); fi
+  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); fi
   for failure in "${failures[@]}"; do
     export HARNESS_FAILURE=$failure
     if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} > "$scratch/result" 2>&1; then

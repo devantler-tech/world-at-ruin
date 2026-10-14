@@ -10,8 +10,15 @@ import (
 
 func InitModule(ctx context.Context, logger runtime.Logger, _ *sql.DB, nk runtime.NakamaModule, initializer runtime.Initializer) error {
 	env, _ := ctx.Value(runtime.RUNTIME_CTX_ENV).(map[string]string)
+	material, err := issuedClaimsMaterial(ctx, env)
+	if err != nil {
+		return err
+	}
 	if err := sdkProbe(ctx, env); err != nil {
 		return err
+	}
+	if material != nil {
+		return nakamaplugin.InitializeWithClaimsMaterial(ctx, logger, nk, initializer, *material)
 	}
 	return nakamaplugin.Initialize(ctx, logger, nk, initializer)
 }

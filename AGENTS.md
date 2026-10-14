@@ -968,7 +968,7 @@ the permanent blocking policy.
   server DNS/URI expectations under the existing handoff/claims opt-ins. It
   clones/reparses certificates and verifies chain, purposes, signer, exact
   identity and allocator-key separation before reserving the listener. Current
-  plugin entries keep projected credentials. The existing registration, rollback
+  ordinary and existing native plugin entries keep projected credentials. The existing registration, rollback
   and actual-drain owner applies; no watcher, refresh or adoption authority is
   added. Run `go -C server test -race -count=1 -timeout 5m ./nakamaruntime`
   and the required native suites. This establishes fixture-backed material/TLS
@@ -988,6 +988,16 @@ the permanent blocking policy.
   This establishes compatibility and SDK failure behavior only. Successful
   issuance/native custody remains #1374, gameplay admission #1346 and retirement
   #1192. See ADR 0051 and `server/nakamaruntime/README.md`.
+- **Issued claims entry:** only the distinct issued plugin recognizes the strict
+  default-off `WAR_ISSUED_CLAIMS_ENABLED` switch. Both handoff/claims switches
+  must also be true. One explicit Unix WorkloadAPI SDK fetch is bounded to three
+  seconds/256 KiB and closes before shared probe/claims initialization. Independently
+  pin expected DNS/URI; the fixed material listener still validates trust and keys.
+  No projected claims fallback, refresh or second shutdown owner. Run issued-entry
+  source race tests and both required issued native architecture suites. Their
+  new positive/refusal/receipt/replay/shutdown proof uses a synthetic issuer that
+  transfers fixture keys, not real workload attestation. #1374/#1346 retain the
+  actual SPIRE/custody/admission outcomes; #1192 retires this switch. See ADR 0053.
 - **Native SPIRE role acceptance:** the separate `tools/spire-trial` module
   and unpublished image require explicit experimental build/run opt-in. Pinned
   SPIRE Server/Agent attest three distinct unprivileged UIDs, each fetching its

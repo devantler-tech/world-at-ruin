@@ -108,9 +108,12 @@ scenarios=(
   "TestClosedLoopMovementAfterWatchLoss"
 )
 if [[ $issued == --issued ]]; then
-  scenarios+=("TestNativeIssuedSDKStartupBoundary")
+  scenarios+=("TestNativeIssuedSDKStartupBoundary" "TestNativeIssuedClaimsPlugin")
   if ! grep -q 'ISSUED SDK NATIVE PASS: loaded plugin; default off; actual WorkloadAPI unavailable; zero provider effects; no serving authority' "$state/trial.log"; then
     echo 'issued native acceptance omitted the actual SDK startup refusal verdict' >&2; exit 1
+  fi
+  if ! grep -q 'ISSUED CLAIMS NATIVE PASS: synthetic WorkloadAPI; loaded plugin; one fetch and closed stream; fixed verified TLS; native receipt and replay; refusal storage unchanged; owned shutdown' "$state/trial.log"; then
+    echo 'issued native acceptance omitted the actual SDK-material private claim verdict' >&2; exit 1
   fi
 fi
 if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != "${#scenarios[@]}" ]]; then
