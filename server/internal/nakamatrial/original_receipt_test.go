@@ -73,12 +73,15 @@ type originalCustodyTrial struct {
 	milestone func(string)
 }
 
+// progress exports fixed fixture milestones, never captured process output.
 func (trial originalCustodyTrial) progress(stage string) {
 	if trial.milestone != nil {
 		trial.milestone(stage)
 	}
 }
 
+// exerciseOriginalClaimCustody keeps original acknowledgments separate from
+// independent storage readback through every declared interruption cut.
 func exerciseOriginalClaimCustody(t *testing.T, fault string, trial originalCustodyTrial) {
 	t.Helper()
 	trial.progress("original-enrollment-observation")
