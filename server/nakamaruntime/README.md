@@ -433,7 +433,39 @@ effects or a private claim listener. Even successful fetches grant no serving
 authority. Ordinary plugin artifacts contain no identity SDK.
 
 This is runtime compatibility and unavailable-issuer proof. It does not prove
-successful issuance, issued claims TLS or the combined original custody path.
+successful SPIRE issuance or the combined original custody path.
+
+### Static WorkloadAPI claims entry
+
+Only the distinct issued plugin can select `WAR_ISSUED_CLAIMS_ENABLED=true`.
+It also requires `WAR_HANDOFF_ENABLED=true` and
+`WAR_HANDOFF_CLAIMS_ENABLED=true`. Set these explicit runtime environment values:
+
+| Setting | Meaning |
+|---|---|
+| `WAR_ISSUED_CLAIMS_SOCKET` | Canonical absolute local Unix socket path, at most 100 bytes; no percent encoding, query, fragment or ambient endpoint fallback. |
+| `WAR_ISSUED_CLAIMS_SERVER_DNS` | Independently pinned exact server DNS SAN; no IP or wildcard. |
+| `WAR_ISSUED_CLAIMS_SERVER_URI` | Independently pinned exact SPIFFE server URI in `WAR_HANDOFF_CLAIMS_TRUST_DOMAIN`. |
+
+Disabled mode ignores these settings and keeps the projected-file path. Invalid
+enablement, missing existing opt-ins and simultaneous SDK diagnostic enablement
+refuse startup. Enabled mode makes one real SDK request with a three-second
+deadline and 256 KiB message limit. Exactly one parsed SVID and its pinned-domain
+bundle are required. The SDK transport closes before runtime initialization.
+The retained signer and cloned certificate DER select ADR 0052's fixed listener,
+including independent chain/key/purpose/identity and allocator-separation checks.
+The three projected claims credential-file settings are ignored in this mode.
+There is no refresh, adoption or projected-credential fallback: expiration needs
+a controlled process restart, and runtime shutdown owns the listener and drain.
+
+Both issued native architectures require the actual loaded plugin's positive
+private mTLS claim, independent PostgreSQL receipt/version/generation readback,
+unchanged original replay, startup/client refusal controls, SDK stream retirement
+and listener shutdown. Its WorkloadAPI fixture is synthetic and transfers fixture
+key bytes; it proves SDK-to-native-serving integration, not actual SPIRE issuance,
+distinct workload roles or process-exclusive keys. #1374 retains real issuance
+and original custody; #1346 retains protected forwarding and gameplay admission.
+#1387 delivers this prerequisite and #1192 owns switch retirement. See ADR 0053.
 Those outcomes remain #1374; protected forwarding, gameplay admission and the
 independent rollback witness remain #1346/#1341. Experimental retirement is #1192.
 See ADR 0051 for the artifact and authority boundaries.
