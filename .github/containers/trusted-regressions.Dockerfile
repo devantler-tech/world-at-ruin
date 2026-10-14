@@ -6,8 +6,16 @@ FROM ubuntu:24.04@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # Every locked runtime dependency resolves from main. Restrict index acquisition
 # to that component while retaining the immutable snapshot and all package checks.
+# The snapshot service can fail intermittently: extend APT's default three
+# retries to six, bound each connection/data stall and reject incomplete indexes.
+# The reviewed runtime build/pull phase still owns the 900-second overall bound.
 RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \
-    && printf 'APT::Snapshot "20261003T000000Z";\n' > /etc/apt/apt.conf.d/50snapshot \
+    && printf '%s\n' \
+    'APT::Snapshot "20261003T000000Z";' \
+    'Acquire::Retries "6";' \
+    'Acquire::http::Timeout "20";' \
+    'Acquire::https::Timeout "20";' \
+    'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/50snapshot \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     libfontconfig1=2.15.0-1.1ubuntu2 libx11-6=2:1.8.7-1build1 \
