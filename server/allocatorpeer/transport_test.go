@@ -103,6 +103,7 @@ func privateListener(t *testing.T) net.Listener {
 	if err != nil {
 		t.Fatal("cannot enumerate native test interfaces")
 	}
+	var candidates []privateCandidate
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -120,15 +121,16 @@ func privateListener(t *testing.T) net.Listener {
 			if !ip.Is4() || !ip.IsGlobalUnicast() || !ip.IsPrivate() {
 				continue
 			}
-			var listenConfig net.ListenConfig
-			listener, err := listenConfig.Listen(t.Context(), "tcp", net.JoinHostPort(ip.String(), "0"))
-			if err == nil {
-				return listener
-			}
+			candidates = append(candidates, func(ctx context.Context) (net.Listener, error) {
+				return (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort(ip.String(), "0"))
+			})
 		}
 	}
-	t.Fatal("native allocator proof requires a usable private non-loopback IPv4 interface")
-	return nil
+	listener, err := selectPrivateTransport(t.Context(), candidates)
+	if err != nil {
+		t.Fatal(errPrivateTransport)
+	}
+	return listener
 }
 
 // fixture composes real generation decoding, typed HTTPS discovery and native mutual TLS.

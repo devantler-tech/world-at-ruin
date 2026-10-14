@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/devantler-tech/world-at-ruin/server/internal/nettest"
 )
 
 // The regression is a probe that drops TCP before TLS completes, enters HTTP
@@ -176,11 +178,7 @@ func TestTLSOnlyIdentityFileDoesNotTrustOrAdoptThePeer(t *testing.T) {
 
 // TestTLSOnlyStalledPeerIsBoundedAndConnectionCloses checks timeout and socket release.
 func TestTLSOnlyStalledPeerIsBoundedAndConnectionCloses(t *testing.T) {
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
+	listener := nettest.Loopback(t)
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
