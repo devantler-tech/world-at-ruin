@@ -360,7 +360,9 @@ jobs:
     # it only receives the inert build artifact and attaches it to the draft.
     needs: [publish-macos]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Three artifact metadata RPCs may each wait 120 s before the retained
+    # draft/upload retries. Keep their full recovery budget and prior I/O headroom.
+    timeout-minutes: 20
     permissions:
       contents: write # attach the completed artifact to the draft release
     steps:
