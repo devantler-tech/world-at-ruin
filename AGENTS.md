@@ -999,7 +999,10 @@ the permanent blocking policy.
   transfers fixture keys, not real workload attestation. #1374/#1346 retain the
   actual SPIRE/custody/admission outcomes; #1192 retires this switch. See ADR 0053.
 - **Native SPIRE role acceptance:** the separate `tools/spire-trial` module
-  and unpublished image require explicit experimental build/run opt-in. Pinned
+  and unpublished image require explicit experimental build/run opt-in.
+  `server/testfixture/spire` owns only disposable issuer bootstrap. Its caller
+  supplies registrations and retains all process handles, wait/join ownership,
+  containment and deadlines; serving commands never import the helper. Pinned
   SPIRE Server/Agent attest three distinct unprivileged UIDs, each fetching its
   own Workload API SVID/key. The controller has only SETUID/SETGID/KILL; roles
   retain no effective/permitted/inheritable/ambient capabilities. Both native

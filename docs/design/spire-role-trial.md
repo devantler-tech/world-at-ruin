@@ -26,10 +26,17 @@ The amd64-musl archive SHA256 is
 `ca1a4d1155317bdd2afc7f36663828a10410c7c840e54725b90b4064b0a301c7`;
 arm64-musl is
 `a9982b3ca7de489def22265fd4586d8e13091ecb6fddf6adcea9291313b18886`.
-Both binaries are verified before execution. SPIRE and go-spiffe **v2.8.2** use
+Both binaries are verified before execution. SPIRE and go-spiffe **v2.9.0** use
 Apache-2.0 licensing; dependencies and the Go toolchain live solely in this
 experiment's module/build graph. No downloaded executable is committed or
 included in normal gameplay/Nakama images.
+
+`server/testfixture/spire` supplies the disposable issuer bootstrap mechanism.
+The native fixture supplies its exact registrations and retains every started
+process, its sole wait owner, stop/join deadlines and private logs. The helper
+returns public socket/bundle paths and the private-state refusal path; it exports
+no workload key or authority. Socket readiness never substitutes for each
+workload's own attested credential fetch. Serving commands do not import it.
 
 Two independent issuer pairs use the same test trust-domain/principal spelling
 with separate fresh keys and state. Each role process fetches its own SVID and

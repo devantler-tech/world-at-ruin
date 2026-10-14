@@ -3,12 +3,9 @@
 package spiretrial
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -184,19 +181,4 @@ func TestNativeSPIREAttestedRoles(t *testing.T) {
 		t.Fatal("private state survived successful stop/join")
 	}
 	fmt.Println("SPIRE NATIVE PASS: three own Workload API identities; role cycle; six wrong pairs; method/path; key possession; expected server; alternate issuer; unregistered UID; same-role positive; owned cleanup")
-}
-
-// runCLI invokes the pinned issuer administrator without a shell. Its output
-// can contain bootstrap material and must remain inside the disposable fixture.
-func runCLI(ctx context.Context, args ...string) ([]byte, error) {
-	c := exec.CommandContext(ctx, "/opt/spire/bin/spire-server", args...)
-	return c.Output()
-}
-
-// privateJSON decodes issuer replies without disclosing their raw token-bearing bytes.
-func privateJSON(data []byte, output any) error {
-	if err := json.Unmarshal(data, output); err != nil {
-		return fmt.Errorf("private SPIRE CLI reply could not be decoded")
-	}
-	return nil
 }
