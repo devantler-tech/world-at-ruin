@@ -484,10 +484,27 @@ receipt/replay checks compare independently read native versions/generation.
 Cleanup requires both the native-child acknowledgement and exact worker joins.
 No workload key crosses the private coordination pipes. See ADR 0054.
 
-This private-claim proof does not compose the originating enrollment/custody
-handles or their loss/death/restart matrix. Those remain #1374. Protected
-forwarding and gameplay admission remain #1346; the independent witness
-remains #1341. No production activation or same-role adoption is authorized.
+The same profile separately requires the nine originating enrollment/receipt/
+custody cuts, each with a fresh issuer and database. The zone is registered from
+the actual handoff and ready before original enrollment. Only the original
+receipt GET triggers its sole real zone claim; the entire actual response is
+forwarded before the declared loss/change cut. SQL readback verifies the complete
+receipt, committed rows and accepted pins independently. Every original,
+successful reader and refused restart process fetches its own credential with
+projected claims files absent. Their constant `ISSUED CLAIMS SNAPSHOT FETCHED`
+marker means snapshot selection only, before the later full listener validation.
+Peers use a distinct claims address and are joined before reuse. Both fresh
+same-correlation and replacement processes must refuse enrollment after their
+own successful snapshot fetch, with no further GET, claim or provider effects.
+
+The private protocol has one owner, case/sequence/operation correlation and a
+five-second receipt bridge containing the existing three-second RPC. Original
+HTTP/probe/stage bounds and the six-minute profile budget are unchanged. The
+wrapper requires both top-level tests and every custody-cut verdict. Completion
+follows the inner fixture cleanup and database retirement. See ADR 0055.
+Controller forwarding remains diagnostic. Protected forwarding and gameplay
+admission remain #1346; the independent witness remains #1341. No production
+activation or same-role adoption is authorized.
 
 These disposable checks establish behavior of the identified candidate artifacts.
 They do not establish adoption by production serving artifacts or compatibility of

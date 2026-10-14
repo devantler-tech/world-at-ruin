@@ -38,9 +38,12 @@ const issuedServerDNS = "claims.fixture.test"
 var issuedRole = flag.String("war-spire-role", "", "private issued native worker")
 var issuedAPI = flag.String("war-spire-api", "", "owned issuer socket")
 var issuedPrivate = flag.String("war-spire-private", "", "issuer-private refusal control")
+var issuedCut = flag.String("war-spire-cut", "", "private issued custody cut")
 var issuedIdentity = flag.String("war-spire-id", "", "independent worker principal")
 
 type issuedMessage struct {
+	Case                                string
+	Seq                                 uint64
 	Op, ID, Token, DNS, URI, Credential string
 	Binding                             agones.ClaimBinding
 	Receipt                             zoneclaim.Receipt
@@ -64,8 +67,12 @@ func (c *issuedChild) exchange(t *testing.T, message issuedMessage) issuedMessag
 	return c.read(t)
 }
 func (c *issuedChild) read(t *testing.T) issuedMessage {
+	return c.readBefore(t, time.Now().Add(40*time.Second))
+}
+
+func (c *issuedChild) readBefore(t *testing.T, deadline time.Time) issuedMessage {
 	t.Helper()
-	if err := c.output.SetReadDeadline(time.Now().Add(40 * time.Second)); err != nil {
+	if err := c.output.SetReadDeadline(deadline); err != nil {
 		t.Fatal(err)
 	}
 	var reply issuedMessage
@@ -161,99 +168,11 @@ func issuedSecurity(t *testing.T, uid int, private string) {
 	}
 }
 func TestNativeIssuedSPIRE(t *testing.T) {
-	issuedSecurity(t, 0, "")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	directory, err := os.MkdirTemp("/tmp", "war-issued-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Chmod(directory, 0755); err != nil {
-		t.Fatal(err)
-	}
-	var processes []*nativeProcess
-	var workers []*issuedChild
-	t.Cleanup(func() {
-		// Cooperate before canceling: coordinator owns a native grandchild.
-		defer cancel()
-		for i := len(workers) - 1; i >= 0; i-- {
-			workers[i].close(t)
-		}
-		for i := len(processes) - 1; i >= 0; i-- {
-			processes[i].stop(t)
-		}
-		if t.Failed() {
-			for i, p := range processes {
-				if err := os.WriteFile(filepath.Join(directory, fmt.Sprintf("process-%d.log", i)), []byte(p.log.String()), 0600); err != nil {
-					t.Error("private failure evidence retention failed")
-				}
-			}
-			t.Log("retaining private issued evidence under disposable containment")
-			return
-		}
-		if err := os.RemoveAll(directory); err != nil {
-			t.Error(err)
-		}
-	})
-	launch := func(cmd *exec.Cmd) *nativeProcess {
-		p := &nativeProcess{cmd: cmd, done: make(chan struct{}), log: &lockedLog{}}
-		cmd.Stdout, cmd.Stderr = p.log, p.log
-		if err := cmd.Start(); err != nil {
-			t.Fatal("owned issued process start failed")
-		}
-		processes = append(processes, p)
-		go func() { p.err = cmd.Wait(); close(p.done) }()
-		return p
-	}
-	runner := spire.Runner{Admin: func(request context.Context, args ...string) ([]byte, error) {
-		return exec.CommandContext(request, "/opt/spire/bin/spire-server", args...).Output()
-	}}
-	runner.Launch = func(program spire.Program, config string) func() bool {
-		var cmd *exec.Cmd
-		switch program {
-		case spire.Server:
-			cmd = exec.CommandContext(ctx, "/opt/spire/bin/spire-server", "run", "-config", config)
-		case spire.Agent:
-			cmd = exec.CommandContext(ctx, "/opt/spire/bin/spire-agent", "run", "-config", config)
-		default:
-			t.Fatal("unknown issuer executable")
-		}
-		p := launch(cmd)
-		return func() bool {
-			select {
-			case <-p.done:
-				return true
-			default:
-				return false
-			}
-		}
-	}
-	primary := spire.Start(t, ctx, directory, "primary", 18443, []spire.Entry{{ID: issuedServerURI, UID: 10001, DNS: issuedServerDNS}}, runner)
-	alternate := spire.Start(t, ctx, directory, "alternate", 18444, nil, runner)
-	startWorker := func(role string, uid uint32, issuer spire.Issuer, id string) *issuedChild {
-		cmd := exec.CommandContext(ctx, "/out/native-trial.test", "-war-experimental", "-war-bundle="+*bundle, "-war-postgres="+*postgres, "-test.run=^TestNativeIssuedSPIREWorker$", "-test.timeout=4m", "-war-spire-role="+role, "-war-spire-api="+issuer.API, "-war-spire-private="+issuer.Private, "-war-spire-id="+id)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: uid, Groups: []uint32{}}}
-		password := "unused-claim-worker"
-		if role == "coordinator" {
-			password = os.Getenv("WAR_NATIVE_DB_PASSWORD")
-		}
-		cmd.Env = []string{"WAR_NATIVE_DB_PASSWORD=" + password, "PATH=/usr/local/go/bin:/usr/bin:/bin", "NAKAMA_TELEMETRY=0"}
-		input, err := cmd.StdinPipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		cmd.Cancel = input.Close
-		cmd.WaitDelay = 25 * time.Second
-		output, childOutput, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		cmd.ExtraFiles = []*os.File{childOutput}
-		p := launch(cmd)
-		_ = childOutput.Close()
-		child := &issuedChild{process: p, input: input, output: output, encoder: json.NewEncoder(input), decoder: json.NewDecoder(output)}
-		workers = append(workers, child)
-		return child
-	}
+	c := newIssuedController(t)
+	ctx, runner, startWorker := c.ctx, c.runner, c.startWorker
+	primary := spire.Start(t, ctx, c.directory, "primary", 18443, []spire.Entry{{ID: issuedServerURI, UID: 10001, DNS: issuedServerDNS}}, runner)
+	alternate := spire.Start(t, ctx, c.directory, "alternate", 18444, nil, runner)
+
 	coordinator := startWorker("coordinator", 10001, primary, issuedServerURI)
 	handoff := coordinator.read(t)
 	if handoff.Op != "handoff" || handoff.Token == "" || handoff.Binding.GameServerUID == "" {
@@ -308,13 +227,7 @@ func TestNativeIssuedSPIRE(t *testing.T) {
 	if coordinator.exchange(t, issuedMessage{Op: "unchanged"}).Op != "unchanged" {
 		t.Fatal("replay changed native lease")
 	}
-	for i := len(workers) - 1; i >= 0; i-- {
-		workers[i].close(t)
-	}
-	workers = nil
-	for i := len(processes) - 1; i >= 0; i-- {
-		processes[i].stop(t)
-	}
+	c.close(t)
 	if t.Failed() {
 		return
 	}
@@ -329,7 +242,7 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 		if uid != 10002 && uid != 10003 && uid != 10004 {
 			t.Fatal("unknown issued zone role")
 		}
-	} else if *issuedRole != "coordinator" {
+	} else if *issuedRole != "coordinator" && *issuedRole != "custody" {
 		t.Fatal("unknown issued worker")
 	}
 	issuedSecurity(t, uid, *issuedPrivate)
@@ -384,6 +297,14 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 		}
 		return message, true
 	}
+	if *issuedRole == "custody" {
+		stage = "original-custody"
+		issuedCustodyWorker(t, input, encoder, decoder)
+		if !t.Failed() {
+			send(issuedMessage{Op: "stopped"})
+		}
+		return
+	}
 	material := issuedFetch(t, *issuedAPI, *issuedIdentity)
 	if *issuedRole == "zone" {
 		stage = "claim-exchange"
@@ -397,7 +318,7 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 				t.Fatal("unknown issued claim command")
 			}
 			receipt, err := issuedClaim(t, material, message)
-			send(issuedMessage{Op: "claim", Accepted: err == nil, Receipt: receipt})
+			send(issuedMessage{Op: "claim", Case: message.Case, Seq: message.Seq, Accepted: err == nil, Receipt: receipt})
 		}
 	} else {
 		if !t.Run("owned-native", func(t *testing.T) {
@@ -564,4 +485,118 @@ func issuedClaim(t *testing.T, material *workloadapi.X509Context, message issued
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	return client.ClaimWithReceipt(ctx, message.Binding, message.Token, 1)
+}
+
+// The controller alone owns issuer processes and cooperative worker retirement.
+type issuedController struct {
+	ctx         context.Context
+	directory   string
+	runner      spire.Runner
+	startWorker func(string, uint32, spire.Issuer, string, ...string) *issuedChild
+	processes   []*nativeProcess
+	workers     []*issuedChild
+}
+
+func newIssuedController(t *testing.T) *issuedController {
+	t.Helper()
+	issuedSecurity(t, 0, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	directory, err := os.MkdirTemp("/tmp", "war-issued-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chmod(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	c := &issuedController{ctx: ctx, directory: directory}
+	t.Cleanup(func() {
+		// Cooperate before canceling: coordinator owns a native grandchild.
+		defer cancel()
+		c.close(t)
+		if t.Failed() {
+			for i, p := range c.processes {
+				if err := os.WriteFile(filepath.Join(directory, fmt.Sprintf("process-%d.log", i)), []byte(p.log.String()), 0600); err != nil {
+					t.Error("private failure evidence retention failed")
+				}
+			}
+			t.Log("retaining private issued evidence under disposable containment")
+			return
+		}
+		if err := os.RemoveAll(directory); err != nil {
+			t.Error(err)
+		}
+	})
+	launch := func(cmd *exec.Cmd) *nativeProcess {
+		p := &nativeProcess{cmd: cmd, done: make(chan struct{}), log: &lockedLog{}}
+		cmd.Stdout, cmd.Stderr = p.log, p.log
+		if err := cmd.Start(); err != nil {
+			t.Fatal("owned issued process start failed")
+		}
+		c.processes = append(c.processes, p)
+		go func() { p.err = cmd.Wait(); close(p.done) }()
+		return p
+	}
+	runner := spire.Runner{Admin: func(request context.Context, args ...string) ([]byte, error) {
+		return exec.CommandContext(request, "/opt/spire/bin/spire-server", args...).Output()
+	}}
+	runner.Launch = func(program spire.Program, config string) func() bool {
+		var cmd *exec.Cmd
+		switch program {
+		case spire.Server:
+			cmd = exec.CommandContext(ctx, "/opt/spire/bin/spire-server", "run", "-config", config)
+		case spire.Agent:
+			cmd = exec.CommandContext(ctx, "/opt/spire/bin/spire-agent", "run", "-config", config)
+		default:
+			t.Fatal("unknown issuer executable")
+		}
+		p := launch(cmd)
+		return func() bool {
+			select {
+			case <-p.done:
+				return true
+			default:
+				return false
+			}
+		}
+	}
+	startWorker := func(role string, uid uint32, issuer spire.Issuer, id string, cut ...string) *issuedChild {
+		cmd := exec.CommandContext(ctx, "/out/native-trial.test", "-war-experimental", "-war-bundle="+*bundle, "-war-postgres="+*postgres, "-test.run=^TestNativeIssuedSPIREWorker$", "-test.timeout=4m", "-war-spire-role="+role, "-war-spire-api="+issuer.API, "-war-spire-private="+issuer.Private, "-war-spire-id="+id)
+		if len(cut) != 0 {
+			cmd.Args = append(cmd.Args, "-war-spire-cut="+cut[0])
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: uid, Groups: []uint32{}}}
+		password := "unused-claim-worker"
+		if role == "coordinator" || role == "custody" {
+			password = os.Getenv("WAR_NATIVE_DB_PASSWORD")
+		}
+		cmd.Env = []string{"WAR_NATIVE_DB_PASSWORD=" + password, "PATH=/usr/local/go/bin:/usr/bin:/bin", "NAKAMA_TELEMETRY=0"}
+		input, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.Cancel = input.Close
+		cmd.WaitDelay = 25 * time.Second
+		output, childOutput, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.ExtraFiles = []*os.File{childOutput}
+		p := launch(cmd)
+		_ = childOutput.Close()
+		child := &issuedChild{process: p, input: input, output: output, encoder: json.NewEncoder(input), decoder: json.NewDecoder(output)}
+		c.workers = append(c.workers, child)
+		return child
+	}
+	c.runner, c.startWorker = runner, startWorker
+	return c
+}
+
+func (c *issuedController) close(t *testing.T) {
+	t.Helper()
+	for i := len(c.workers) - 1; i >= 0; i-- {
+		c.workers[i].close(t)
+	}
+	for i := len(c.processes) - 1; i >= 0; i-- {
+		c.processes[i].stop(t)
+	}
 }

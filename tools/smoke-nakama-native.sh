@@ -87,7 +87,7 @@ fi
 profile_args=()
 if [[ $issued == --spire ]]; then
   profile_args=(--user 0:0 --cap-add SETUID --cap-add SETGID --cap-add KILL)
-  test_args=('-test.run=^TestNativeIssuedSPIRE$' -test.timeout=6m)
+  test_args=('-test.run=^TestNativeIssued(SPIRE|OriginalClaimCustody)$' -test.timeout=6m)
 else
   test_args=(-test.timeout=16m)
 fi
@@ -105,12 +105,19 @@ if [[ "$exit_code" != 0 ]] || ! grep -q '^PASS$' "$state/trial.log"; then
   exit 1
 fi
 if [[ $issued == --spire ]]; then
-  if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != 1 ]] ||
+  if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != 2 ]] ||
     ! grep -q '^--- PASS: TestNativeIssuedSPIRE (' "$state/trial.log" ||
+    ! grep -q '^--- PASS: TestNativeIssuedOriginalClaimCustody (' "$state/trial.log" ||
     ! grep -q '^ISSUED SPIRE NATIVE PASS:' "$state/trial.log"; then
     echo 'issued SPIRE native acceptance lacks its complete combined verdict' >&2
     exit 1
   fi
+  for cut in complete lost-enrollment-ack cancel-enrollment-ack lost-receipt changed-binding lost-custody-ack cancel-custody-ack source-death lost-pins; do
+    if [[ $(grep -c "ISSUED ORIGINAL CUSTODY PASS: cut=$cut " "$state/trial.log") != 1 ]]; then
+      echo "issued original custody acceptance lacks complete cut: $cut" >&2
+      exit 1
+    fi
+  done
   echo 'NAKAMA ISSUED SPIRE PASS: real issuance and native private claim; disposable PostgreSQL; separate controller profile'
   exit 0
 fi
