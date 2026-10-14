@@ -315,9 +315,9 @@ disarm_prior_cask_auto_merge "${tap}" "${pre_pr}" "${branch}" || rc=$?
 if ! grep -q '^ *cask_rest_deadline=\$(( CASK_JOB_START + [0-9]\+ ))' "${workflow}"; then
 	fail "the workflow never sets cask_rest_deadline from the job anchor, so the shared bound never applies in production"
 fi
-# ...and anchor it to the JOB, not this step. `timeout-minutes` bounds the job,
-# so a step-relative deadline drifts past it whenever the earlier steps are
-# slow, and the runner kills the wait before the deliberate error can fire.
+# ...and anchor it before the asset download, after the independently bounded
+# quota admission. A clock started only in the tap step would exclude a slow
+# download. test-cd-cask-api-budget.sh verifies placement and the combined bounds.
 # shellcheck disable=SC2016
 if ! grep -q 'CASK_JOB_START=\$(date +%s)" >> "\$GITHUB_ENV"' "${workflow}"; then
 	fail "the job never records CASK_JOB_START, so the deadline is measured from the tap step rather than the job"

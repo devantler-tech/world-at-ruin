@@ -1597,6 +1597,12 @@ the permanent blocking policy.
   - **Homebrew cask** — CD renders `Casks/world-at-ruin.rb` and opens/updates ONE evergreen PR on
     `devantler-tech/homebrew-tap`. It runs **after** `publish-release`, because the cask's `url`
     points at the release asset and a draft release's asset URL 404s for `brew install`.
+    Before downloading the asset, the checkout-free job checks the existing tap token's REST and
+    GraphQL allowances and waits up to 3700 seconds for a known primary reset. Secondary limits
+    honor bounded backoff; unknown initial metadata warns and leaves publication's own checks in
+    charge. The 80-minute job includes this admission wait plus the existing 780-second delivery
+    deadline, whose clock starts after admission and before the asset download. Validate the
+    actual inline steps with `bash tools/test-cd-cask-api-budget.sh`.
     **The job arms the PR's auto-merge itself** (squash, GraphQL off the node id — the `gh`
     subcommand needs a `login` scope the tap token lacks), so the tap's required checks alone gate
     the merge with no agent in the loop; nothing else would ever arm it (the org auto-merge
