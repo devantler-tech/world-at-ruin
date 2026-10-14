@@ -1,3 +1,5 @@
+//go:build !war_native_trial
+
 package nakamatrial
 
 import (
