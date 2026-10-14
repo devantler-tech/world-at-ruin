@@ -17,7 +17,7 @@ mkdir -p "${fake_bin}"
 
 test_timeout=timeout
 if ! command -v "${test_timeout}" >/dev/null 2>&1; then
-	test_timeout=gtimeout
+  test_timeout=gtimeout
 fi
 command -v "${test_timeout}" >/dev/null
 
@@ -147,192 +147,192 @@ chmod +x "${fake_bin}/date" "${fake_bin}/sleep" "${fake_bin}/gh"
 
 failures=0
 fail() {
-	printf 'FAIL: %s\n' "$1" >&2
-	failures=$((failures + 1))
+  printf 'FAIL: %s\n' "$1" >&2
+  failures=$((failures + 1))
 }
 
 # run_case <name> <expected exit> <expected sleeps, space separated> <expected output text> <responses...> [-- script args]
 run_case() {
-	local name="$1" want_status="$2" want_sleeps="$3" want_text="$4"
-	shift 4
-	local state_dir="${tmp_dir}/${name}" output status=0 sleeps
-	mkdir -p "${state_dir}"
-	printf '1000\n' >"${state_dir}/now"
-	printf '0\n' >"${state_dir}/reads"
-	: >"${state_dir}/sleeps"
-	: >"${state_dir}/responses"
-	while [[ $# -gt 0 && "$1" != -- ]]; do
-		printf '%s\n' "$1" >>"${state_dir}/responses"
-		shift
-	done
-	[[ $# -gt 0 ]] && shift
-	output="$(PATH="${fake_bin}:${PATH}" BUDGET_STATE_DIR="${state_dir}" \
-		"${test_timeout}" -k 2s 15s bash "${wait_script}" "$@" 2>&1)" || status=$?
-	sleeps="$(tr '\n' ' ' <"${state_dir}/sleeps" | sed 's/ $//')"
-	if [[ "${status}" -ne "${want_status}" ]]; then
-		fail "${name}: exit ${status}, expected ${want_status}. Output: ${output}"
-	fi
-	if [[ "${sleeps}" != "${want_sleeps}" ]]; then
-		fail "${name}: slept '${sleeps}', expected '${want_sleeps}'"
-	fi
-	if [[ "${output}" != *"${want_text}"* ]]; then
-		fail "${name}: output lacks '${want_text}'. Output: ${output}"
-	fi
-	if [[ "${output}" == *private-sentinel* ]]; then
-		fail "${name}: raw response headers escaped into output"
-	fi
-	if [[ "${status}" -eq 0 ]]; then
-		local clock_env="${state_dir}/delivery-env"
-		: >"${clock_env}"
-		if ! PATH="${fake_bin}:${PATH}" BUDGET_STATE_DIR="${state_dir}" GITHUB_ENV="${clock_env}" \
-			bash "${clock_script}"; then
-			fail "${name}: delivery clock failed after admission"
-		elif [[ "$(cat "${clock_env}")" != "CASK_JOB_START=$(cat "${state_dir}/now")" ]]; then
-			fail "${name}: delivery deadline did not start at the recovered clock"
-		fi
-	fi
+  local name="$1" want_status="$2" want_sleeps="$3" want_text="$4"
+  shift 4
+  local state_dir="${tmp_dir}/${name}" output status=0 sleeps
+  mkdir -p "${state_dir}"
+  printf '1000\n' >"${state_dir}/now"
+  printf '0\n' >"${state_dir}/reads"
+  : >"${state_dir}/sleeps"
+  : >"${state_dir}/responses"
+  while [[ $# -gt 0 && "$1" != -- ]]; do
+    printf '%s\n' "$1" >>"${state_dir}/responses"
+    shift
+  done
+  [[ $# -gt 0 ]] && shift
+  output="$(PATH="${fake_bin}:${PATH}" BUDGET_STATE_DIR="${state_dir}" \
+    "${test_timeout}" -k 2s 15s bash "${wait_script}" "$@" 2>&1)" || status=$?
+  sleeps="$(tr '\n' ' ' <"${state_dir}/sleeps" | sed 's/ $//')"
+  if [[ "${status}" -ne "${want_status}" ]]; then
+    fail "${name}: exit ${status}, expected ${want_status}. Output: ${output}"
+  fi
+  if [[ "${sleeps}" != "${want_sleeps}" ]]; then
+    fail "${name}: slept '${sleeps}', expected '${want_sleeps}'"
+  fi
+  if [[ "${output}" != *"${want_text}"* ]]; then
+    fail "${name}: output lacks '${want_text}'. Output: ${output}"
+  fi
+  if [[ "${output}" == *private-sentinel* ]]; then
+    fail "${name}: raw response headers escaped into output"
+  fi
+  if [[ "${status}" -eq 0 ]]; then
+    local clock_env="${state_dir}/delivery-env"
+    : >"${clock_env}"
+    if ! PATH="${fake_bin}:${PATH}" BUDGET_STATE_DIR="${state_dir}" GITHUB_ENV="${clock_env}" \
+      bash "${clock_script}"; then
+      fail "${name}: delivery clock failed after admission"
+    elif [[ "$(cat "${clock_env}")" != "CASK_JOB_START=$(cat "${state_dir}/now")" ]]; then
+      fail "${name}: delivery deadline did not start at the recovered clock"
+    fi
+  fi
 }
 
 # Budget present: no wait at all.
 run_case available 0 "" "budget is available: REST 4000, GraphQL 4900" \
-	"4000 5000 4900 5000"
+  "4000 5000 4900 5000"
 
 # The failure this exists for: REST at zero, reset 600 s away. One wait of 605 s, then proceed.
 run_case rest-exhausted 0 "605" "budget is available: REST 5000" \
-	"0 1600 4900 1600" "5000 5200 4900 5200"
+  "0 1600 4900 1600" "5000 5200 4900 5200"
 run_case full-hour-reset 0 "3605" "budget is available: REST 5000" \
-	"0 4600 4900 4600" "5000 8200 4900 8200"
+  "0 4600 4900 4600" "5000 8200 4900 8200"
 
 # Below the floor counts as exhausted, and exactly at the floor does not.
 run_case below-floor 0 "105" "waiting 105 s" \
-	"299 1100 4900 1100" "5000 4700 4900 4700"
+  "299 1100 4900 1100" "5000 4700 4900 4700"
 run_case at-floor 0 "" "budget is available: REST 300, GraphQL 50" \
-	"300 1100 50 1100"
+  "300 1100 50 1100"
 
 # GraphQL alone exhausted, and both exhausted with GraphQL resetting later: wait for the later one.
 run_case graphql-exhausted 0 "305" "budget is available" \
-	"4000 1100 0 1300" "4000 1100 5000 4900"
+  "4000 1100 0 1300" "4000 1100 5000 4900"
 run_case graphql-rate-limit-alias 0 "305" "budget is available" \
-	"graphql-rate-limit-alias" "4000 1100 5000 4900"
+  "graphql-rate-limit-alias" "4000 1100 5000 4900"
 run_case graphql-rate-limited-deadline 1 "" "does not return within 100 s" \
-	"4000 1100 0 1300" -- --max-wait 100
+  "4000 1100 0 1300" -- --max-wait 100
 run_case graphql-rate-limited-positive-header 0 "10 10" "Could not read" \
-	"graphql-rate-limited-positive-header"
+  "graphql-rate-limited-positive-header"
 run_case both-exhausted 0 "905" "budget is available" \
-	"0 1100 0 1900" "5000 4700 5000 5500"
+  "0 1100 0 1900" "5000 4700 5000 5500"
 
 # The GraphQL endpoint's own response determines its allowance. The REST
 # endpoint can report a different GraphQL window on the same authenticated CLI.
 run_case graphql-endpoint-exhausted 0 "905" "budget is available" \
-	"4000 1600 4900 1100 0 1900" "4000 5200 4900 1100 5000 5200"
+  "4000 1600 4900 1100 0 1900" "4000 5200 4900 1100 5000 5200"
 run_case graphql-rest-metadata-stale 0 "" "budget is available" \
-	"4000 1600 0 1900 4900 1600" "4000 5200 4900 5200 4900 5200"
+  "4000 1600 0 1900 4900 1600" "4000 5200 4900 5200 4900 5200"
 
 # REST's own headers, rather than its cross-region JSON snapshot, control the wait.
 run_case core-headers-exhausted 0 "305" "budget is available" \
-	"core-headers-exhausted" "4000 5000 4900 5000"
+  "core-headers-exhausted" "4000 5000 4900 5000"
 run_case core-headers-recovered 0 "" "REST 4000, GraphQL 4900" "core-headers-recovered"
 run_case core-exhausted-with-unreadable-graphql 0 "605" "budget is available" \
-	"graphql-partial-core-exhausted" "4000 5000 4900 5000"
+  "graphql-partial-core-exhausted" "4000 5000 4900 5000"
 run_case core-exhausted-with-unreadable-graphql-at-deadline 1 "" "does not return within 0 s" \
-	"graphql-partial-core-exhausted" -- --max-wait 0
+  "graphql-partial-core-exhausted" -- --max-wait 0
 for invalid in core-wrong-resource core-duplicate-header core-missing-header core-forbidden; do
-	run_case "${invalid}" 0 "10 10" "Could not read" "${invalid}"
+  run_case "${invalid}" 0 "10 10" "Could not read" "${invalid}"
 done
 
 # Known secondary restrictions never fall through to API-heavy delivery.
 run_case core-secondary-retry 0 "120" "budget is available" \
-	"core-secondary-retry" "4000 5000 4900 5000"
+  "core-secondary-retry" "4000 5000 4900 5000"
 run_case graphql-secondary-retry 0 "120" "budget is available" \
-	"graphql-secondary-retry" "4000 5000 4900 5000"
+  "graphql-secondary-retry" "4000 5000 4900 5000"
 run_case secondary-without-retry-after 0 "60" "budget is available" \
-	"core-secondary-default" "4000 5000 4900 5000"
+  "core-secondary-default" "4000 5000 4900 5000"
 run_case secondary-exponential-backoff 0 "60 120" "budget is available" \
-	"core-secondary-default" "core-secondary-default" "4000 5000 4900 5000"
+  "core-secondary-default" "core-secondary-default" "4000 5000 4900 5000"
 run_case secondary-retry-after-exponential 0 "120 240" "budget is available" \
-	"core-secondary-retry" "core-secondary-retry" "4000 5000 4900 5000"
+  "core-secondary-retry" "core-secondary-retry" "4000 5000 4900 5000"
 run_case secondary-short-retry-after 0 "5" "budget is available" \
-	"core-secondary-short-retry" "4000 5000 4900 5000" -- --max-wait 15
+  "core-secondary-short-retry" "4000 5000 4900 5000" -- --max-wait 15
 run_case secondary-after-other-primary-exhaustion 0 "605" "budget is available" \
-	"graphql-secondary-after-core-exhaustion" "4000 5000 4900 5000"
+  "graphql-secondary-after-core-exhaustion" "4000 5000 4900 5000"
 run_case secondary-persistent 1 "60 120" "secondary rate limit persisted" "core-secondary-default"
 run_case secondary-at-deadline 1 "" "secondary rate limit does not recover within 0 s" \
-	"core-secondary-default" -- --max-wait 0
+  "core-secondary-default" -- --max-wait 0
 run_case secondary-retry-after-beyond-deadline 1 "" "secondary rate limit does not recover within 100 s" \
-	"core-secondary-retry" -- --max-wait 100
+  "core-secondary-retry" -- --max-wait 100
 run_case secondary-primary-also-exhausted 0 "305" "budget is available" \
-	"core-secondary-zero-header" "4000 5000 4900 5000"
+  "core-secondary-zero-header" "4000 5000 4900 5000"
 run_case secondary-invalid-retry-after 1 "" "Could not validate GitHub rate-limit backoff" "core-secondary-bad-retry"
 run_case secondary-recovery-unreadable 1 "60" "Could not confirm recovery from the GitHub secondary rate limit" \
-	"core-secondary-default" "fail"
+  "core-secondary-default" "fail"
 
 # A reset already in the past still pauses briefly instead of spinning.
 run_case stale-reset 0 "5" "budget is available" \
-	"0 900 4900 900" "5000 4500 4900 4500"
+  "0 900 4900 900" "5000 4500 4900 4500"
 
 # Still exhausted after the reset: wait again, bounded by the deadline.
 run_case exhausted-again 0 "605 3605" "budget is available" \
-	"0 1600 4900 1600" "0 5205 4900 5205" "5000 9000 4900 9000" -- --max-wait 5000
+  "0 1600 4900 1600" "0 5205 4900 5205" "5000 9000 4900 9000" -- --max-wait 5000
 
 # The reset lies beyond the maximum wait: fail, and do not sleep at all.
 run_case beyond-max-wait 1 "" "does not return within 60 s" \
-	"0 1600 4900 1600" -- --max-wait 60
+  "0 1600 4900 1600" -- --max-wait 60
 
 # An unreadable budget never stops a release: three attempts, then a warning and exit 0.
 run_case unreadable 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"fail"
+  "fail"
 run_case malformed 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"garbage"
+  "garbage"
 for invalid in core-failed-full-output graphql-failed-full-output graphql-partial \
-	graphql-wrong-resource graphql-duplicate-header graphql-missing-header graphql-other-error; do
-	run_case "${invalid}" 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" "${invalid}"
+  graphql-wrong-resource graphql-duplicate-header graphql-missing-header graphql-other-error; do
+  run_case "${invalid}" 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" "${invalid}"
 done
 run_case graphql-partial-then-exhausted 0 "10 895" "budget is available" \
-	"graphql-partial" "4000 1600 4900 1100 0 1900" "4000 5200 4900 1100 5000 5200"
+  "graphql-partial" "4000 1600 4900 1100 0 1900" "4000 5200 4900 1100 5000 5200"
 
 # Invalid API numbers must use the unreadable-response path, never claim available
 # capacity or enter Bash arithmetic with scientific notation or oversized values.
 run_case zero-core-reset 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"0 0 50 1700000000"
+  "0 0 50 1700000000"
 run_case zero-graphql-reset 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"300 1700000000 0 0"
+  "300 1700000000 0 0"
 run_case oversized-core-reset 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"0 1e20 50 1700000000"
+  "0 1e20 50 1700000000"
 run_case oversized-graphql-reset 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"300 1700000000 0 1e20"
+  "300 1700000000 0 1e20"
 run_case oversized-core-remaining 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"1e20 1700000000 50 1700000000"
+  "1e20 1700000000 50 1700000000"
 run_case oversized-graphql-remaining 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"300 1700000000 1e20 1700000000"
+  "300 1700000000 1e20 1700000000"
 run_case fractional-number 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"300.5 1700000000 50 1700000000"
+  "300.5 1700000000 50 1700000000"
 run_case negative-number 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"-1 1700000000 50 1700000000"
+  "-1 1700000000 50 1700000000"
 run_case numeric-string 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	'"300" 1700000000 50 1700000000'
+  '"300" 1700000000 50 1700000000'
 run_case null-number 0 "10 10" "Could not read the GitHub request budget (3 attempt(s))" \
-	"300 1700000000 null 1700000000"
+  "300 1700000000 null 1700000000"
 
 # A retry never outlasts --max-wait: with the deadline already reached, a failed read gives up at
 # once, both on the first read and after a wait for the reset has used the time up.
 run_case unreadable-at-deadline 0 "" "Could not read the GitHub request budget (1 attempt(s))" \
-	"fail" -- --max-wait 5
+  "fail" -- --max-wait 5
 run_case stalled-core-read 0 "" "Could not read the GitHub request budget (1 attempt(s))" \
-	"core-hangs" -- --max-wait 0
+  "core-hangs" -- --max-wait 0
 run_case stalled-graphql-read 0 "" "Could not read the GitHub request budget (1 attempt(s))" \
-	"graphql-hangs" -- --max-wait 0
+  "graphql-hangs" -- --max-wait 0
 run_case unreadable-after-reset-wait 0 "605" "Could not read the GitHub request budget (1 attempt(s))" \
-	"0 1600 4900 1600" "fail" -- --max-wait 610
+  "0 1600 4900 1600" "fail" -- --max-wait 610
 # With time left, the retry still happens.
 run_case unreadable-with-time-left 0 "10" "Could not read the GitHub request budget (2 attempt(s))" \
-	"fail" -- --max-wait 15
+  "fail" -- --max-wait 15
 # One failed read does not skip the wait when the next read shows exhaustion.
 run_case recovers-after-failed-read 0 "10 595" "budget is available" \
-	"fail" "0 1600 4900 1600" "5000 5200 4900 5200"
+  "fail" "0 1600 4900 1600" "5000 5200 4900 5200"
 
 # Custom floors are honoured.
 run_case custom-floor 0 "105" "REST 900 of at least 1000" \
-	"900 1100 4900 1100" "5000 4700 4900 4700" -- --min-core 1000
+  "900 1100 4900 1100" "5000 4700 4900 4700" -- --min-core 1000
 
 # Usage errors.
 run_case bad-number 2 "" "--max-wait needs a whole number" "4000 5000 4900 5000" -- --max-wait soon
@@ -356,11 +356,11 @@ if ! jq -e '
     and $job.permissions == {"contents": "read"}
     and ($job."timeout-minutes" * 60) >= (3700 + 780 + 300)
 ' <<<"${job}" >/dev/null; then
-	fail "quota admission lost its credential boundary, step order or total timeout headroom"
+  fail "quota admission lost its credential boundary, step order or total timeout headroom"
 fi
 
 if [[ "${failures}" -ne 0 ]]; then
-	printf '%s case(s) failed\n' "${failures}" >&2
-	exit 1
+  printf '%s case(s) failed\n' "${failures}" >&2
+  exit 1
 fi
 printf 'wait-for-github-api-budget: all cases passed\n'
