@@ -470,6 +470,25 @@ Those outcomes remain #1374; protected forwarding, gameplay admission and the
 independent rollback witness remain #1346/#1341. Experimental retirement is #1192.
 See ADR 0051 for the artifact and authority boundaries.
 
+The distinct `issued-spire` acceptance profile uses the same issued runtime
+locks with pinned real SPIRE Server/Agent binaries. Build with
+`RUNTIME_PROFILE=issued-spire`, then run the disposable wrapper with
+`--experimental --spire`. Both Linux architectures require this combined proof.
+A separate controller uses only SETUID/SETGID/KILL. Its unprivileged native
+fixture worker owns Nakama startup, PostgreSQL state and child retirement;
+the plugin obtains its own static credential. After the actual handoff, a
+distinct zone UID receives an exact-allocation registration and fetches its
+own credential. Ordinary chain/DNS verification and exact server URI checks
+apply to the real private claim. Refusals preserve SQL state, and complete
+receipt/replay checks compare independently read native versions/generation.
+Cleanup requires both the native-child acknowledgement and exact worker joins.
+No workload key crosses the private coordination pipes. See ADR 0054.
+
+This private-claim proof does not compose the originating enrollment/custody
+handles or their loss/death/restart matrix. Those remain #1374. Protected
+forwarding and gameplay admission remain #1346; the independent witness
+remains #1341. No production activation or same-role adoption is authorized.
+
 These disposable checks establish behavior of the identified candidate artifacts.
 They do not establish adoption by production serving artifacts or compatibility of
 the actual retained rollback artifact. Production serving artifacts,

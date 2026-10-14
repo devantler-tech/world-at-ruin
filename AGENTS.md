@@ -1017,6 +1017,21 @@ the permanent blocking policy.
   and their complete verdicts are mandatory. The same-role second-process positive establishes no original
   process or launch ownership. See ADR 0046 and `docs/design/spire-role-trial.md`;
   #1345 supplies the independent original-child outcome; #1346 and #1341 remain separate gates.
+- **Real issued claims with native storage:** the separate `issued-spire` image
+  profile compiles `war_issued_spire` acceptance only in the issued dependency
+  union. Run `bash tools/smoke-nakama-native.sh <local-image> --experimental --spire`.
+  Its bounded disposable controller uses only SETUID/SETGID/KILL; existing native
+  and issued suites retain their unprivileged profiles. The claims-UID worker
+  owns the native fixture and Nakama child; a distinct zone UID is registered
+  from the actual handoff and retains its own fetched key. Both architectures
+  require actual plugin readiness, verified TLS refusals with unchanged SQL,
+  complete native receipt/replay comparison and acknowledged descendant cleanup
+  before exact joins. The six-minute profile budget is separate from the
+  unchanged sixteen-minute native suites. Source vet and tagged vulnerability
+  checks include the combined graph. Default invocation refuses before state.
+  #1192 owns retirement. Original enrollment/custody loss composition remains
+  #1374; protected forwarding, gameplay admission and the independent witness
+  remain #1346/#1341. See ADR 0054.
 - **Native owned-child acceptance:** the separate `tools/owned-child-trial`
   module/image requires explicit build and run opt-in. Its trusted controller
   uses the existing SETUID/SETGID/KILL profile; every diagnostic sender has empty

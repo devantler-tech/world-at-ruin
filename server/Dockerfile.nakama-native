@@ -2,6 +2,7 @@
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS trial
 ARG EXPERIMENTAL=false
 ARG RUNTIME_PROFILE=native
+ARG TARGETARCH
 RUN test "$EXPERIMENTAL" = true
 WORKDIR /source/server
 COPY server/go.mod server/go.sum ./
@@ -11,7 +12,7 @@ RUN sha256sum go.mod go.sum nakama-runtime/go.mod nakama-runtime/go.sum \
       nakama-issued-runtime/go.mod nakama-issued-runtime/go.sum > /tmp/locked-graph.sha256 \
     && case "$RUNTIME_PROFILE" in \
       native) go mod download -modfile=nakama-runtime/go.mod ;; \
-      issued) go -C nakama-issued-runtime mod download ;; \
+      issued|issued-spire) go -C nakama-issued-runtime mod download ;; \
       *) exit 1 ;; \
     esac \
     && sha256sum -c /tmp/locked-graph.sha256
@@ -26,11 +27,13 @@ RUN mkdir -p /out \
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/zone ./cmd/zone \
  && sha256sum /out/zone > /out/zone.sha256
 RUN GOBIN=/out go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-RUN go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
-      -experimental -profile "$RUNTIME_PROFILE" -source . -output /out/bundle \
+RUN build_profile="$RUNTIME_PROFILE"; if [ "$build_profile" = issued-spire ]; then build_profile=issued; fi; \
+    go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/build.go \
+      -experimental -profile "$build_profile" -source . -output /out/bundle \
     && case "$RUNTIME_PROFILE" in \
       native) graph=nakama-runtime/go.mod; tags=war_native_trial ;; \
-      issued) cd nakama-issued-runtime; graph=go.mod; tags=war_native_trial,war_issued_trial; \
+      issued|issued-spire) cd nakama-issued-runtime; graph=go.mod; tags=war_native_trial,war_issued_trial; \
+        if [ "$RUNTIME_PROFILE" = issued-spire ]; then tags="$tags,war_issued_spire"; fi; \
         go test -race -mod=readonly ./cmd/nakama \
         && go vet -tags="$tags" -mod=readonly ./cmd/nakama || exit 1 ;; \
       *) exit 1 ;; \
@@ -42,11 +45,27 @@ RUN go run ../tools/nakama-runtime-build/main.go ../tools/nakama-runtime-build/b
     && go test -mod=readonly -modfile="$graph" -tags="$tags" \
       github.com/devantler-tech/world-at-ruin/server/internal/nakamacapabilityprobe \
       github.com/devantler-tech/world-at-ruin/server/internal/nakamazonecustodyprobe \
+    && go vet -mod=readonly -modfile="$graph" -tags="$tags" \
+      github.com/devantler-tech/world-at-ruin/server/internal/nakamatrial \
     && go test -mod=readonly -modfile="$graph" -tags="$tags" \
       -c -o /out/native-trial.test github.com/devantler-tech/world-at-ruin/server/internal/nakamatrial \
     && mkdir /out/bundle/mismatched-modules \
     && go build -mod=readonly -modfile="$graph" -trimpath -buildvcs=false \
       -race -buildmode=plugin -o /out/bundle/mismatched-modules/world_at_ruin.so ./cmd/nakama
+RUN if [ "$RUNTIME_PROFILE" = issued-spire ]; then \
+      case "$TARGETARCH" in \
+        amd64) digest=ca1a4d1155317bdd2afc7f36663828a10410c7c840e54725b90b4064b0a301c7 ;; \
+        arm64) digest=a9982b3ca7de489def22265fd4586d8e13091ecb6fddf6adcea9291313b18886 ;; \
+        *) exit 1 ;; \
+      esac \
+      && curl --fail --silent --show-error --location --max-time 90 --retry 2 \
+        "https://github.com/spiffe/spire/releases/download/v1.15.3/spire-1.15.3-linux-${TARGETARCH}-musl.tar.gz" -o /tmp/spire.tar.gz \
+      && printf '%s  %s\n' "$digest" /tmp/spire.tar.gz | sha256sum --check --status \
+      && mkdir -p /opt/spire \
+      && tar -xzf /tmp/spire.tar.gz --strip-components=1 -C /opt/spire \
+      && /opt/spire/bin/spire-server --version \
+      && /opt/spire/bin/spire-agent --version; \
+    fi
 RUN mkdir -p /var/run/secrets/kubernetes.io/serviceaccount \
     && chown 10001:10001 /var/run/secrets/kubernetes.io/serviceaccount \
     && chown -R 10001:10001 /out/bundle

@@ -12,24 +12,39 @@ for file in "$root"/server/internal/nakamatrial/*_test.go; do
   if head -1 "$file" | grep -qx '//go:build war_native_trial'; then
     sed -nE '/^func TestMain\(/d; s/^func (Test[A-Za-z0-9_]+)\(.*/\1/p' "$file"
   fi
-done > "$HARNESS_SCENARIOS"
-[[ $(wc -l < "$HARNESS_SCENARIOS" | tr -d ' ') == 41 ]]
-cat > "$scratch/bin/docker" <<'DOCKER'
+done >"$HARNESS_SCENARIOS"
+[[ $(wc -l <"$HARNESS_SCENARIOS" | tr -d ' ') == 41 ]]
+cat >"$scratch/bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$HARNESS_RECORD"
 case "$1 $2" in
   'image inspect') echo 10001:10001 ;;
   'run --rm') echo 'native trial requires Linux, explicit opt-in'; exit 2 ;;
-  'network create'|'network rm'|'rm -f'|'exec postgres-id') ;;
+  'network create'|'network rm'|'exec postgres-id') ;;
+  'rm -f') [[ $HARNESS_FAILURE != remove ]] ;;
+  'container ls')
+    [[ $HARNESS_FAILURE != unreadable ]]
+    if [[ $HARNESS_FAILURE == retained ]]; then echo trial-id; fi ;;
   'run -d') echo postgres-id ;;
   'create --network')
     [[ $* == *'--read-only --cap-drop ALL'* ]]
     [[ $* == *'--security-opt no-new-privileges:true'* ]]
-    [[ $* == *'-test.timeout=16m'* ]]
+    if [[ $HARNESS_PROFILE == issued-spire ]]; then
+      [[ $* == *'--user 0:0 --cap-add SETUID --cap-add SETGID --cap-add KILL'* ]]
+      [[ $* == *'-test.run=^TestNativeIssuedSPIRE$ -test.timeout=6m'* ]]
+    else
+      [[ $* != *'--cap-add'* && $* != *'--user 0:0'* && $* == *'-test.timeout=16m'* ]]
+    fi
     echo trial-id ;;
   'start -a')
     if [[ $HARNESS_FAILURE == start ]]; then exit 1; fi
+    if [[ $HARNESS_PROFILE == issued-spire ]]; then
+      if [[ $HARNESS_FAILURE != missing-base ]]; then echo '--- PASS: TestNativeIssuedSPIRE (0.1s)'; fi
+      if [[ $HARNESS_FAILURE != missing-verdict ]]; then echo 'ISSUED SPIRE NATIVE PASS: fixture'; fi
+      echo PASS
+      exit 0
+    fi
     while IFS= read -r name; do
       if [[ $HARNESS_FAILURE != missing-base || $name != TestNativeOriginalClaimCustody ]]; then
         printf '%s\n' "--- PASS: $name (0.1s)"
@@ -48,26 +63,29 @@ esac
 DOCKER
 chmod +x "$scratch/bin/docker"
 export PATH="$scratch/bin:$PATH" TMPDIR="$scratch"
-for profile in native issued; do
+for profile in native issued issued-spire; do
   export HARNESS_PROFILE=$profile HARNESS_FAILURE=''
   args=()
-  if [[ $profile == issued ]]; then args+=(--issued); fi
-  if ! bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} > "$scratch/result" 2>&1; then
-    cat "$scratch/result"; exit 1
+  if [[ $profile == issued ]]; then args+=(--issued); elif [[ $profile == issued-spire ]]; then args+=(--spire); fi
+  if ! bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then
+    cat "$scratch/result"
+    exit 1
   fi
   grep -Fq 'rm -f trial-id' "$HARNESS_RECORD"
   failures=(start missing-base)
-  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); fi
+  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); elif [[ $profile == issued-spire ]]; then failures+=(missing-verdict remove unreadable retained); fi
   for failure in "${failures[@]}"; do
     export HARNESS_FAILURE=$failure
-    if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} > "$scratch/result" 2>&1; then
-      echo "TEST FAIL: $profile accepted $failure" >&2; exit 1
+    if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then
+      echo "TEST FAIL: $profile accepted $failure" >&2
+      exit 1
     fi
   done
 done
-: > "$HARNESS_RECORD"
-if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental --arbitrary > "$scratch/result" 2>&1; then
-  echo 'TEST FAIL: arbitrary profile accepted' >&2; exit 1
+: >"$HARNESS_RECORD"
+if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental --arbitrary >"$scratch/result" 2>&1; then
+  echo 'TEST FAIL: arbitrary profile accepted' >&2
+  exit 1
 fi
 [[ ! -s $HARNESS_RECORD ]]
-echo 'TEST PASS: both native profiles refuse partial or failed acceptance'
+echo 'TEST PASS: three native profiles refuse partial or failed acceptance; issued cleanup observations required'
