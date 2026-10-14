@@ -32,7 +32,7 @@ case "$1 $2" in
     [[ $* == *'--security-opt no-new-privileges:true'* ]]
     if [[ $HARNESS_PROFILE == issued-spire ]]; then
       [[ $* == *'--user 0:0 --cap-add SETUID --cap-add SETGID --cap-add KILL'* ]]
-      [[ $* == *'-test.run=^TestNativeIssuedSPIRE$ -test.timeout=6m'* ]]
+      [[ $* == *'-test.run=^TestNativeIssued(SPIRE|OriginalClaimCustody)$ -test.timeout=6m'* ]]
     else
       [[ $* != *'--cap-add'* && $* != *'--user 0:0'* && $* == *'-test.timeout=16m'* ]]
     fi
@@ -42,6 +42,10 @@ case "$1 $2" in
     if [[ $HARNESS_PROFILE == issued-spire ]]; then
       if [[ $HARNESS_FAILURE != missing-base ]]; then echo '--- PASS: TestNativeIssuedSPIRE (0.1s)'; fi
       if [[ $HARNESS_FAILURE != missing-verdict ]]; then echo 'ISSUED SPIRE NATIVE PASS: fixture'; fi
+      if [[ $HARNESS_FAILURE != missing-custody ]]; then echo '--- PASS: TestNativeIssuedOriginalClaimCustody (0.1s)'; fi
+      for cut in complete lost-enrollment-ack cancel-enrollment-ack lost-receipt changed-binding lost-custody-ack cancel-custody-ack source-death lost-pins; do
+        if [[ $HARNESS_FAILURE != missing-cut || $cut != source-death ]]; then echo "ISSUED ORIGINAL CUSTODY PASS: cut=$cut fixture=true"; fi
+      done
       echo PASS
       exit 0
     fi
@@ -73,7 +77,7 @@ for profile in native issued issued-spire; do
   fi
   grep -Fq 'rm -f trial-id' "$HARNESS_RECORD"
   failures=(start missing-base)
-  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); elif [[ $profile == issued-spire ]]; then failures+=(missing-verdict remove unreadable retained); fi
+  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); elif [[ $profile == issued-spire ]]; then failures+=(missing-verdict missing-custody missing-cut remove unreadable retained); fi
   for failure in "${failures[@]}"; do
     export HARNESS_FAILURE=$failure
     if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then

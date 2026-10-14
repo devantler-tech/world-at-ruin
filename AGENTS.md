@@ -1029,9 +1029,13 @@ the permanent blocking policy.
   before exact joins. The six-minute profile budget is separate from the
   unchanged sixteen-minute native suites. Source vet and tagged vulnerability
   checks include the combined graph. Default invocation refuses before state.
-  #1192 owns retirement. Original enrollment/custody loss composition remains
-  #1374; protected forwarding, gameplay admission and the independent witness
-  remain #1346/#1341. See ADR 0054.
+  The same profile also requires all nine original enrollment/receipt/custody
+  cuts, with a fresh issuer per case and issued snapshots in every original,
+  reader and refused restart process. Only the original GET triggers the sole
+  claim; correlated private IPC has a five-second bridge bound. Snapshot logs
+  precede full listener validation and grant no authority. #1192 owns retirement;
+  protected forwarding, gameplay admission and the independent witness remain
+  #1346/#1341. See ADRs 0054–0055.
 - **Native owned-child acceptance:** the separate `tools/owned-child-trial`
   module/image requires explicit build and run opt-in. Its trusted controller
   uses the existing SETUID/SETGID/KILL profile; every diagnostic sender has empty

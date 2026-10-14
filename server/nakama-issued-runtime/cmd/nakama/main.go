@@ -14,6 +14,11 @@ func InitModule(ctx context.Context, logger runtime.Logger, _ *sql.DB, nk runtim
 	if err != nil {
 		return err
 	}
+	if material != nil {
+		// Snapshot selection precedes native probes and full listener validation.
+		// This value-free observation grants no serving or custody authority.
+		logger.Info("ISSUED CLAIMS SNAPSHOT FETCHED")
+	}
 	if err := sdkProbe(ctx, env); err != nil {
 		return err
 	}
