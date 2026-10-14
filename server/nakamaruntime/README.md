@@ -443,7 +443,7 @@ It also requires `WAR_HANDOFF_ENABLED=true` and
 
 | Setting | Meaning |
 |---|---|
-| `WAR_ISSUED_CLAIMS_SOCKET` | Canonical absolute local Unix socket path, at most 100 bytes; no query, fragment or ambient endpoint fallback. |
+| `WAR_ISSUED_CLAIMS_SOCKET` | Canonical absolute local Unix socket path, at most 100 bytes; no percent encoding, query, fragment or ambient endpoint fallback. |
 | `WAR_ISSUED_CLAIMS_SERVER_DNS` | Independently pinned exact server DNS SAN; no IP or wildcard. |
 | `WAR_ISSUED_CLAIMS_SERVER_URI` | Independently pinned exact SPIFFE server URI in `WAR_HANDOFF_CLAIMS_TRUST_DOMAIN`. |
 

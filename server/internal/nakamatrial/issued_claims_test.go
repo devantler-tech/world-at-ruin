@@ -10,7 +10,6 @@ import (
 	"encoding/pem"
 	"maps"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -19,10 +18,10 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/claimrpc"
+	"github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime/testfixture"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
 	"github.com/devantler-tech/world-at-ruin/server/zoneclaim"
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -52,37 +51,11 @@ func (s *nativeClaimsIssuer) FetchX509SVID(_ *workload.X509SVIDRequest, stream w
 
 func nativeClaimsAPI(t *testing.T, response *workload.X509SVIDResponse) (*nativeClaimsIssuer, string) {
 	t.Helper()
-	// Bound Unix paths independently of the test's descriptive name.
-	dir, err := os.MkdirTemp("/tmp", "war-wapi-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Error(err)
-		}
-	})
-	socket := filepath.Join(dir, "api.sock")
-	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := grpc.NewServer()
 	issuer := &nativeClaimsIssuer{response: response}
-	workload.RegisterSpiffeWorkloadAPIServer(server, issuer)
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
 	t.Cleanup(func() {
-		server.Stop()
-		_ = listener.Close()
-		if err := <-done; err != nil && err != grpc.ErrServerStopped {
-			t.Error(err)
-		}
-		if issuer.active.Load() != 0 {
-			t.Error("WorkloadAPI stream survived fixture retirement")
-		}
+		waitFor(t, time.Second, "fixture WorkloadAPI stream retirement", func() bool { return issuer.active.Load() == 0 })
 	})
-	return issuer, socket
+	return issuer, testfixture.WorkloadAPI(t, issuer)
 }
 
 func (f *fixture) issuedClaimsEnv(socket string) map[string]string {
@@ -163,7 +136,18 @@ func TestNativeIssuedClaimsPlugin(t *testing.T) {
 				env["WAR_ISSUED_CLAIMS_SERVER_URI"] = "spiffe://fixture.example/claims/other"
 			}
 			p := f.launch(env, modules, 10, false)
-			if p.err == nil || strings.Contains(p.log.String(), "Go runtime modules loaded") || strings.Contains(p.log.String(), socket) {
+			reason, requests := "issued claims mode refused", int32(0)
+			switch fault {
+			case "flag":
+				reason = "issued claims enablement refused"
+			case "DNS", "root":
+				reason, requests = "nakama handoff: configure private listener", 1
+			case "URI":
+				reason, requests = "issued claims identity refused", 1
+			case "key", "issuer":
+				reason, requests = "issued claims WorkloadAPI request refused", 1
+			}
+			if p.err == nil || !strings.Contains(p.log.String(), reason) || strings.Contains(p.log.String(), "Go runtime modules loaded") || strings.Contains(p.log.String(), socket) || issuer.requests.Load() != requests {
 				t.Fatal("issued startup did not refuse before runtime readiness")
 			}
 			waitFor(t, time.Second, "refused WorkloadAPI retirement", func() bool { return issuer.active.Load() == 0 })
@@ -259,7 +243,7 @@ func TestNativeIssuedClaimsPlugin(t *testing.T) {
 		t.Fatal("native replay changed original receipt or storage")
 	}
 	p.stop(t)
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:7443", 100*time.Millisecond)
+	conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", "127.0.0.1:7443")
 	if err == nil {
 		_ = conn.Close()
 		t.Fatal("issued listener survived runtime shutdown")

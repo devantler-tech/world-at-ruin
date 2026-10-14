@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"math/big"
-	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -16,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime/testfixture"
 	"github.com/heroiclabs/nakama-common/runtime"
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -27,13 +26,26 @@ import (
 // Unknown enablement must veto even a handoff-disabled runtime rather than
 // silently selecting the ordinary projected initializer.
 func TestIssuedClaimsUnknownFlagVetoesInitialization(t *testing.T) {
-	ctx := context.WithValue(context.Background(), runtime.RUNTIME_CTX_ENV, map[string]string{
+	ctx := claimsRuntimeContext{Context: context.Background(), env: map[string]string{
 		"WAR_ISSUED_CLAIMS_ENABLED": "yes",
-	})
+	}}
 	err := InitModule(ctx, nil, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "issued claims enablement refused") {
 		t.Fatalf("unknown claims enablement did not veto startup: %v", err)
 	}
+}
+
+// Nakama owns its string context key; preserve its native runtime boundary.
+type claimsRuntimeContext struct {
+	context.Context
+	env map[string]string
+}
+
+func (c claimsRuntimeContext) Value(key any) any {
+	if name, ok := key.(string); ok && name == runtime.RUNTIME_CTX_ENV {
+		return c.env
+	}
+	return c.Context.Value(key)
 }
 
 func claimsEnv(socket string) map[string]string {
@@ -63,6 +75,7 @@ func TestIssuedClaimsConfigurationRefusesBeforeFetch(t *testing.T) {
 		{"WAR_ISSUED_SDK_PROBE_ENABLED", "true"}, {"WAR_ISSUED_SDK_PROBE_ENABLED", "yes"},
 		{"WAR_ISSUED_CLAIMS_SOCKET", "relative.sock"}, {"WAR_ISSUED_CLAIMS_SOCKET", "/tmp/a/../b.sock"},
 		{"WAR_ISSUED_CLAIMS_SOCKET", "/tmp/socket?query"}, {"WAR_ISSUED_CLAIMS_SOCKET", "/tmp/socket#fragment"},
+		{"WAR_ISSUED_CLAIMS_SOCKET", "/tmp/a%2fb.sock"},
 		{"WAR_ISSUED_CLAIMS_SERVER_DNS", "127.0.0.1"}, {"WAR_ISSUED_CLAIMS_SERVER_DNS", "*.fixture.example"},
 		{"WAR_ISSUED_CLAIMS_SERVER_URI", "spiffe://other.example/claims/private"},
 		{"WAR_ISSUED_CLAIMS_SERVER_URI", "spiffe://fixture.example/claims/../private"},
@@ -76,6 +89,9 @@ func TestIssuedClaimsConfigurationRefusesBeforeFetch(t *testing.T) {
 			got, err := issuedClaimsMaterial(context.Background(), env)
 			if err == nil || got != nil || issuer.requests.Load() != 0 {
 				t.Fatal("invalid configuration reached issuer or returned material")
+			}
+			if change.key == "WAR_ISSUED_CLAIMS_SOCKET" && err.Error() != "issued claims configuration refused" {
+				t.Fatal("invalid endpoint reached SDK construction")
 			}
 		})
 	}
@@ -122,16 +138,19 @@ func TestIssuedClaimsRefusesAmbiguousOrInvalidResponses(t *testing.T) {
 			response := fixtureSVID(t)
 			switch name {
 			case "multiple":
-				other := proto.Clone(response.Svids[0]).(*workload.X509SVID)
+				other, ok := proto.Clone(response.GetSvids()[0]).(*workload.X509SVID)
+				if !ok {
+					t.Fatal("fixture clone type")
+				}
 				other.Hint = "second"
 				response.Svids = append(response.Svids, other)
 			case "wrong-URI":
 				// Wire identity does not replace the leaf identity checked by SDK.
 				response.Svids[0].SpiffeId = "spiffe://other.example/claims/private"
 			case "wrong-bundle":
-				response.Svids[0].Bundle = fixtureSVID(t).Svids[0].Bundle
+				response.Svids[0].Bundle = fixtureSVID(t).GetSvids()[0].GetBundle()
 			case "invalid-key":
-				response.Svids[0].X509SvidKey = fixtureSVID(t).Svids[0].X509SvidKey
+				response.Svids[0].X509SvidKey = fixtureSVID(t).GetSvids()[0].GetX509SvidKey()
 			case "empty-bundle":
 				response.Svids[0].Bundle = nil
 			case "oversize":
@@ -160,7 +179,7 @@ func TestIssuedClaimsCanceledAndUnavailableRefuse(t *testing.T) {
 		if canceled {
 			cancel()
 		}
-		socket := filepath.Join(sdkFixtureDirectory(t), "missing.sock")
+		socket := filepath.Join(testfixture.Directory(t), "missing.sock")
 		got, err := issuedClaimsMaterial(ctx, claimsEnv(socket))
 		cancel()
 		if err == nil || got != nil || strings.Contains(err.Error(), socket) {
@@ -217,24 +236,8 @@ func (s *claimsIssuer) FetchX509SVID(_ *workload.X509SVIDRequest, stream workloa
 
 func startClaimsIssuer(t *testing.T, response *workload.X509SVIDResponse) (*claimsIssuer, string) {
 	t.Helper()
-	socket := filepath.Join(sdkFixtureDirectory(t), "claims.sock")
-	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := grpc.NewServer()
 	issuer := &claimsIssuer{response: response, closed: make(chan struct{})}
-	workload.RegisterSpiffeWorkloadAPIServer(server, issuer)
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
-	t.Cleanup(func() {
-		server.Stop()
-		_ = listener.Close()
-		if err := <-done; err != nil && err != grpc.ErrServerStopped {
-			t.Error(err)
-		}
-	})
-	return issuer, socket
+	return issuer, testfixture.WorkloadAPI(t, issuer)
 }
 
 // This protocol fixture transfers synthetic key bytes and attests no process.

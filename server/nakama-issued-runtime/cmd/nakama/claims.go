@@ -34,7 +34,7 @@ func issuedClaimsMaterial(parent context.Context, env map[string]string) (*nakam
 	socket := env["WAR_ISSUED_CLAIMS_SOCKET"]
 	dns := env["WAR_ISSUED_CLAIMS_SERVER_DNS"]
 	expected, err := spiffeid.FromString(env["WAR_ISSUED_CLAIMS_SERVER_URI"])
-	if err != nil || expected.TrustDomain().String() != env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] || !handoffidentity.DNSSubdomain(dns) || net.ParseIP(dns) != nil || !filepath.IsAbs(socket) || filepath.Clean(socket) != socket || len(socket) > 100 || strings.ContainsAny(socket, "\x00\r\n?#") {
+	if err != nil || expected.TrustDomain().String() != env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] || !handoffidentity.DNSSubdomain(dns) || net.ParseIP(dns) != nil || !filepath.IsAbs(socket) || filepath.Clean(socket) != socket || len(socket) > 100 || strings.ContainsAny(socket, "\x00\r\n?#%") {
 		return nil, errors.New("issued claims configuration refused")
 	}
 	if parent.Err() != nil {
