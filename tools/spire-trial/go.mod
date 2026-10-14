@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	github.com/devantler-tech/world-at-ruin/server v0.0.0
 	github.com/spiffe/go-spiffe/v2 v2.9.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	google.golang.org/grpc v1.84.0
 )
 
