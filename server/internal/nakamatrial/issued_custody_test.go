@@ -102,7 +102,10 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 	if !containsCustodyCut(*issuedCut) {
 		t.Fatal("unknown original custody cut")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	// The subprocess's enforced four-minute timeout and six-minute profile
+	// budget own the total lifetime. Bound individual exchanges separately;
+	// a timer inspected only after t.Run returns would not bound its work.
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	events := make(chan custodyIPCEvent)
 	done := make(chan bool, 1)
@@ -141,7 +144,10 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 			gs := f.resource("zone-1")
 			binding := agones.ClaimBinding{Namespace: "world-at-ruin", AllocationID: gs.Name, GameServerUID: string(gs.UID), LeaseObjectID: leaseKey(user), AttemptDigest: gs.Labels[agones.AttemptLabel]}
 			request := issuedMessage{Op: "handoff", Case: *issuedCut, Seq: 0, Token: handoff.Token, Binding: binding}
-			if _, err := exchange(ctx, request); err != nil {
+			ready, stopReady := context.WithTimeout(ctx, 40*time.Second)
+			_, err := exchange(ready, request)
+			stopReady()
+			if err != nil {
 				t.Fatal("original source readiness coordination failed")
 			}
 			peerEnv := maps.Clone(env)
