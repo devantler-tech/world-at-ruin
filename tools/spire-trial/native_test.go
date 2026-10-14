@@ -4,7 +4,6 @@ package spiretrial
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -191,12 +190,4 @@ func TestNativeSPIREAttestedRoles(t *testing.T) {
 func runCLI(ctx context.Context, args ...string) ([]byte, error) {
 	c := exec.CommandContext(ctx, "/opt/spire/bin/spire-server", args...)
 	return c.Output()
-}
-
-// privateJSON decodes issuer replies without disclosing their raw token-bearing bytes.
-func privateJSON(data []byte, output any) error {
-	if err := json.Unmarshal(data, output); err != nil {
-		return fmt.Errorf("private SPIRE CLI reply could not be decoded")
-	}
-	return nil
 }
