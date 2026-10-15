@@ -18,7 +18,7 @@ before exec without moving the child out of the owned process group.
 | Ordinary client proof job | 75 minutes | Structural guards, ordinary regressions, interoperability and concurrent-save controls. |
 | Ordinary client step | 45 minutes maximum | Own the step process group; existing inner import and scene deadlines also apply. |
 | Trusted sandbox client proof job | 75 minutes | Independent checkout, verified engine and the complete sandbox step. |
-| Stable Client smoke boot gate | 5 minutes | Require both successful, cleaned proofs of the event integration SHA. |
+| Client validation and required aggregation | 5 minutes | Require both successful, cleaned proofs of the event integration SHA, then aggregate all required dependencies in the same job. |
 
 Each host phase forwards termination to its child process group, then polls the entire group every
 100 milliseconds for up to five seconds. It returns earlier when the group is absent; resistant
@@ -53,9 +53,12 @@ five-second force limit. Host group ownership does not claim control of arbitrar
 escape into a separate session; candidate sandbox containment remains a separate proof.
 
 Only each worker's final step removes its own save seam and publishes completion with the actual
-checked-out integration SHA. The stable gate requires literal success and matching completion from
-both workers. The required aggregate treats a skipped or otherwise unsuccessful stable gate as
-failure. The independently required trusted workflow stays enforced.
+checked-out integration SHA. `CI - Required Checks` directly depends on both workers and every
+other required dependency. It requires literal success and matching completion from both workers
+before aggregating their results in the same runner job. Skipped, canceled, failed, incomplete or
+mismatched client proofs fail the required job. Its five-minute execution budget begins after runner
+allocation; queueing is separate. Measure queue eligibility from the last of all its dependencies,
+including conditional frame evidence. The independently required trusted workflow stays enforced.
 
 Host-owned `WAR_TRUSTED_BUILD_SECONDS`, `WAR_TRUSTED_INSPECT_SECONDS`,
 `WAR_TRUSTED_IMPORT_SECONDS`, `WAR_TRUSTED_PROBE_SECONDS` and
