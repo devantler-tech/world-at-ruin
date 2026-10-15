@@ -11,7 +11,7 @@ Go, jq, Docker and GNU timeout must be available.
 The report records every installed package, including base and transitive
 packages; the package architecture and installed state; SHA-256 identities and
 sizes of APT indexes, source/configuration files, archive keyring and copied CA
-bundle; the installed engine checksum; fourteen builder/helper and base-proof source identities;
+bundle; the installed engine checksum; seventeen builder/helper, base-proof and package-lock source identities;
 and the resulting image's Linux/amd64, non-root, working-directory and
 entrypoint contract. APT performs its ordinary signature and HTTPS checks.
 Its index observations are captured before the package lists are removed.
@@ -34,7 +34,8 @@ report measures the first image only.
 This is an **observed cold-build inventory**. The builder separately verifies
 the [platform-specific base metadata proof](trusted-runtime-bases.md) before
 Docker runs; the inventory binds those proof and checker bytes to this observation.
-The inventory does not independently prove an expected package dependency lock,
+Every build also enforces the [complete installed identity expectation](trusted-runtime-packages.md).
+The inventory does not independently authenticate package archive bytes,
 producer authorization, artifact provenance or future cache admission. It
 publishes no executor archive, enables no reuse and proves no warm saving.
 Those decisions and whether to retain this diagnostic after adoption belong

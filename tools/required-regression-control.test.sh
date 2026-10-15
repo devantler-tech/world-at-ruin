@@ -215,14 +215,16 @@ cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
 # Execute the real launcher/controller with a divergent event-base helper pair.
 # Only the external compiler/container runtime are stubs in this ownership test.
 cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
-for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory sandbox-godot; do
+for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory verify-trusted-runtime-packages sandbox-godot; do
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
-mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${trusted}/docs/phase-0" \
+mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${workflow_source}/tools/trusted-runtime-packages" "${trusted}/docs/phase-0" \
   "${candidate}/server/wire" "${candidate}/.github/workflows"
 cp "${repo_root}/.github/containers/trusted-regressions.Dockerfile" "${workflow_source}/.github/containers/"
 cp "${repo_root}/.github/containers/"trusted-runtime-bases.*.json "${workflow_source}/.github/containers/"
+cp "${repo_root}/.github/containers/trusted-runtime-packages.lock.json" "${workflow_source}/.github/containers/"
+cp "${repo_root}/tools/trusted-runtime-packages/main.go" "${workflow_source}/tools/trusted-runtime-packages/"
 cp "${repo_root}/tools/trusted-runtime-bases/main.go" "${workflow_source}/tools/trusted-runtime-bases/"
 printf 'historical frame fixture\n' >"${trusted}/docs/phase-0/cave-chamber.png"
 printf 'candidate source data\n' >"${candidate}/server/wire/wire.go"
@@ -231,7 +233,7 @@ real_go="$(command -v go)"
 cat >"${bin_dir}/go" <<'COMPILER'
 #!/bin/bash
 set -euo pipefail
-if [ "$1" = run ] && [[ "${2:-}" = */tools/trusted-runtime-bases/main.go ]]; then
+if [ "$1" = run ] && { [[ "${2:-}" = */tools/trusted-runtime-bases/main.go ]] || [[ "${2:-}" = */tools/trusted-runtime-packages/main.go ]]; }; then
   exec "$REQUIRED_REGRESSION_REAL_GO" "$@"
 fi
 while [ "$#" -gt 0 ]; do

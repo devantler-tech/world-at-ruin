@@ -404,6 +404,15 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+Every trusted cold runtime enforces the generated complete installed-package
+identity lock, independently of diagnostic selection. Keep the exact base,
+snapshot and direct-pin joins, full successful dpkg observation, phase bounds
+and native changed-expectation refusal. Update through the generator, never by
+hand; run `go test -race tools/trusted-runtime-packages/main.go tools/trusted-runtime-packages/main_test.go`
+and `bash tools/trusted-runtime-packages.test.sh`. This is an installed identity
+expectation, not archive provenance or reusable-executor authority. See
+[the maintenance procedure](docs/ci/trusted-runtime-packages.md) and ADR 0057.
+
 The required duplication gate uses the same jscpd 5.0.16 settings as MegaLinter.
 Run `bash tools/duplication-guard.test.sh` after installing its locked scanner
 with `npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund`.
