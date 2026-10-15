@@ -38,6 +38,20 @@ for change in missing extra version architecture status duplicate; do
   refuse "$state/expected" "$change"
 done
 cp "$state/expected" "$OBSERVED"
+cat > "$state/bin/cmp" <<'COMPARE'
+#!/usr/bin/env bash
+echo 'fixture comparison could not complete' >&2
+exit 2
+COMPARE
+chmod +x "$state/bin/cmp"
+comparison_status=0
+bash "$verify" "$state/expected" > "$state/result" 2>&1 || comparison_status=$?
+test "$comparison_status" -eq 2
+grep -qx 'trusted runtime package comparison could not complete' "$state/result"
+if grep -Eq 'identities differ|^TRUSTED_RUNTIME_PACKAGES verified=' "$state/result"; then
+  echo 'comparison error masqueraded as a completed comparison' >&2; exit 1
+fi
+rm "$state/bin/cmp"
 export FAILED=1; refuse "$state/expected" 'plausible output followed by failure'; unset FAILED
 export ARCH_FAILED=1; refuse "$state/expected" 'architecture output followed by failure'; unset ARCH_FAILED
 export ARCHITECTURE=arm64; refuse "$state/expected" 'foreign architecture'; unset ARCHITECTURE

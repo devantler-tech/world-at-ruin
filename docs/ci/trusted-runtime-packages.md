@@ -45,6 +45,8 @@ The sandbox trial also mounts a changed expected version into the same immutable
 image and runs the real verifier as the same non-root user with no network,
 capabilities or writable root. It requires the specific identity refusal and
 verified owned-container absence under the existing inspection deadline.
+A comparison error exits separately from a completed mismatch and cannot satisfy
+this negative proof.
 
 Installed identities are narrower evidence than archive digests or provenance.
 The lock preserves APT's existing authentication and ten direct arguments; it
