@@ -63,6 +63,21 @@ Host-owned `WAR_TRUSTED_BUILD_SECONDS`, `WAR_TRUSTED_INSPECT_SECONDS`,
 non-integer and larger-than-reviewed budgets fail before starting a command. Candidate engine
 processes do not receive these settings.
 
+The candidate sandbox probe explicitly selects `WAR_TRUSTED_RUNTIME_FOOTPRINT=1`
+to measure its already-built image. Other invocations default to no measurement;
+unknown selections refuse startup. The repository-local Go diagnostic requests
+only Docker's numeric logical layer size and streams one image export through
+Go's best-speed gzip encoder. It retains no archive and publishes one complete
+JSON record with the image configuration digest, logical layer bytes, raw Docker
+archive bytes, compressed bytes, codec, Go version and measurement duration.
+The configuration digest is not an archive digest or artifact provenance.
+Both streams are capped at 2 GiB. The command's 25-second lifetime and one-second
+process join margin fit within the existing 30-second inspection phase.
+Partial or failed inspection/export, cancellation and overflow produce no report.
+The same probe must still finish containment, every selected scene and cleanup.
+These candidate-owned measurements grant no reusable executor admission or cached
+verdict; #1397 retains producer authority, warm-use proof and storage/retention.
+
 The CI budgets provide headroom above successful sandbox runs of 18m30s and 18m56s, and complete
 client jobs of 40m14s and 41m51s. Timing receipts are linked on [issue #1310](https://github.com/devantler-tech/world-at-ruin/issues/1310).
 The real-container trial also holds an engine probe, requires timeout failure and verifies removal
