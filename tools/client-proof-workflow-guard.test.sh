@@ -26,6 +26,7 @@ mutations=(
   '.jobs["client-sandbox"]["continue-on-error"] = true'
   '.jobs["client-sandbox"].steps[4].run = "true"'
   '.jobs["client-sandbox"].steps[4].env.WAR_TRUSTED_RUNTIME_FOOTPRINT = "0"'
+  '.jobs["client-sandbox"].steps[4].env.WAR_TRUSTED_RUNTIME_INVENTORY_PROBE = "0"'
   '.jobs["client-sandbox"].steps[4].if = "false"'
   '.jobs["client-sandbox"].steps[2].run = "true"'
   '.jobs["client-sandbox"].steps[-1].run = "echo complete=true"'

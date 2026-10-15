@@ -1118,6 +1118,14 @@ the permanent blocking policy.
   do not add another World-only organization rule to select this latent source.
   The external catalogue required workflow remains active throughout activation; no ruleset cutover
   is implied by these source bytes.
+- **Cold runtime inventory:** explicitly select `WAR_TRUSTED_RUNTIME_INVENTORY=1`
+  for the builder's observed package/index/engine and recipe report. Default-off
+  collection preserves image-ID-only stdout and the existing build/inspection
+  deadlines. The candidate sandbox selects it for its containment image only.
+  Run `tools/trusted-runtime-inventory.test.sh` and the standalone Go parser tests;
+  real cold-build evidence and limits are in
+  [the inventory guide](docs/ci/trusted-runtime-inventory.md). This is diagnostic
+  data, never an expected dependency lock or executor admission authority (#1397).
 - **Trusted setup is bounded:** runtime builds, image inspection, editor import and sandbox probes
   use reviewed host deadlines; cancellation forwards to the active child and cleanup verifies
   absence of invocation-owned containers. The scene verdict watchdog remains 180 seconds. Run

@@ -90,7 +90,7 @@ export GODOT_SANDBOX_METADATA="$tmp/import-metadata"
 printf 'source data\n' >"$tmp/frozen-frame.png"
 export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
-trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
+WAR_TRUSTED_RUNTIME_INVENTORY="${WAR_TRUSTED_RUNTIME_INVENTORY_PROBE:-0}" trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 image="$(cat "$tmp/image")"
 if [ "${WAR_TRUSTED_RUNTIME_FOOTPRINT:-}" = 1 ]; then
   trusted_wait bash "$root/tools/trusted-regression-phase.sh" 'runtime image inspection' "$tmp/runtime-footprint" "$image"
