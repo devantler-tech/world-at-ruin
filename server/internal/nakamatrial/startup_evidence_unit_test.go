@@ -3,10 +3,29 @@
 package nakamatrial
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+// Wait must drain the real child's captured output before it is classified.
+func TestStartupEvidenceJoinedChild(t *testing.T) {
+	var captured bytes.Buffer
+	// The executable and complete script are fixed; no input chooses either.
+	command := exec.CommandContext(t.Context(), "/bin/sh", "-c", `printf '%s\n' '{"level":"info","msg":"child starting","private":"never-publish"}' '{"level":"fatal","msg":"Error returned by InitModule function in Go module","error":"issued claims WorkloadAPI request refused","path":"never-publish"}'; exit 1`)
+	command.Stdout, command.Stderr = &captured, &captured
+	err := command.Run()
+	var exited *exec.ExitError
+	if !errors.As(err, &exited) || exited.ExitCode() != 1 {
+		t.Fatal("the owned child did not produce the expected joined failure")
+	}
+	if got := observeNativeStartup("process-exited", captured.String()).publicText(); got != "condition=process-exited class=issued-workload-api-refused snapshot=none" {
+		t.Fatalf("unexpected joined public observation: %s", got)
+	}
+}
 
 // Classification consumes private records but returns only fixed public values.
 func TestStartupEvidenceRequiresAnExactFatalRecord(t *testing.T) {
