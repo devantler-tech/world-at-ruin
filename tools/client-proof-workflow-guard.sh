@@ -34,8 +34,9 @@ if ! yq -o=json '.' "$workflow" | jq -e '
     and ([.steps[] | select(.name == "Real sandbox refuses escape and runs the full trusted suite")] | length) == 0)
   and (.jobs["client-sandbox"] | worker("sandbox")
     and .name == "Trusted sandbox client proof"
-    and (.steps | length) == 5
-    and .steps[3] == {name:"Real sandbox refuses escape and runs the full trusted suite", "timeout-minutes":45, run:"bash tools/sandbox-godot-isolation.test.sh"})
+    and (.steps | length) == 6
+    and .steps[2] == {name:"Runtime footprint reports require complete bounded observations", run:"go test tools/trusted-runtime-footprint/main.go tools/trusted-runtime-footprint/main_test.go"}
+    and .steps[4] == {name:"Real sandbox refuses escape and runs the full trusted suite", "timeout-minutes":45, env:{WAR_TRUSTED_RUNTIME_FOOTPRINT:"1"}, run:"bash tools/sandbox-godot-isolation.test.sh"})
   and (.jobs["client-smoke"] |
     keys == ["if","name","needs","runs-on","steps","timeout-minutes"]
     and .name == "Client smoke boot" and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 5

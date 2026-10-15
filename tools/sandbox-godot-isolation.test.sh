@@ -9,6 +9,14 @@ mkdir "$tmp/containers"
 export GODOT_SANDBOX_CONTAINERS="$tmp/containers"
 trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; trusted_cleanup_controller "$tmp" "$root/tools/trusted-regression-phase.sh" "$GODOT_SANDBOX_CONTAINERS"' EXIT
 trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
+case "${WAR_TRUSTED_RUNTIME_FOOTPRINT:-}" in
+  ''|0) ;;
+  1)
+    GOTOOLCHAIN=local GOWORK=off trusted_wait bash "$root/tools/trusted-regression-phase.sh" 'host cache guard build' \
+      go build -o "$tmp/runtime-footprint" "$root/tools/trusted-runtime-footprint/main.go"
+    ;;
+  *) echo '::error::runtime footprint selection refused' >&2; exit 2 ;;
+esac
 mkdir -p "$tmp/work/client/tests"
 mkdir -p "$tmp/work/server/wire" "$tmp/work/.github/workflows"
 printf 'source data\n' >"$tmp/work/server/wire/wire.go"
@@ -84,6 +92,9 @@ export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
 trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 image="$(cat "$tmp/image")"
+if [ "${WAR_TRUSTED_RUNTIME_FOOTPRINT:-}" = 1 ]; then
+  trusted_wait bash "$root/tools/trusted-regression-phase.sh" 'runtime image inspection' "$tmp/runtime-footprint" "$image"
+fi
 cd "$tmp/work"
 # Require a concrete refusal from one real containment control.
 # Display private probe captures and fail without accepting incomplete containment evidence.
