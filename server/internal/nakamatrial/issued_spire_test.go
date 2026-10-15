@@ -244,10 +244,19 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 		if uid != 10002 && uid != 10003 && uid != 10004 {
 			t.Fatal("unknown issued zone role")
 		}
-	} else if *issuedRole != "coordinator" && *issuedRole != "custody" {
+	} else if *issuedRole != "coordinator" && *issuedRole != "custody" && *issuedRole != "readiness" {
 		t.Fatal("unknown issued worker")
 	}
 	issuedSecurity(t, uid, *issuedPrivate)
+	if *issuedRole == "readiness" {
+		// This disposable process owns and closes its SDK. No material is sent
+		// to the bridge; a successful process exit must precede native launch.
+		_ = issuedFetch(t, *issuedAPI, *issuedIdentity)
+		if !t.Failed() {
+			fmt.Println(issuedReadinessMarker)
+		}
+		return
+	}
 	// This protocol writer belongs only to the worker, never its Nakama children.
 	unix.CloseOnExec(3)
 	output := os.NewFile(3, "private-issued-reply")
@@ -440,19 +449,11 @@ func issuedFetch(t *testing.T, socket, expected string) *workloadapi.X509Context
 			t.Error("issued WorkloadAPI close failed")
 		}
 	}()
-	for {
-		request, stop := context.WithTimeout(ctx, time.Second)
-		material, err := client.FetchX509Context(request)
-		stop()
-		if err == nil && material != nil && len(material.SVIDs) == 1 && material.SVIDs[0] != nil && material.SVIDs[0].ID.String() == expected && material.SVIDs[0].PrivateKey != nil {
-			return material
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("real role credential readiness failed")
-		case <-time.After(100 * time.Millisecond):
-		}
+	material, err := awaitIssuedRole(ctx, expected, client.FetchX509Context)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return material
 }
 func issuedClaim(t *testing.T, material *workloadapi.X509Context, message issuedMessage) (zoneclaim.Receipt, error) {
 	t.Helper()

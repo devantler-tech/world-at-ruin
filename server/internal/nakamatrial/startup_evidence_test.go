@@ -2,11 +2,43 @@ package nakamatrial
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
+
+// Health consumes the caller's original startup window, including any prerequisite.
+func awaitNativeStartupCondition(ctx context.Context, done <-chan struct{}, probe func(context.Context) bool) string {
+	for ctx.Err() == nil {
+		select {
+		case <-done:
+			return "process-exited"
+		default:
+		}
+		if probe(ctx) {
+			if ctx.Err() != nil {
+				return "startup-deadline"
+			}
+			select {
+			case <-done:
+				return "process-exited"
+			default:
+				return "ready"
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "startup-deadline"
+		case <-done:
+			return "process-exited"
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	return "startup-deadline"
+}
 
 type nativeStartupObservation struct {
 	Condition string

@@ -501,7 +501,13 @@ requires one exact structured fatal record; malformed, duplicate-key, oversized
 or ambiguous output stays unclassified. The controller revalidates every new
 field before public output. A WorkloadAPI refusal identifies the failed request,
 not its underlying cause; a listening issuer socket alone does not prove usable
-credentials. These diagnostics add no fetch, retry, timeout or serving authority.
+credentials. Before the original main launches, a disposable same-UID helper
+waits for that exact role, closes its SDK, emits one fixed verdict and exits.
+The bridge joins it before starting main and receives no credential material;
+the helper has no database credential. Prerequisite, HTTP health and captured
+snapshot all consume the original twenty-second startup window. Main still
+performs its own single three-second fetch; a prerequisite cannot substitute
+its snapshot, retry a failed main or grant original custody/serving authority.
 Peers use a distinct claims address and are joined before reuse. Both fresh
 same-correlation and replacement processes must refuse enrollment after their
 own successful snapshot fetch, with no further GET, claim or provider effects.

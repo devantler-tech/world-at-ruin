@@ -4,12 +4,56 @@ package nakamatrial
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
+
+// A prerequisite's spent budget cannot be renewed by the subsequent health wait.
+func TestStartupHealthSharesTheOriginalContext(t *testing.T) {
+	for _, name := range []string{"ready", "expired-before-health", "expires-in-health", "exits-in-health", "never-ready"} {
+		t.Run(name, func(t *testing.T) {
+			budget := 2 * time.Second
+			if name == "never-ready" {
+				budget = 25 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), budget)
+			defer cancel()
+			done := make(chan struct{})
+			if name == "expired-before-health" {
+				cancel()
+			}
+			calls := 0
+			got := awaitNativeStartupCondition(ctx, done, func(request context.Context) bool {
+				calls++
+				if request != ctx {
+					t.Fatal("health received a replacement startup window")
+				}
+				switch name {
+				case "expires-in-health":
+					cancel()
+				case "exits-in-health":
+					close(done)
+				}
+				return name != "never-ready"
+			})
+			want := "startup-deadline"
+			switch name {
+			case "ready":
+				want = "ready"
+			case "exits-in-health":
+				want = "process-exited"
+			}
+			if got != want || (name == "expired-before-health" && calls != 0) || (name != "expired-before-health" && calls == 0) {
+				t.Fatalf("startup condition=%s calls=%d, want %s", got, calls, want)
+			}
+		})
+	}
+}
 
 // Wait must drain the real child's captured output before it is classified.
 func TestStartupEvidenceJoinedChild(t *testing.T) {
