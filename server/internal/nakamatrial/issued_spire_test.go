@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -254,8 +255,13 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 	}
 	encoder := json.NewEncoder(output)
 	stage := "credential-readiness"
+	var custodyStage atomic.Value
+	custodyStage.Store("original-custody")
 	defer func() {
 		if t.Failed() {
+			if *issuedRole == "custody" {
+				stage = custodyStage.Load().(string)
+			}
 			if err := encoder.Encode(issuedMessage{Op: "failed", ID: stage}); err != nil {
 				t.Error("private failure reply failed")
 			}
@@ -299,7 +305,7 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 	}
 	if *issuedRole == "custody" {
 		stage = "original-custody"
-		issuedCustodyWorker(t, input, encoder, decoder)
+		issuedCustodyWorker(t, input, encoder, decoder, func(value string) { custodyStage.Store(value) })
 		if !t.Failed() {
 			send(issuedMessage{Op: "stopped"})
 		}
