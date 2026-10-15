@@ -1,0 +1,161 @@
+name: Advisory volumetric evidence
+
+# Independent runs keep advisory rendering outside the required CI lifetime.
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.1
+  GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+
+jobs:
+  select:
+    name: Select volumetric evidence
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      capture: ${{ steps.select.outputs.capture }}
+      tested-sha: ${{ steps.select.outputs.tested-sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        name: Select the exact integration source
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          selected=$(bash tools/select-lavapipe-capture.sh select)
+          [[ $selected == true || $selected == false ]]
+          printf 'capture=%s\ntested-sha=%s\n' "$selected" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  frame-capture-lavapipe:
+    name: Frame capture (lavapipe volumetrics)
+    # The required macOS capture cannot allocate the R32_Uint atomic
+    # storage image Godot's froxel fog needs, so its artifact necessarily shows
+    # the height-fog fallback. This additive Linux lane runs the same committed
+    # world capture through Mesa's CPU Vulkan driver and publishes a separate
+    # artifact that can contain the enabled volumetric path.
+    #
+    # Advisory and absent from ci-required-checks, with failures visible on the
+    # PR. Selection includes the volumetric paths and its own workflow/helpers.
+    needs: [select]
+    if: needs.select.outputs.capture == 'true' && needs.select.outputs.tested-sha == github.sha
+    runs-on: ubuntu-24.04
+    # CPU rendering has a finite 45-minute budget. Actual capture duration is
+    # recorded in the artifact and job summary.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select.outputs.tested-sha }}
+          fetch-depth: 0
+          # This job only renders and uploads; never retain a checkout token in
+          # the workspace that becomes evidence.
+          persist-credentials: false
+      - name: Verify the selected integration checkout
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash tools/select-lavapipe-capture.sh verify
+      - name: Install and select lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            mesa-vulkan-drivers vulkan-tools xauth xvfb
+
+          shopt -s nullglob
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          if [ "${#icds[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one lavapipe ICD from /usr/share/vulkan/icd.d/lvp_icd*.json, found ${#icds[@]}"
+            printf '  %s\n' "${icds[@]}"
+            exit 1
+          fi
+          # VK_DRIVER_FILES is the current loader variable; VK_ICD_FILENAMES is
+          # retained for the runner's older loader builds. Both name the SAME
+          # glob-resolved file, so a missing or renamed ICD fails above instead
+          # of falling back to a different renderer.
+          {
+            echo "VK_DRIVER_FILES=${icds[0]}"
+            echo "VK_ICD_FILENAMES=${icds[0]}"
+            echo "LAVAPIPE_ICD=${icds[0]}"
+          } >> "$GITHUB_ENV"
+      - name: Prove the selected Vulkan device
+        run: |
+          set -o pipefail
+          vulkaninfo --summary 2>&1 | tee vulkan-summary.log
+          if ! grep -qE 'deviceName[[:space:]]*=[[:space:]]*llvmpipe([[:space:]]|\()' vulkan-summary.log; then
+            echo "::error::the selected ICD did not expose llvmpipe — refusing a fallback renderer"
+            exit 1
+          fi
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Headless import + class-name scan
+        run: |
+          set -o pipefail
+          godot --headless --editor --quit --path client 2>&1 | tee import-lavapipe.log
+      - id: capture
+        name: Capture the enabled volumetric path
+        run: |
+          set -o pipefail
+          mkdir -p "${RUNNER_TEMP}/lavapipe-shots"
+          cp client/recipes/wanderer.json "${RUNNER_TEMP}/lavapipe-save.json"
+          started=$SECONDS
+          WAR_SHOT_DIR="${RUNNER_TEMP}/lavapipe-shots" \
+          WAR_SAVE_PATH="${RUNNER_TEMP}/lavapipe-save.json" \
+          WAR_VAULT_PATH="${RUNNER_TEMP}/lavapipe-vault.json" \
+          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/lavapipe-recovery.json" \
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+              godot --rendering-driver vulkan --audio-driver Dummy \
+              --path client res://tools/frame_capture.tscn \
+              2>&1 | tee capture-lavapipe.log
+          elapsed=$((SECONDS - started))
+          echo "seconds=${elapsed}" >> "$GITHUB_OUTPUT"
+
+          # Hollow fog no longer has WAR_HOLLOW_FOG as of #233: it builds
+          # whenever volumetrics do. The guard therefore requires BOTH current
+          # shipped markers to be on and a positive built-pool count, alongside
+          # the Vulkan device, BOOT_OK, CAPTURE PASS, clean logs and real PNGs.
+          ./tools/lavapipe-capture-guard.sh \
+            capture-lavapipe.log "${RUNNER_TEMP}/lavapipe-shots"
+
+          pools="$(grep -E '^HOLLOW FOG on — [1-9][0-9]* .*ash pools([[:space:]]|$)' capture-lavapipe.log)"
+          {
+            echo "# Lavapipe capture conditions"
+            echo
+            echo "integration_sha: ${GITHUB_SHA}"
+            echo "runner: ubuntu-24.04 (GitHub-hosted)"
+            echo "renderer: lavapipe via ${LAVAPIPE_ICD}"
+            echo "rendering_driver: vulkan"
+            echo "volumetric_fog: on"
+            echo "hollow_ash: ${pools}"
+            echo "capture_seconds: ${elapsed}"
+            echo
+            echo "This artifact is an independent Linux/lavapipe baseline."
+            echo "Do not compare its pixels with the macOS/Metal frame artifact."
+          } > "${RUNNER_TEMP}/lavapipe-shots/capture-conditions.txt"
+      - name: Report capture conditions
+        env:
+          CAPTURE_SECONDS: ${{ steps.capture.outputs.seconds }}
+        run: |
+          {
+            echo "### Lavapipe volumetric evidence"
+            echo
+            echo "Enabled Vulkan path captured in **${CAPTURE_SECONDS}s**."
+            echo "Artifact pixels are an independent lavapipe baseline, not a macOS comparison."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lavapipe-volumetric-frames-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/lavapipe-shots/*.png
+            ${{ runner.temp }}/lavapipe-shots/*.txt
+          if-no-files-found: error
