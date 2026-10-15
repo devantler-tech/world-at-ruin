@@ -1084,10 +1084,14 @@ jobs:
           persist-credentials: false
       - name: Initialize the sandbox job's private save seam
         run: printf 'XDG_DATA_HOME=%s/war-client-sandbox\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Runtime footprint reports require complete bounded observations
+        run: go test tools/trusted-runtime-footprint/main.go tools/trusted-runtime-footprint/main_test.go
       - name: Install Godot (pinned, checksum-verified)
         run: bash tools/install-ci-godot.sh
       - name: Real sandbox refuses escape and runs the full trusted suite
         timeout-minutes: 45
+        env:
+          WAR_TRUSTED_RUNTIME_FOOTPRINT: "1"
         run: bash tools/sandbox-godot-isolation.test.sh
       - name: Report complete proof after cleanup
         id: proof
