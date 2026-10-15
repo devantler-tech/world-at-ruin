@@ -30,7 +30,8 @@ RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.s
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=0555 godot /usr/local/bin/godot
 RUN if [ "$WAR_RUNTIME_INVENTORY" = 1 ]; then \
-    printf 'engine\t%s\nEND\n' "$(sha256sum /usr/local/bin/godot | cut -d ' ' -f 1)" >> /usr/share/war-trusted-runtime/inventory.tsv; fi
+    digest="$(sha256sum /usr/local/bin/godot)" \
+    && printf 'engine\t%s\nEND\n' "${digest%% *}" >> /usr/share/war-trusted-runtime/inventory.tsv; fi
 USER 1001:1001
 WORKDIR /project
 ENTRYPOINT ["/usr/local/bin/godot"]

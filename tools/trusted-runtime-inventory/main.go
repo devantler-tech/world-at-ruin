@@ -160,19 +160,18 @@ func parseImage(raw []byte) (image, error) {
 }
 
 func boundedFile(path string, maximum int64) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > maximum {
-		return nil, errors.New("runtime evidence file refused")
-	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	opened, statErr := file.Stat()
+	named, linkErr := os.Lstat(path)
+	if statErr != nil || linkErr != nil || !opened.Mode().IsRegular() || !named.Mode().IsRegular() || !os.SameFile(opened, named) || opened.Size() > maximum {
+		return nil, errors.New("runtime evidence handle or file identity refused")
+	}
+	limited := &io.LimitedReader{R: file, N: maximum + 1}
+	raw, err := io.ReadAll(limited)
 	if err != nil || int64(len(raw)) > maximum {
 		return nil, errors.New("runtime evidence read incomplete")
 	}
