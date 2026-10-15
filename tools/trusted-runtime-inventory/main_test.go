@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// inventoryFixture supplies packages and metadata with an explicit terminal record.
 func inventoryFixture() string {
 	var b strings.Builder
 	b.WriteString("WAR_RUNTIME_INVENTORY\t1\namd64\n")
@@ -23,6 +24,7 @@ func inventoryFixture() string {
 	return b.String()
 }
 
+// TestObservedInventory checks full inventory capture and deterministic report ordering.
 func TestObservedInventory(t *testing.T) {
 	got, err := parseInventory([]byte(inventoryFixture()), strings.Repeat("b", 64))
 	if err != nil {
@@ -47,6 +49,7 @@ func TestObservedInventory(t *testing.T) {
 	}
 }
 
+// TestIncompleteAndAmbiguousInventory refuses missing, duplicate and conflicting records.
 func TestIncompleteAndAmbiguousInventory(t *testing.T) {
 	original := inventoryFixture()
 	cases := map[string]string{
@@ -76,6 +79,7 @@ func TestIncompleteAndAmbiguousInventory(t *testing.T) {
 	}
 }
 
+// TestImageContract rejects a partial inspection or a different execution boundary.
 func TestImageContract(t *testing.T) {
 	good := `[{"Id":"sha256:` + strings.Repeat("a", 64) + `","Os":"linux","Architecture":"amd64","Config":{"User":"1001:1001","WorkingDir":"/project","Entrypoint":["/usr/local/bin/godot"]}}]`
 	if _, err := parseImage([]byte(good)); err != nil {
@@ -90,13 +94,17 @@ func TestImageContract(t *testing.T) {
 
 type shortReportWriter struct{}
 
+// Write simulates an output sink that accepts only part of a report.
 func (shortReportWriter) Write(raw []byte) (int, error) { return len(raw) - 1, nil }
+
+// TestReportWriteFailure ensures a short output write cannot succeed.
 func TestReportWriteFailure(t *testing.T) {
 	if writeReport(inventory{}, shortReportWriter{}) == nil {
 		t.Fatal("partial write became complete report")
 	}
 }
 
+// TestDiagnosticSelection keeps the default inert and rejects unknown selections.
 func TestDiagnosticSelection(t *testing.T) {
 	var output bytes.Buffer
 	if err := run(nil, &output); err != nil || output.Len() != 0 {
@@ -107,6 +115,7 @@ func TestDiagnosticSelection(t *testing.T) {
 	}
 }
 
+// TestRecipeReadsAreBoundedAndObserveChangedBytes exercises real file replacement and refusal paths.
 func TestRecipeReadsAreBoundedAndObserveChangedBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "builder.sh")
 	if err := os.WriteFile(path, []byte("first recipe"), 0600); err != nil {

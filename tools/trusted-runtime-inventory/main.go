@@ -67,6 +67,7 @@ type report struct {
 	EngineArchiveSHA512 string           `json:"caller_engine_archive_sha512"`
 }
 
+// parseInventory accepts one complete bounded installed-package and APT observation.
 func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 	var out inventory
 	fail := func() (inventory, error) {
@@ -131,6 +132,7 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 	return out, nil
 }
 
+// allowedInput confines evidence names to the package inputs captured by the image.
 func allowedInput(path string) bool {
 	if path == "/etc/ssl/certs/ca-certificates.crt" || path == "/usr/share/keyrings/ubuntu-archive-keyring.gpg" {
 		return true
@@ -143,6 +145,7 @@ func allowedInput(path string) bool {
 	return path == "/etc/apt/sources.list"
 }
 
+// parseImage requires the executor configuration used by the non-root Linux probe.
 func parseImage(raw []byte) (image, error) {
 	var images []image
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -159,6 +162,7 @@ func parseImage(raw []byte) (image, error) {
 	return item, nil
 }
 
+// boundedFile verifies the opened regular handle and bounds its complete contents.
 func boundedFile(path string, maximum int64) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -178,6 +182,7 @@ func boundedFile(path string, maximum int64) ([]byte, error) {
 	return raw, nil
 }
 
+// fileIdentity binds a selected source or engine to its actual bytes and size.
 func fileIdentity(path, name string, maximum int64) (ingredientFile, error) {
 	raw, err := boundedFile(path, maximum)
 	if err != nil {
@@ -187,6 +192,7 @@ func fileIdentity(path, name string, maximum int64) (ingredientFile, error) {
 	return ingredientFile{name, hex.EncodeToString(sum[:]), int64(len(raw))}, nil
 }
 
+// writeReport refuses short writes so incomplete output cannot report success.
 func writeReport(value any, writer io.Writer) error {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -200,6 +206,7 @@ func writeReport(value any, writer io.Writer) error {
 	return nil
 }
 
+// run keeps observation off unless explicitly selected and joins engine, image and recipe.
 func run(args []string, output io.Writer) error {
 	if len(args) == 0 {
 		return nil
@@ -251,6 +258,7 @@ func run(args []string, output io.Writer) error {
 	return writeReport(result, output)
 }
 
+// main makes every incomplete or inconsistent observation a command failure.
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
