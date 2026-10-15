@@ -150,6 +150,13 @@ func TestNativeIssuedClaimsPlugin(t *testing.T) {
 			if p.err == nil || !strings.Contains(p.log.String(), reason) || strings.Contains(p.log.String(), "Go runtime modules loaded") || strings.Contains(p.log.String(), socket) || issuer.requests.Load() != requests {
 				t.Fatal("issued startup did not refuse before runtime readiness")
 			}
+			if fault == "issuer" {
+				observation := observeNativeStartup("process-exited", p.log.String())
+				if observation.publicText() != "condition=process-exited class=issued-workload-api-refused snapshot=none" {
+					t.Fatal("real native issuer refusal lacked bounded startup evidence")
+				}
+				t.Log("ISSUED STARTUP EVIDENCE PASS:", observation.publicText())
+			}
 			waitFor(t, time.Second, "refused WorkloadAPI retirement", func() bool { return issuer.active.Load() == 0 })
 			var count int
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)

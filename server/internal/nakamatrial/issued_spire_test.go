@@ -43,6 +43,7 @@ var issuedCut = flag.String("war-spire-cut", "", "private issued custody cut")
 var issuedIdentity = flag.String("war-spire-id", "", "independent worker principal")
 
 type issuedMessage struct {
+	Startup                             nativeStartupObservation
 	Case                                string
 	Seq                                 uint64
 	Op, ID, Token, DNS, URI, Credential string
@@ -81,7 +82,7 @@ func (c *issuedChild) readBefore(t *testing.T, deadline time.Time) issuedMessage
 		t.Fatal("bounded private worker reply failed")
 	}
 	if reply.Op == "failed" {
-		t.Fatalf("issued worker failed at bounded stage %s", reply.ID)
+		t.Fatalf("issued worker failed at bounded stage %s; startup %s", reply.ID, reply.Startup.publicText())
 	}
 	return reply
 }
@@ -257,12 +258,14 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 	stage := "credential-readiness"
 	var custodyStage atomic.Value
 	custodyStage.Store("original-custody")
+	var startupFailure atomic.Value
+	startupFailure.Store(nativeStartupObservation{})
 	defer func() {
 		if t.Failed() {
 			if *issuedRole == "custody" {
 				stage = custodyStage.Load().(string)
 			}
-			if err := encoder.Encode(issuedMessage{Op: "failed", ID: stage}); err != nil {
+			if err := encoder.Encode(issuedMessage{Op: "failed", ID: stage, Startup: startupFailure.Load().(nativeStartupObservation)}); err != nil {
 				t.Error("private failure reply failed")
 			}
 		}
@@ -305,7 +308,7 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 	}
 	if *issuedRole == "custody" {
 		stage = "original-custody"
-		issuedCustodyWorker(t, input, encoder, decoder, func(value string) { custodyStage.Store(value) })
+		issuedCustodyWorker(t, input, encoder, decoder, func(value string) { custodyStage.Store(value) }, func(value nativeStartupObservation) { startupFailure.Store(value) })
 		if !t.Failed() {
 			send(issuedMessage{Op: "stopped"})
 		}

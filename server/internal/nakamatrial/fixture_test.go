@@ -102,6 +102,7 @@ func (p *nativeProcess) stop(t *testing.T) {
 }
 
 type fixture struct {
+	onStartupFailure func(nativeStartupObservation)
 	allocationpb.UnimplementedAllocationServiceServer
 	t                            *testing.T
 	dir                          string
@@ -338,6 +339,7 @@ func (f *fixture) start(env map[string]string, modules string, grace int) *nativ
 	p.cmd.Env = append(os.Environ(), "NAKAMA_TELEMETRY=0")
 	p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
 	if e := p.cmd.Start(); e != nil {
+		f.recordStartupFailure("process-start-failed", p)
 		f.t.Fatal(e)
 	}
 	f.process = p
@@ -358,6 +360,7 @@ func (f *fixture) awaitStartup(p *nativeProcess, healthy bool) *nativeProcess {
 		select {
 		case <-p.done:
 			if healthy {
+				f.recordStartupFailure("process-exited", p)
 				f.t.Fatalf("native startup failed: %s", p.log.String())
 			}
 			return p
@@ -377,8 +380,16 @@ func (f *fixture) awaitStartup(p *nativeProcess, healthy bool) *nativeProcess {
 		time.Sleep(25 * time.Millisecond)
 	}
 	p.stop(f.t)
+	f.recordStartupFailure("startup-deadline", p)
 	f.t.Fatal("native startup did not settle")
 	return nil
+}
+
+// recordStartupFailure reports only bounded observations to an opting-in worker.
+func (f *fixture) recordStartupFailure(condition string, p *nativeProcess) {
+	if f.onStartupFailure != nil {
+		f.onStartupFailure(observeNativeStartup(condition, p.log.String()))
+	}
 }
 
 // account obtains a real native session and reads its authenticated account ID.

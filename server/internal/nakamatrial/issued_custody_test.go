@@ -98,7 +98,7 @@ type custodyIPCEvent struct {
 
 // The worker's main goroutine exclusively owns the private protocol. The native
 // subtest and its HTTP handlers exchange bounded events; they never use FD3.
-func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, decoder *json.Decoder, milestone func(string)) {
+func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, decoder *json.Decoder, milestone func(string), startupFailure func(nativeStartupObservation)) {
 	if !containsCustodyCut(*issuedCut) {
 		t.Fatal("unknown original custody cut")
 	}
@@ -134,6 +134,7 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 		done <- t.Run("owned-native", func(t *testing.T) {
 			milestone("original-fixture")
 			f := newFixture(t)
+			f.onStartupFailure = startupFailure
 			env := f.issuedClaimsEnv(*issuedAPI)
 			env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] = "war-fixture.test"
 			env["WAR_ISSUED_CLAIMS_SERVER_DNS"] = issuedServerDNS
