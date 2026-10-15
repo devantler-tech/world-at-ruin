@@ -92,6 +92,8 @@ export GODOT_SANDBOX_FRAME="$tmp/frozen-frame.png"
 cp "$root/client/icon.svg" "$tmp/work/client/icon.svg"
 WAR_TRUSTED_RUNTIME_INVENTORY="${WAR_TRUSTED_RUNTIME_INVENTORY_PROBE:-0}" trusted_wait bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 image="$(cat "$tmp/image")"
+trusted_wait bash "$root/tools/trusted-regression-phase.sh" 'runtime image inspection' \
+  bash "$root/tools/probe-trusted-runtime-package-refusal.sh" "$image" "$tmp"
 if [ "${WAR_TRUSTED_RUNTIME_FOOTPRINT:-}" = 1 ]; then
   trusted_wait bash "$root/tools/trusted-regression-phase.sh" 'runtime image inspection' "$tmp/runtime-footprint" "$image"
 fi

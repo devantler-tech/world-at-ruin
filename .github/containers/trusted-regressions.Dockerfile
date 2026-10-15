@@ -29,6 +29,9 @@ RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.s
     && case "$WAR_RUNTIME_INVENTORY" in 0) ;; 1) bash /tmp/capture-trusted-runtime-inventory.sh;; *) exit 1;; esac \
     && rm /tmp/capture-trusted-runtime-inventory.sh \
     && rm -rf /var/lib/apt/lists/*
+COPY expected-packages.tsv verify-trusted-runtime-packages.sh /tmp/
+RUN bash /tmp/verify-trusted-runtime-packages.sh /tmp/expected-packages.tsv \
+    && rm /tmp/verify-trusted-runtime-packages.sh /tmp/expected-packages.tsv
 COPY --chmod=0555 godot /usr/local/bin/godot
 RUN if [ "$WAR_RUNTIME_INVENTORY" = 1 ]; then \
     digest="$(sha256sum /usr/local/bin/godot)" \

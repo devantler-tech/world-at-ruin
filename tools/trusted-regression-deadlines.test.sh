@@ -78,6 +78,9 @@ export PATH="$tmp/bin:$PATH" FAKE_CONTAINERS="$tmp/containers" FAKE_CHILD="$tmp/
 GODOT_SANDBOX_IMAGE="sha256:$(printf '%064d' 0)"
 export GODOT_SANDBOX_IMAGE
 export GODOT_SANDBOX_CACHE_GUARD="$tmp/bin/cache-guard" GODOT_SANDBOX_METADATA="$tmp/metadata" GODOT_SANDBOX_FRAME="$tmp/frame"
+# Warm the real metadata checkers before measuring one-second held phases.
+GOTOOLCHAIN=local GOWORK=off go run "$root/tools/trusted-runtime-bases/main.go" --check "$root" >/dev/null
+GOTOOLCHAIN=local GOWORK=off go run "$root/tools/trusted-runtime-packages/main.go" --emit "$root" > "$tmp/expected-packages.tsv"
 export WAR_TRUSTED_BUILD_SECONDS=1 WAR_TRUSTED_INSPECT_SECONDS=1 WAR_TRUSTED_IMPORT_SECONDS=1 WAR_TRUSTED_PROBE_SECONDS=1 WAR_TRUSTED_TERMINATION_SECONDS=1
 failures=0
 printf unrelated >"$tmp/containers/unrelated"
@@ -86,7 +89,10 @@ for phase in build inspect import probe; do
   if [ "$phase" = build ] || [ "$phase" = inspect ]; then
     command=(bash "$root/tools/build-trusted-regression-runtime.sh")
     expected='runtime build/pull'
-    if [ "$phase" = inspect ]; then expected='runtime image inspection'; fi
+    if [ "$phase" = inspect ]; then
+      command=(env WAR_TRUSTED_BUILD_SECONDS=900 bash "$root/tools/build-trusted-regression-runtime.sh")
+      expected='runtime image inspection'
+    fi
   elif [ "$phase" = import ]; then
     command=(bash "$root/tools/sandbox-godot.sh" --headless --editor --quit --path client)
     expected='editor import'
@@ -146,7 +152,8 @@ trusted_stop_child
 test -f "$tmp/settled"
 echo 'TEST PASS -- controller stops promptly after acknowledgment and preserves supervisor grace'
 
-FAKE_HOLD=none bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
+# This is the successful setup control; only held phases use the one-second bound.
+FAKE_HOLD=none WAR_TRUSTED_BUILD_SECONDS=900 bash "$root/tools/build-trusted-regression-runtime.sh" >"$tmp/image"
 test "$(cat "$tmp/image")" = "$GODOT_SANDBOX_IMAGE"
 # A phase returns as soon as every member of its process group acknowledges TERM.
 for cooperative in 1 2 3; do
