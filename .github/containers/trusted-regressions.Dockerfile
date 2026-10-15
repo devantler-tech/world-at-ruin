@@ -1,7 +1,8 @@
-# Reuse the immutable public trust bundle already used by the zone image.
-FROM golang:1.27.1@sha256:e0174e51e81218523251d85d248a90d24c3d5e81543b4f07a5d66229397db190 AS certificates
+# Linux/amd64 children verified by trusted-runtime-bases.lock.json.
+# Update the metadata proof and these references together; see docs/ci/trusted-runtime-bases.md.
+FROM golang:1.27.1@sha256:7bffdb405cd12940d2980daa49a86ef575ed4525a17ee7d0c9562547357ab46a AS certificates
 
-FROM ubuntu:24.04@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd752c61b60
+FROM ubuntu:24.04@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b
 ARG WAR_RUNTIME_INVENTORY=0
 COPY capture-trusted-runtime-inventory.sh /tmp/capture-trusted-runtime-inventory.sh
 # Minimal Ubuntu has no CA store: preserve HTTPS and package signature checks.

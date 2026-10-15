@@ -29,6 +29,8 @@ mutations=(
   '.jobs["client-sandbox"].steps[4].env.WAR_TRUSTED_RUNTIME_INVENTORY_PROBE = "0"'
   '.jobs["client-sandbox"].steps[4].if = "false"'
   '.jobs["client-sandbox"].steps[2].run = "true"'
+  '.jobs["client-sandbox"].steps[2].run |= (split("\n") | .[1:] | join("\n"))'
+  '.jobs["client-sandbox"].steps[2].run |= sub("bash tools/trusted-runtime-bases.test.sh\n"; "")'
   '.jobs["client-sandbox"].steps[-1].run = "echo complete=true"'
   '.jobs["client-sandbox"].steps[0].with.ref = "main"'
   '.jobs["ci-required-checks"].needs |= map(select(. != "client-smoke"))'

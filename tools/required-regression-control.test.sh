@@ -215,19 +215,25 @@ cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
 # Execute the real launcher/controller with a divergent event-base helper pair.
 # Only the external compiler/container runtime are stubs in this ownership test.
 cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
-for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime capture-trusted-runtime-inventory sandbox-godot; do
+for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory sandbox-godot; do
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
-mkdir -p "${workflow_source}/.github/containers" "${trusted}/docs/phase-0" \
+mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${trusted}/docs/phase-0" \
   "${candidate}/server/wire" "${candidate}/.github/workflows"
 cp "${repo_root}/.github/containers/trusted-regressions.Dockerfile" "${workflow_source}/.github/containers/"
+cp "${repo_root}/.github/containers/"trusted-runtime-bases.*.json "${workflow_source}/.github/containers/"
+cp "${repo_root}/tools/trusted-runtime-bases/main.go" "${workflow_source}/tools/trusted-runtime-bases/"
 printf 'historical frame fixture\n' >"${trusted}/docs/phase-0/cave-chamber.png"
 printf 'candidate source data\n' >"${candidate}/server/wire/wire.go"
 printf 'candidate source data\n' >"${candidate}/.github/workflows/ci.yaml"
+real_go="$(command -v go)"
 cat >"${bin_dir}/go" <<'COMPILER'
 #!/bin/bash
 set -euo pipefail
+if [ "$1" = run ] && [[ "${2:-}" = */tools/trusted-runtime-bases/main.go ]]; then
+  exec "$REQUIRED_REGRESSION_REAL_GO" "$@"
+fi
 while [ "$#" -gt 0 ]; do
   if [ "$1" = -o ]; then
     printf '#!/bin/bash\nexit 0\n' >"$2"
@@ -263,7 +269,7 @@ CONTAINER
 chmod +x "${bin_dir}/go" "${bin_dir}/docker"
 : >"${run_log}"
 : >"${REQUIRED_REGRESSION_LEGACY_LOG}"
-if ! PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+if ! PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_REAL_GO="$real_go" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
   /bin/bash "${workflow_source}/tools/run-sandboxed-trusted-regressions.sh" "${trusted}" "${candidate}" \
   >"${control_output}" 2>&1; then
   fail "workflow-source launcher did not evaluate base-owned data: $(<"${control_output}")"

@@ -1090,6 +1090,8 @@ jobs:
         run: printf 'XDG_DATA_HOME=%s/war-client-sandbox\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Runtime footprint reports require complete bounded observations
         run: |
+          go test tools/trusted-runtime-bases/main.go tools/trusted-runtime-bases/main_test.go
+          bash tools/trusted-runtime-bases.test.sh
           go test tools/trusted-runtime-footprint/main.go tools/trusted-runtime-footprint/main_test.go
           go test tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go
           bash tools/trusted-runtime-inventory.test.sh
