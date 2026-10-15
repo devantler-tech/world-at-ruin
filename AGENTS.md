@@ -1118,6 +1118,13 @@ the permanent blocking policy.
   do not add another World-only organization rule to select this latent source.
   The external catalogue required workflow remains active throughout activation; no ruleset cutover
   is implied by these source bytes.
+- **Trusted runtime bases:** the actual builder checks the committed raw metadata
+  proof offline and consumes the exact Linux/amd64 child manifests before Docker
+  runs, within its existing build deadline. Update source roots, generate the lock
+  and update both `FROM` references together using
+  [the base proof guide](docs/ci/trusted-runtime-bases.md); never hand-edit the lock.
+  Run the standalone Go checker tests and `tools/trusted-runtime-bases.test.sh`.
+  This proves base metadata selection, not package closure or cache authority.
 - **Cold runtime inventory:** explicitly select `WAR_TRUSTED_RUNTIME_INVENTORY=1`
   for the builder's observed package/index/engine and recipe report. Default-off
   collection preserves image-ID-only stdout and the existing build/inspection

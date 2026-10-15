@@ -240,7 +240,7 @@ func run(args []string, output io.Writer) error {
 		return err
 	}
 	result := report{Schema: 1, Evidence: "observed-cold-build-inventory-only", Image: observedImage, Inventory: observed}
-	for _, path := range []string{".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh", "tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh", "tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh", "tools/trusted-runtime-inventory/main.go"} {
+	for _, path := range []string{".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh", "tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh", "tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh", "tools/trusted-runtime-inventory/main.go", ".github/containers/trusted-runtime-bases.sources.json", ".github/containers/trusted-runtime-bases.lock.json", "tools/trusted-runtime-bases/main.go", "tools/build-locked-trusted-runtime.sh"} {
 		item, err := fileIdentity(filepath.Join(root, path), path, 1024*1024)
 		if err != nil {
 			return err

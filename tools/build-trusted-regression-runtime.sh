@@ -23,8 +23,8 @@ trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
 trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 cp "$(command -v godot)" "$context/godot"
 cp "$root/tools/capture-trusted-runtime-inventory.sh" "$context/capture-trusted-runtime-inventory.sh"
-trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" docker build --pull --file "$root/.github/containers/trusted-regressions.Dockerfile" \
-  --build-arg "WAR_RUNTIME_INVENTORY=$mode" --tag "world-trusted-regressions:build-$$" "$context" >&2
+trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" \
+  bash "$root/tools/build-locked-trusted-runtime.sh" "$root" "$context" "$mode" "world-trusted-regressions:build-$$" >&2
 if [ "$mode" = 1 ]; then
   trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime image inspection" bash "$root/tools/inspect-trusted-runtime.sh" "world-trusted-regressions:build-$$" "$context" > "$context/identity"
   printf 'TRUSTED_RUNTIME_INVENTORY ' >&2

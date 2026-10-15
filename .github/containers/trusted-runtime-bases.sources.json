@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "bases": [
+    {
+      "name": "certificates",
+      "image": "golang:1.27.1",
+      "index_digest": "sha256:e0174e51e81218523251d85d248a90d24c3d5e81543b4f07a5d66229397db190"
+    },
+    {
+      "name": "runtime",
+      "image": "ubuntu:24.04",
+      "index_digest": "sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd752c61b60"
+    }
+  ]
+}
