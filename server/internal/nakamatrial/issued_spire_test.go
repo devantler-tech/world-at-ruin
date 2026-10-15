@@ -333,6 +333,7 @@ func TestNativeIssuedSPIREWorker(t *testing.T) {
 		if !t.Run("owned-native", func(t *testing.T) {
 			stage = "native-fixture"
 			f := newFixture(t)
+			f.onStartupFailure = func(value nativeStartupObservation) { startupFailure.Store(value) }
 			env := f.issuedClaimsEnv(*issuedAPI)
 			env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] = "war-fixture.test"
 			env["WAR_ISSUED_CLAIMS_SERVER_DNS"] = issuedServerDNS
