@@ -9,6 +9,8 @@ remains the admitted image digest; successful Docker output contains
 
 The host validates the lock's schema, unique sorted identities, exact Ubuntu
 manifest, snapshot declaration and direct package arguments before Docker runs.
+Every direct argument must be a unique, exact package-version pin; removing one
+pin cannot pass merely because APT happens to select the expected version.
 It emits canonical TSV into the private build context. The image captures one
 complete successful `dpkg-query` result, sorts it and compares every byte. A
 producer that prints plausible data and then fails cannot pass. The check runs
@@ -39,7 +41,10 @@ go test -race tools/trusted-runtime-packages/main.go tools/trusted-runtime-packa
 bash tools/trusted-runtime-packages.test.sh
 ```
 
-The generator validates the report's complete JSON envelope and runtime contract;
+The generator requires the image ID, APT configuration and index identities,
+engine identities, and the original cold-report producer's recipe identities.
+It refuses a package list containing only the direct arguments. It validates
+the report's complete JSON envelope and runtime contract;
 it cannot authenticate where the report came from. The source/job/recipe join and
 review remain mandatory. When a legitimate dependency change makes the old lock
 refuse, collect its proposed inventory in a disposable maintenance build and

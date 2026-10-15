@@ -30,13 +30,51 @@ type packageLock struct {
 	Packages        []packageIdentity `json:"packages"`
 }
 
+type reportFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Bytes  int64  `json:"bytes"`
+}
+
+type coldReport struct {
+	Schema   int    `json:"schema"`
+	Evidence string `json:"evidence"`
+	Image    struct {
+		Id, Os, Architecture string
+		Config               struct {
+			User, WorkingDir string
+			Entrypoint       []string
+		}
+	} `json:"image"`
+	Inventory struct {
+		Architecture string            `json:"architecture"`
+		Packages     []packageIdentity `json:"installed_packages"`
+		Files        []reportFile      `json:"apt_inputs"`
+		Engine       string            `json:"engine_sha256"`
+	} `json:"inventory"`
+	Recipe              []reportFile `json:"recipe_files"`
+	EngineVersion       string       `json:"caller_engine_version"`
+	EngineArchiveSHA512 string       `json:"caller_engine_archive_sha512"`
+}
+
 var packageName = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
 var packageVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 var manifestDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var snapshotID = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z$`)
 var runtimeFrom = regexp.MustCompile(`(?m)^FROM ubuntu:24\.04@(sha256:[0-9a-f]{64})\s*$`)
 var snapshotSetting = regexp.MustCompile(`APT::Snapshot "([0-9]{8}T[0-9]{6}Z)";`)
-var installPin = regexp.MustCompile(`\b([a-z0-9][a-z0-9+.-]*)=([A-Za-z0-9][A-Za-z0-9+.:~_-]*)`)
+var installPin = regexp.MustCompile(`^([a-z0-9][a-z0-9+.-]*)=([A-Za-z0-9][A-Za-z0-9+.:~_-]*)$`)
+var fileDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var archiveDigest = regexp.MustCompile(`^[0-9a-f]{128}$`)
+
+// minimumRecipeFiles covers the original cold-report producer, before package locks existed.
+var minimumRecipeFiles = []string{
+	".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh",
+	"tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh",
+	"tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh",
+	"tools/trusted-runtime-inventory/main.go", ".github/containers/trusted-runtime-bases.sources.json",
+	".github/containers/trusted-runtime-bases.lock.json", "tools/trusted-runtime-bases/main.go", "tools/build-locked-trusted-runtime.sh",
+}
 
 // decode reads one complete bounded JSON document; a valid prefix is insufficient.
 func decode(raw []byte, value any, strict bool) error {
@@ -57,6 +95,7 @@ func decode(raw []byte, value any, strict bool) error {
 	return nil
 }
 
+// validate requires one bounded, sorted installed identity for every package name.
 func validate(value packageLock) error {
 	if value.Schema != 1 || value.Architecture != "amd64" || !manifestDigest.MatchString(value.RuntimeManifest) || !snapshotID.MatchString(value.Snapshot) || len(value.Packages) == 0 || len(value.Packages) > 2048 {
 		return errors.New("package lock identity refused")
@@ -71,6 +110,7 @@ func validate(value packageLock) error {
 	return nil
 }
 
+// decodeLock accepts only the complete supported lock schema and valid identities.
 func decodeLock(raw []byte) (packageLock, error) {
 	var value packageLock
 	if err := decode(raw, &value, true); err != nil {
@@ -93,24 +133,44 @@ func joinRecipe(value packageLock, recipe []byte) error {
 	for _, item := range value.Packages {
 		versions[item.Name] = item.Version
 	}
-	_, install, found := strings.Cut(string(recipe), "apt-get install -y --no-install-recommends")
-	if !found {
-		return errors.New("runtime install declaration missing")
+	pins, err := parseInstallPins(recipe)
+	if err != nil {
+		return err
 	}
-	install, _, found = strings.Cut(install, "&&")
-	if !found {
-		return errors.New("runtime install boundary missing")
-	}
-	pins := installPin.FindAllSubmatch([]byte(install), -1)
-	if len(pins) == 0 {
-		return errors.New("runtime direct pins missing")
-	}
-	for _, pin := range pins {
-		if versions[string(pin[1])] != string(pin[2]) {
+	for name, version := range pins {
+		if versions[name] != version {
 			return errors.New("package lock does not match direct install pin")
 		}
 	}
 	return nil
+}
+
+// parseInstallPins checks every argument rather than selecting only already-pinned substrings.
+func parseInstallPins(recipe []byte) (map[string]string, error) {
+	const command = "apt-get install -y --no-install-recommends"
+	if strings.Count(string(recipe), command) != 1 {
+		return nil, errors.New("runtime install declaration missing or repeated")
+	}
+	_, install, found := strings.Cut(string(recipe), command)
+	if !found {
+		return nil, errors.New("runtime install declaration missing")
+	}
+	install, _, found = strings.Cut(install, "&&")
+	if !found {
+		return nil, errors.New("runtime install boundary missing")
+	}
+	pins := map[string]string{}
+	for _, argument := range strings.Fields(strings.ReplaceAll(install, "\\\n", " ")) {
+		pin := installPin.FindStringSubmatch(argument)
+		if len(pin) != 3 || pins[pin[1]] != "" {
+			return nil, errors.New("every runtime install argument must be a unique exact package-version pin")
+		}
+		pins[pin[1]] = pin[2]
+	}
+	if len(pins) == 0 {
+		return nil, errors.New("runtime direct pins missing")
+	}
+	return pins, nil
 }
 
 // readInput refuses links, special files and complete reads over the fixed bound.
@@ -130,6 +190,7 @@ func readInput(path string) ([]byte, error) {
 	return raw, nil
 }
 
+// emit writes the complete canonical expectation only after lock and recipe validation.
 func emit(root string, out io.Writer) error {
 	dir := filepath.Join(root, ".github", "containers")
 	raw, err := readInput(filepath.Join(dir, "trusted-runtime-packages.lock.json"))
@@ -160,27 +221,20 @@ func emit(root string, out io.Writer) error {
 
 // generate creates a reviewable expectation, not authentication of the report's origin.
 func generate(raw, recipe []byte) (packageLock, error) {
-	var observed struct {
-		Schema   int    `json:"schema"`
-		Evidence string `json:"evidence"`
-		Image    struct {
-			Os, Architecture string
-			Config           struct {
-				User, WorkingDir string
-				Entrypoint       []string
-			}
-		} `json:"image"`
-		Inventory struct {
-			Architecture string            `json:"architecture"`
-			Packages     []packageIdentity `json:"installed_packages"`
-		} `json:"inventory"`
-	}
+	var observed coldReport
 	var value packageLock
 	if err := decode(raw, &observed, false); err != nil {
 		return value, err
 	}
-	if observed.Schema != 1 || observed.Evidence != "observed-cold-build-inventory-only" || observed.Image.Os != "linux" || observed.Image.Architecture != "amd64" || observed.Inventory.Architecture != "amd64" || observed.Image.Config.User != "1001:1001" || observed.Image.Config.WorkingDir != "/project" || len(observed.Image.Config.Entrypoint) != 1 || observed.Image.Config.Entrypoint[0] != "/usr/local/bin/godot" {
-		return value, errors.New("cold report identity refused")
+	if err := validateReport(observed); err != nil {
+		return value, err
+	}
+	pins, err := parseInstallPins(recipe)
+	if err != nil {
+		return value, err
+	}
+	if len(observed.Inventory.Packages) <= len(pins) {
+		return value, errors.New("cold report lacks installed dependency identities")
 	}
 	bases, snapshots := runtimeFrom.FindAllSubmatch(recipe, -1), snapshotSetting.FindAllSubmatch(recipe, -1)
 	if len(bases) != 1 || len(snapshots) != 1 {
@@ -194,6 +248,56 @@ func generate(raw, recipe []byte) (packageLock, error) {
 	return value, joinRecipe(value, recipe)
 }
 
+// reportFileSet refuses missing, duplicated, malformed or unbounded evidence identities.
+func reportFileSet(files []reportFile, absolute bool) (map[string]bool, error) {
+	if len(files) == 0 || len(files) > 256 {
+		return nil, errors.New("cold report file identities missing or over bound")
+	}
+	seen := map[string]bool{}
+	for _, file := range files {
+		if file.Path == "" || filepath.Clean(file.Path) != file.Path || filepath.IsAbs(file.Path) != absolute || file.Path == "." || strings.HasPrefix(file.Path, "../") || strings.ContainsAny(file.Path, "\r\n\x00") || !fileDigest.MatchString(file.SHA256) || file.Bytes <= 0 || file.Bytes > 256*1024*1024 || seen[file.Path] {
+			return nil, errors.New("cold report file identity refused")
+		}
+		seen[file.Path] = true
+	}
+	return seen, nil
+}
+
+// validateReport requires the complete observation envelope, without authenticating its origin.
+func validateReport(observed coldReport) error {
+	if observed.Schema != 1 || observed.Evidence != "observed-cold-build-inventory-only" || !manifestDigest.MatchString(observed.Image.Id) || observed.Image.Os != "linux" || observed.Image.Architecture != "amd64" || observed.Inventory.Architecture != "amd64" || observed.Image.Config.User != "1001:1001" || observed.Image.Config.WorkingDir != "/project" || len(observed.Image.Config.Entrypoint) != 1 || observed.Image.Config.Entrypoint[0] != "/usr/local/bin/godot" || !fileDigest.MatchString(observed.Inventory.Engine) || !packageVersion.MatchString(observed.EngineVersion) || !archiveDigest.MatchString(observed.EngineArchiveSHA512) {
+		return errors.New("cold report identity refused")
+	}
+	apt, err := reportFileSet(observed.Inventory.Files, true)
+	if err != nil {
+		return err
+	}
+	for _, required := range []string{"/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/apt.conf.d/50snapshot", "/usr/share/keyrings/ubuntu-archive-keyring.gpg", "/etc/ssl/certs/ca-certificates.crt"} {
+		if !apt[required] {
+			return errors.New("cold report APT evidence incomplete")
+		}
+	}
+	signed, indexes := false, false
+	for path := range apt {
+		signed = signed || (strings.HasPrefix(path, "/var/lib/apt/lists/") && strings.HasSuffix(path, "_InRelease"))
+		indexes = indexes || (strings.HasPrefix(path, "/var/lib/apt/lists/") && strings.Contains(filepath.Base(path), "_Packages"))
+	}
+	if !signed || !indexes {
+		return errors.New("cold report APT indexes missing")
+	}
+	recipes, err := reportFileSet(observed.Recipe, false)
+	if err != nil {
+		return err
+	}
+	for _, required := range minimumRecipeFiles {
+		if !recipes[required] {
+			return errors.New("cold report recipe evidence incomplete")
+		}
+	}
+	return nil
+}
+
+// main reports validation failures with a nonzero exit and no success output.
 func main() {
 	err := run(os.Args[1:], os.Stdout)
 	if err != nil {
@@ -202,6 +306,7 @@ func main() {
 	}
 }
 
+// run dispatches bounded report generation or validated expectation emission.
 func run(args []string, out io.Writer) error {
 	if len(args) == 2 && args[0] == "--emit" {
 		return emit(args[1], out)

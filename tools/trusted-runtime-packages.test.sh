@@ -22,6 +22,7 @@ export PATH="$state/bin:$PATH" OBSERVED="$state/observed"
 verify="$root/tools/verify-trusted-runtime-packages.sh"
 bash "$verify" "$state/expected" > "$state/result"
 grep -qx 'TRUSTED_RUNTIME_PACKAGES verified=2 architecture=amd64' "$state/result"
+# Require a failed observation to emit no successful equality receipt.
 refuse() {
   if bash "$verify" "$1" > "$state/result" 2>&1; then echo "accepted $2" >&2; exit 1; fi
   if grep -q '^TRUSTED_RUNTIME_PACKAGES verified=' "$state/result"; then echo 'emitted false success' >&2; exit 1; fi
