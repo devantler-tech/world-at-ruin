@@ -19,8 +19,19 @@ if ! yq -o=json '.' "$workflow" | jq -e '
     and ([.steps[] | select(.run == "bash tools/install-ci-godot.sh")] | length) == 1
     and (.steps[-1] | .id == "proof" and .shell == "bash"
       and .run == ("bash tools/client-proof-completion.sh " + $kind) and (has("if") | not));
-  .on == {pull_request:null,merge_group:null}
+  def result($job):
+    "${{ needs." + $job + ".result"
+    + (if (["client-ordinary","client-sandbox","owned-child-native"] | index($job)) != null
+      then " == '\''success'\'' && '\''success'\'' || '\''failure'\''" else "" end) + " }}";
+  ["retired-repo-links","client-ordinary","client-sandbox","client-export-macos",
+    "license-guard","lint","duplication-gate","gdscript-lint","go-vulnerability-scan",
+    "server-ci","gameserver-commit-trial","zone-container","nakama-native","spire-native",
+    "owned-child-native","detect-visual-changes","frame-capture","frame-capture-exported"] as $required
+  | .on == {pull_request:null,merge_group:null}
   and .permissions == {contents:"read"}
+  and (has("defaults") | not)
+  and (.env | keys == ["GODOT_MACOS_SHA512","GODOT_SHA512","GODOT_TEMPLATES_SHA512","GODOT_VERSION"])
+  and (.jobs | has("client-smoke") | not)
   and (.jobs["client-ordinary"] | worker("ordinary")
     and .name == "Ordinary client proof"
     and .defaults == {run:{shell:"bash --noprofile --norc tools/client-proof-step.sh {0}"}}
@@ -37,15 +48,15 @@ if ! yq -o=json '.' "$workflow" | jq -e '
     and (.steps | length) == 6
     and .steps[2] == {name:"Runtime footprint reports require complete bounded observations", run:"go test tools/trusted-runtime-packages/main.go tools/trusted-runtime-packages/main_test.go\nbash tools/trusted-runtime-packages.test.sh\ngo test tools/trusted-runtime-bases/main.go tools/trusted-runtime-bases/main_test.go\nbash tools/trusted-runtime-bases.test.sh\ngo test tools/trusted-runtime-footprint/main.go tools/trusted-runtime-footprint/main_test.go\ngo test tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go\nbash tools/trusted-runtime-inventory.test.sh\n"}
     and .steps[4] == {name:"Real sandbox refuses escape and runs the full trusted suite", "timeout-minutes":45, env:{WAR_TRUSTED_RUNTIME_FOOTPRINT:"1",WAR_TRUSTED_RUNTIME_INVENTORY_PROBE:"1"}, run:"bash tools/sandbox-godot-isolation.test.sh"})
-  and (.jobs["client-smoke"] |
+  and (.jobs["ci-required-checks"] |
     keys == ["if","name","needs","runs-on","steps","timeout-minutes"]
-    and .name == "Client smoke boot" and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 5
-    and .if == "${{ always() }}" and .needs == ["client-ordinary","client-sandbox"]
-    and (.steps | length) == 4 and (.steps[0] | checkout)
-    and ([.steps[] | select(has("continue-on-error") or has("if") or has("shell"))] | length) == 0
-    and .steps[1].run == "bash tools/client-proof-gate.test.sh"
-    and .steps[2].run == "bash tools/client-proof-workflow-guard.test.sh"
-    and .steps[3].run == "bash tools/client-proof-gate.sh"
+    and .name == "CI - Required Checks" and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 5
+    and .if == "${{ always() }}" and .needs == $required
+    and (.steps | length) == 5
+    and (.steps[0] | keys == ["uses","with"] and checkout)
+    and (.steps[1] | keys == ["name","run"] and .run == "bash tools/client-proof-gate.test.sh")
+    and (.steps[2] | keys == ["name","run"] and .run == "bash tools/client-proof-workflow-guard.test.sh")
+    and (.steps[3] | keys == ["env","name","run"] and .run == "bash tools/client-proof-gate.sh")
     and .steps[3].env == {
       EXPECTED_SHA:"${{ github.sha }}", ORDINARY_RESULT:"${{ needs.client-ordinary.result }}",
       SANDBOX_RESULT:"${{ needs.client-sandbox.result }}",
@@ -53,15 +64,11 @@ if ! yq -o=json '.' "$workflow" | jq -e '
       SANDBOX_COMPLETE:"${{ needs.client-sandbox.outputs.complete }}",
       ORDINARY_SHA:"${{ needs.client-ordinary.outputs.tested-sha }}",
       SANDBOX_SHA:"${{ needs.client-sandbox.outputs.tested-sha }}"
-    })
-  and (.jobs["ci-required-checks"] |
-    (has("continue-on-error") | not)
-    and (.steps[0] | keys == ["uses","with"])
-    and
-    .if == "${{ always() }}"
-    and ([.needs[] | select(. == "client-smoke")] | length) == 1
-    and (.steps | length) == 1
-    and (.steps[0].with["job-results"] | contains("${{ needs.client-smoke.result == '\''success'\'' && '\''success'\'' || '\''failure'\'' }}")))
+    }
+    and (.steps[4] | keys == ["uses","with"]
+      and (.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))
+      and (.with | keys == ["job-results"])
+      and .with["job-results"] == ($required | map(result(.)) | join(" "))))
 ' >/dev/null; then
   echo '::error::client CI must require both complete, independently cleaned proofs at the integration SHA' >&2
   exit 1

@@ -1480,10 +1480,11 @@ the permanent blocking policy.
   - `ci.yaml` (`pull_request` + `merge_group`) lints, tests and analyses. It is the gate on a
     change. Its required aggregate includes a reachable-vulnerability scan for both Go modules.
     Complete candidate sandbox and ordinary client proofs run in independent jobs with separate
-    checkouts and private save seams. `client-smoke` / `Client smoke boot` remains the short stable
-    gate: both workers must succeed and report cleanup plus the same event integration SHA.
-    The aggregate refuses a skipped stable gate. No historical or ordinary scene is removed by
-    this split; the independently required trusted workflow remains enforced. Validate with
+    checkouts and private save seams. `CI - Required Checks` validates their evidence and then
+    aggregates every required dependency within one five-minute job. Both workers must succeed
+    and report cleanup plus the same event integration SHA. The job evaluates failed or canceled
+    dependencies and refuses skipped, incomplete or mismatched client proofs. No historical or
+    ordinary scene is omitted; the independently required trusted workflow remains enforced. Validate with
     `bash tools/client-proof-gate.test.sh`, `bash tools/client-proof-completion.test.sh`,
     `bash tools/client-proof-workflow-guard.test.sh` and `bash tools/client-proof-phase.test.sh`.
     The phase controls exercise real timeout, SIGINT/SIGTERM, nested engine retirement and

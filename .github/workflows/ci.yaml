@@ -1110,32 +1110,6 @@ jobs:
         shell: bash
         run: bash tools/client-proof-completion.sh sandbox
 
-  client-smoke:
-    name: Client smoke boot
-    timeout-minutes: 5
-    runs-on: ubuntu-latest
-    needs: [client-ordinary, client-sandbox]
-    if: ${{ always() }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Prove complete client evidence is required
-        run: bash tools/client-proof-gate.test.sh
-      - name: Prove the workflow cannot omit either proof
-        run: bash tools/client-proof-workflow-guard.test.sh
-      - name: Require both completed proofs of this integration
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
-          ORDINARY_RESULT: ${{ needs.client-ordinary.result }}
-          SANDBOX_RESULT: ${{ needs.client-sandbox.result }}
-          ORDINARY_COMPLETE: ${{ needs.client-ordinary.outputs.complete }}
-          SANDBOX_COMPLETE: ${{ needs.client-sandbox.outputs.complete }}
-          ORDINARY_SHA: ${{ needs.client-ordinary.outputs.tested-sha }}
-          SANDBOX_SHA: ${{ needs.client-sandbox.outputs.tested-sha }}
-        run: bash tools/client-proof-gate.sh
-
   client-export-macos:
     name: Client export (macOS)
     # BUILD VERIFICATION, not distribution: this proves a change still exports
@@ -3260,6 +3234,7 @@ jobs:
 
   ci-required-checks:
     name: CI - Required Checks
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     # detect-visual-changes is in here for a reason that is easy to miss: it is
     # the GATE for frame-capture, so if it fails, frame-capture is skipped — and
@@ -3269,7 +3244,8 @@ jobs:
     needs:
       [
         retired-repo-links,
-        client-smoke,
+        client-ordinary,
+        client-sandbox,
         client-export-macos,
         license-guard,
         lint,
@@ -3288,6 +3264,24 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove complete client evidence is required
+        run: bash tools/client-proof-gate.test.sh
+      - name: Prove the workflow cannot omit either proof
+        run: bash tools/client-proof-workflow-guard.test.sh
+      - name: Require both completed proofs of this integration
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          ORDINARY_RESULT: ${{ needs.client-ordinary.result }}
+          SANDBOX_RESULT: ${{ needs.client-sandbox.result }}
+          ORDINARY_COMPLETE: ${{ needs.client-ordinary.outputs.complete }}
+          SANDBOX_COMPLETE: ${{ needs.client-sandbox.outputs.complete }}
+          ORDINARY_SHA: ${{ needs.client-ordinary.outputs.tested-sha }}
+          SANDBOX_SHA: ${{ needs.client-sandbox.outputs.tested-sha }}
+        run: bash tools/client-proof-gate.sh
       - uses: devantler-tech/.github/actions/aggregate-job-checks@8ed2071ebe18864b8b86efe0f6b1df8d73d2a6ab # v7.10.4
         with:
           # frame-capture, frame-capture-exported and detect-visual-changes are
@@ -3300,7 +3294,8 @@ jobs:
           # what keeps a broken gate from silently dropping either.
           job-results: >-
             ${{ needs.retired-repo-links.result }}
-            ${{ needs.client-smoke.result == 'success' && 'success' || 'failure' }}
+            ${{ needs.client-ordinary.result == 'success' && 'success' || 'failure' }}
+            ${{ needs.client-sandbox.result == 'success' && 'success' || 'failure' }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}

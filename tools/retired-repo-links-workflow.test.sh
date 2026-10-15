@@ -39,8 +39,9 @@ admit() {
     and (.ci.jobs["ci-required-checks"] |
       (.needs | index("retired-repo-links")) != null
       and .if == "${{ always() }}"
-      and (.steps | length) == 1
-      and (.steps[0] | keys == ["uses","with"]
+      and (.steps | length) == 5
+      and ([.steps[] | select(.uses? | strings | startswith("devantler-tech/.github/actions/aggregate-job-checks@"))] | length) == 1
+      and (.steps[-1] | keys == ["uses","with"]
         and (.uses | pinned("devantler-tech/\\.github/actions/aggregate-job-checks") | type) == "string"
         and (.with | keys) == ["job-results"]
         and (.with["job-results"] | contains("${{ needs.retired-repo-links.result }}"))))
@@ -125,15 +126,16 @@ for mutation in \
   '.guard.jobs["retired-repo-links"].steps[3]["continue-on-error"]=true' \
   '.guard.jobs["retired-repo-links"].steps[4].run="true"' \
   '.ci.jobs["ci-required-checks"].needs |= map(select(. != "retired-repo-links"))' \
-  '.ci.jobs["ci-required-checks"].steps[0].with["job-results"]="success"' \
-  '.ci.jobs["ci-required-checks"].steps[0].if="false"' \
-  '.ci.jobs["ci-required-checks"].steps[0]["continue-on-error"]=true' \
-  '.ci.jobs["ci-required-checks"].steps[0].uses="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"' \
+  '.ci.jobs["ci-required-checks"].steps[-1].with["job-results"]="success"' \
+  '.ci.jobs["ci-required-checks"].steps += [.ci.jobs["ci-required-checks"].steps[-1]]' \
+  '.ci.jobs["ci-required-checks"].steps[-1].if="false"' \
+  '.ci.jobs["ci-required-checks"].steps[-1]["continue-on-error"]=true' \
+  '.ci.jobs["ci-required-checks"].steps[-1].uses="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"' \
   '.guard.jobs["retired-repo-links"].steps[0].uses="actions/checkout@v7"' \
   '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@v7.2.10"' \
   '.guard.jobs["retired-repo-links"].steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@main"' \
-  '.ci.jobs["ci-required-checks"].steps[0].uses="devantler-tech/.github/actions/aggregate-job-checks@v7"' \
-  '.ci.jobs["ci-required-checks"].steps[0].uses="example/.github/actions/aggregate-job-checks@bd0035dd8f41fcf1459b878882b8897443f8dc59"'; do
+  '.ci.jobs["ci-required-checks"].steps[-1].uses="devantler-tech/.github/actions/aggregate-job-checks@v7"' \
+  '.ci.jobs["ci-required-checks"].steps[-1].uses="example/.github/actions/aggregate-job-checks@bd0035dd8f41fcf1459b878882b8897443f8dc59"'; do
   jq "$mutation" "$scratch/bundle.json" >"$scratch/mutant.json"
   mutation_count=$((mutation_count + 1))
   if cmp -s "$scratch/bundle.json" "$scratch/mutant.json"; then
