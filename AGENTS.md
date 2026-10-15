@@ -1474,6 +1474,13 @@ the permanent blocking policy.
     unrelated-canary survival. Unreadable process inspection is a refused cleanup verdict.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
+  - `lavapipe-capture.yaml` owns advisory volumetric evidence independently of required CI.
+    It preserves the 45-minute capture, explicit llvmpipe/fog verdicts and visible failures.
+    Selector and render checkouts bind the same event integration SHA; artifacts name that SHA.
+    Its selector runs only on pull requests, conservatively captures failed diff observations
+    and validates workflow/helper changes. Run `tools/select-lavapipe-capture.test.sh`,
+    `tools/lavapipe-workflow.test.sh` and the existing capture-guard controls. Required CI
+    aggregation is unchanged. See [the workflow contract](docs/ci/lavapipe-evidence.md).
   - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active
     `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
     scan, and proves seeded retired links and missing configuration fail using the exact source
