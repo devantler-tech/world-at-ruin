@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Build only reviewed runtime bytes and the checksum-verified engine.
 set -euo pipefail
+mode="${WAR_TRUSTED_RUNTIME_INVENTORY:-0}"
+case "$mode" in 0|1) ;; *) echo '::error::runtime inventory selection refused' >&2; exit 2;; esac
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=tools/trusted-regression-lifecycle.sh
 source "$root/tools/trusted-regression-lifecycle.sh"
 context="$(mktemp -d)"
+mkdir "$context/containers"
 cleanup() {
+  if [ "$mode" = 1 ]; then
+    trusted_cleanup_controller "$context" "$root/tools/trusted-regression-phase.sh" "$context/containers"
+  fi
   local status=$trusted_cleanup_status
   trap - EXIT
   trap ':' INT TERM
@@ -16,9 +22,16 @@ cleanup() {
 trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
 trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 cp "$(command -v godot)" "$context/godot"
+cp "$root/tools/capture-trusted-runtime-inventory.sh" "$context/capture-trusted-runtime-inventory.sh"
 trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" docker build --pull --file "$root/.github/containers/trusted-regressions.Dockerfile" \
-  --tag "world-trusted-regressions:build-$$" "$context" >&2
-trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime image inspection" docker image inspect "world-trusted-regressions:build-$$" --format '{{.Id}}' >"$context/identity"
+  --build-arg "WAR_RUNTIME_INVENTORY=$mode" --tag "world-trusted-regressions:build-$$" "$context" >&2
+if [ "$mode" = 1 ]; then
+  trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime image inspection" bash "$root/tools/inspect-trusted-runtime.sh" "world-trusted-regressions:build-$$" "$context" > "$context/identity"
+  printf 'TRUSTED_RUNTIME_INVENTORY ' >&2
+  cat "$context/report.json" >&2
+else
+  trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime image inspection" docker image inspect "world-trusted-regressions:build-$$" --format '{{.Id}}' >"$context/identity"
+fi
 digest="$(cat "$context/identity")"
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
   echo '::error::trusted runtime image identity is missing' >&2
