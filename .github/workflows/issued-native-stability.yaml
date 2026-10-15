@@ -1,0 +1,81 @@
+name: Issued native startup stability
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Measure ten fresh issued-SPIRE trials per architecture
+        required: true
+        type: choice
+        options: [measure-issued-startup]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issued-native-stability-main
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    name: Bind the reviewed main source
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      source: ${{ steps.identity.outputs.source }}
+    steps:
+      - name: Refuse an unauthorized measurement before checkout
+        id: identity
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ $GITHUB_REPOSITORY == devantler-tech/world-at-ruin &&
+            $GITHUB_EVENT_NAME == workflow_dispatch && $GITHUB_REF == refs/heads/main &&
+            $GITHUB_WORKFLOW_REF == devantler-tech/world-at-ruin/.github/workflows/issued-native-stability.yaml@refs/heads/main &&
+            $CONFIRMATION == measure-issued-startup && $GITHUB_SHA =~ ^[0-9a-f]{40}$ &&
+            $GITHUB_RUN_ID =~ ^[1-9][0-9]*$ && $GITHUB_RUN_ATTEMPT =~ ^[1-9][0-9]*$ ]]
+          printf 'source=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  trials:
+    name: Repeat issued startup (${{ matrix.arch }})
+    needs: admit
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.admit.outputs.source }}
+          persist-credentials: false
+      - name: Prove measurement and workflow refusals
+        run: |
+          bash tools/issued-native-stability.test.sh
+          bash tools/issued-native-stability-workflow.test.sh
+      - name: Build one existing issued-SPIRE image
+        id: native-image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: server/Dockerfile.nakama-native
+          build-args: |
+            EXPERIMENTAL=true
+            RUNTIME_PROFILE=issued-spire
+          load: true
+          tags: world-at-ruin-issued-stability:measurement
+      - name: Run ten complete fresh trials
+        timeout-minutes: 15
+        env:
+          IMAGE_ID: ${{ steps.native-image.outputs.imageid }}
+          SOURCE_SHA: ${{ needs.admit.outputs.source }}
+          ARCHITECTURE: ${{ matrix.arch }}
+        run: bash tools/issued-native-stability.sh "$IMAGE_ID" "$SOURCE_SHA" "$ARCHITECTURE"

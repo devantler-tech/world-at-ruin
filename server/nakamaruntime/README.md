@@ -521,6 +521,23 @@ Controller forwarding remains diagnostic. Protected forwarding and gameplay
 admission remain #1346; the independent witness remains #1341. No production
 activation or same-role adoption is authorized.
 
+The manual `Issued native startup stability` workflow measures ten fresh complete
+issued-SPIRE trials on each native architecture. Dispatch it from `main` with
+`gh workflow run issued-native-stability.yaml --ref main -f confirmation=measure-issued-startup`.
+It binds the full source SHA, run ID and attempt before checkout, then builds one
+local immutable image per architecture. Every trial creates and retires its own
+database, network and issuer processes; only image bytes are shared within the job.
+The measurement stops on the first failed or incomplete observation, including a
+printed pass followed by failed cleanup. It is not a retry-to-green path.
+Only ten successful joined wrappers produce an architecture completion receipt;
+both architecture jobs must succeed for complete measurement. Source/image drift,
+missing prerequisite observations and failed reads refuse completion.
+The normal CI matrix, six-minute profile and twenty-second startup limits remain
+unchanged. The manual job retains a twenty-five-minute cap and bounds its ten-trial
+step to fifteen minutes; exhausting either budget is incomplete evidence. These
+samples describe only the measured source and images, not every historical cause
+or production serving authority. No reusable runtime archive is published.
+
 These disposable checks establish behavior of the identified candidate artifacts.
 They do not establish adoption by production serving artifacts or compatibility of
 the actual retained rollback artifact. Production serving artifacts,

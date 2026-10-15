@@ -1017,6 +1017,14 @@ the permanent blocking policy.
   and their complete verdicts are mandatory. The same-role second-process positive establishes no original
   process or launch ownership. See ADR 0046 and `docs/design/spire-role-trial.md`;
   #1345 supplies the independent original-child outcome; #1346 and #1341 remain separate gates.
+- **Issued startup stability measurement:** the manual
+  `.github/workflows/issued-native-stability.yaml` binds reviewed main source and
+  runs ten fresh complete issued-SPIRE trials per native architecture against one
+  immutable local image. Any failed process, observation or cleanup stops the
+  measurement; no later pass clears it. Keep ordinary CI and inner deadlines intact.
+  Validate its driver and workflow with `tools/issued-native-stability.test.sh`
+  and `tools/issued-native-stability-workflow.test.sh`; real evidence requires the
+  manual two-architecture run described in `server/nakamaruntime/README.md`.
 - **Real issued claims with native storage:** the separate `issued-spire` image
   profile compiles `war_issued_spire` acceptance only in the issued dependency
   union. Run `bash tools/smoke-nakama-native.sh <local-image> --experimental --spire`.

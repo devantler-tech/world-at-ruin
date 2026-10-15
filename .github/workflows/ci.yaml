@@ -1462,7 +1462,10 @@ jobs:
           load: true
           tags: world-at-ruin-nakama-native:ci
       - name: Prove native profile acceptance refuses partial observations
-        run: bash tools/nakama-native-harness.test.sh
+        run: |
+          bash tools/nakama-native-harness.test.sh
+          bash tools/issued-native-stability.test.sh
+          bash tools/issued-native-stability-workflow.test.sh
       - name: Exercise the actual packaged runtime against disposable PostgreSQL
         env:
           NATIVE_PROFILE: ${{ matrix.profile }}
