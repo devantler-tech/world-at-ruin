@@ -27,7 +27,13 @@ The initial 147-package expectation comes from signed source
 With the single report JSON saved as `cold-report.json`, generate and inspect:
 
 ```sh
-go run tools/trusted-runtime-packages/main.go --from-report cold-report.json . > .github/containers/trusted-runtime-packages.lock.json
+(
+  set -eu
+  generated_lock="$(mktemp .github/containers/.trusted-runtime-packages.XXXXXX)"
+  trap 'rm -f "$generated_lock"' EXIT
+  go run tools/trusted-runtime-packages/main.go --from-report cold-report.json . > "$generated_lock"
+  mv "$generated_lock" .github/containers/trusted-runtime-packages.lock.json
+)
 go run tools/trusted-runtime-packages/main.go --emit .
 go test -race tools/trusted-runtime-packages/main.go tools/trusted-runtime-packages/main_test.go
 bash tools/trusted-runtime-packages.test.sh
