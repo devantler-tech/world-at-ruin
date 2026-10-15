@@ -493,6 +493,9 @@ receipt, committed rows and accepted pins independently. Every original,
 successful reader and refused restart process fetches its own credential with
 projected claims files absent. Their constant `ISSUED CLAIMS SNAPSHOT FETCHED`
 marker means snapshot selection only, before the later full listener validation.
+The original coordinator joins health and captured snapshot output within one
+existing startup window: HTTP readiness alone does not drain child stdout.
+Failures report a fixed milestone without publishing the private child log.
 Peers use a distinct claims address and are joined before reuse. Both fresh
 same-correlation and replacement processes must refuse enrollment after their
 own successful snapshot fetch, with no further GET, claim or provider effects.
