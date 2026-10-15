@@ -102,6 +102,7 @@ func (p *nativeProcess) stop(t *testing.T) {
 }
 
 type fixture struct {
+	onStartupFailure func(nativeStartupObservation)
 	allocationpb.UnimplementedAllocationServiceServer
 	t                            *testing.T
 	dir                          string
@@ -338,6 +339,7 @@ func (f *fixture) start(env map[string]string, modules string, grace int) *nativ
 	p.cmd.Env = append(os.Environ(), "NAKAMA_TELEMETRY=0")
 	p.cmd.Stdout, p.cmd.Stderr = p.log, p.log
 	if e := p.cmd.Start(); e != nil {
+		f.recordStartupFailure("process-start-failed", p)
 		f.t.Fatal(e)
 	}
 	f.process = p
@@ -353,32 +355,51 @@ func (f *fixture) launch(env map[string]string, modules string, grace int, healt
 
 func (f *fixture) awaitStartup(p *nativeProcess, healthy bool) *nativeProcess {
 	f.t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case <-p.done:
-			if healthy {
-				f.t.Fatalf("native startup failed: %s", p.log.String())
-			}
-			return p
-		default:
+	ctx, cancel := context.WithTimeout(f.t.Context(), 20*time.Second)
+	defer cancel()
+	return f.awaitStartupContext(ctx, p, healthy)
+}
+
+// The custody prerequisite, health and snapshot must share one startup window.
+func (f *fixture) awaitStartupContext(ctx context.Context, p *nativeProcess, healthy bool) *nativeProcess {
+	f.t.Helper()
+	condition := awaitNativeStartupCondition(ctx, p.done, func(requestContext context.Context) bool {
+		request, err := http.NewRequestWithContext(requestContext, http.MethodGet, "http://127.0.0.1:7350/healthcheck", nil)
+		if err != nil {
+			return false
 		}
-		response, e := (&http.Client{Timeout: 200 * time.Millisecond}).Get("http://127.0.0.1:7350/healthcheck")
-		if e == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == http.StatusOK {
-				if !healthy {
-					p.stop(f.t)
-					f.t.Fatal("invalid native startup became ready")
-				}
-				return p
-			}
+		response, err := (&http.Client{Timeout: 200 * time.Millisecond}).Do(request)
+		if err != nil {
+			return false
 		}
-		time.Sleep(25 * time.Millisecond)
+		_ = response.Body.Close()
+		return response.StatusCode == http.StatusOK
+	})
+	switch condition {
+	case "process-exited":
+		if healthy {
+			f.recordStartupFailure(condition, p)
+			f.t.Fatalf("native startup failed: %s", p.log.String())
+		}
+		return p
+	case "ready":
+		if !healthy {
+			p.stop(f.t)
+			f.t.Fatal("invalid native startup became ready")
+		}
+		return p
 	}
 	p.stop(f.t)
+	f.recordStartupFailure("startup-deadline", p)
 	f.t.Fatal("native startup did not settle")
 	return nil
+}
+
+// recordStartupFailure reports only bounded observations to an opting-in worker.
+func (f *fixture) recordStartupFailure(condition string, p *nativeProcess) {
+	if f.onStartupFailure != nil {
+		f.onStartupFailure(observeNativeStartup(condition, p.log.String()))
+	}
 }
 
 // account obtains a real native session and reads its authenticated account ID.

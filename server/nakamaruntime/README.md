@@ -495,7 +495,19 @@ projected claims files absent. Their constant `ISSUED CLAIMS SNAPSHOT FETCHED`
 marker means snapshot selection only, before the later full listener validation.
 The original coordinator joins health and captured snapshot output within one
 existing startup window: HTTP readiness alone does not drain child stdout.
-Failures report a fixed milestone without publishing the private child log.
+Failures report a fixed milestone and allow-listed startup condition, refusal
+class and snapshot count without publishing the private child log. Classification
+requires one exact structured fatal record; malformed, duplicate-key, oversized
+or ambiguous output stays unclassified. The controller revalidates every new
+field before public output. A WorkloadAPI refusal identifies the failed request,
+not its underlying cause; a listening issuer socket alone does not prove usable
+credentials. Before the original main launches, a disposable same-UID helper
+waits for that exact role, closes its SDK, emits one fixed verdict and exits.
+The bridge joins it before starting main and receives no credential material;
+the helper has no database credential. Prerequisite, HTTP health and captured
+snapshot all consume the original twenty-second startup window. Main still
+performs its own single three-second fetch; a prerequisite cannot substitute
+its snapshot, retry a failed main or grant original custody/serving authority.
 Peers use a distinct claims address and are joined before reuse. Both fresh
 same-correlation and replacement processes must refuse enrollment after their
 own successful snapshot fetch, with no further GET, claim or provider effects.

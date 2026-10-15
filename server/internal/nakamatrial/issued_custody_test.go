@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,7 +80,7 @@ func TestNativeIssuedOriginalClaimCustody(t *testing.T) {
 			}
 			c.close(t)
 			if !t.Failed() {
-				t.Logf("ISSUED ORIGINAL CUSTODY PASS: cut=%s real_process_snapshots=true original_get_claim=%t restarts_refused=2 exact_joins=true", cut, wantClaim)
+				t.Logf("ISSUED ORIGINAL CUSTODY PASS: cut=%s credential_prerequisite_joined=true real_process_snapshots=true original_get_claim=%t restarts_refused=2 exact_joins=true", cut, wantClaim)
 			}
 		})
 	}
@@ -98,7 +99,7 @@ type custodyIPCEvent struct {
 
 // The worker's main goroutine exclusively owns the private protocol. The native
 // subtest and its HTTP handlers exchange bounded events; they never use FD3.
-func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, decoder *json.Decoder, milestone func(string)) {
+func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, decoder *json.Decoder, milestone func(string), startupFailure func(nativeStartupObservation)) {
 	if !containsCustodyCut(*issuedCut) {
 		t.Fatal("unknown original custody cut")
 	}
@@ -134,6 +135,7 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 		done <- t.Run("owned-native", func(t *testing.T) {
 			milestone("original-fixture")
 			f := newFixture(t)
+			f.onStartupFailure = startupFailure
 			env := f.issuedClaimsEnv(*issuedAPI)
 			env["WAR_HANDOFF_CLAIMS_TRUST_DOMAIN"] = "war-fixture.test"
 			env["WAR_ISSUED_CLAIMS_SERVER_DNS"] = issuedServerDNS
@@ -143,7 +145,20 @@ func issuedCustodyWorker(t *testing.T, input *os.File, encoder *json.Encoder, de
 			milestone("original-main-startup")
 			startup, stopStartup := context.WithTimeout(ctx, 20*time.Second)
 			defer stopStartup()
-			main := f.launch(env, filepath.Join(*bundle, "modules"), 10, true)
+			// Socket existence does not prove the agent has synchronized this
+			// role. Discard the helper's material by joining it before main;
+			// the real plugin still performs its own single three-second fetch.
+			milestone("original-credential-prerequisite")
+			if err := awaitIssuedReadinessProcess(startup, func(request context.Context) *exec.Cmd {
+				return exec.CommandContext(request, "/out/native-trial.test", "-war-experimental", "-war-bundle="+*bundle, "-war-postgres="+*postgres, "-test.run=^TestNativeIssuedSPIREWorker$", "-war-spire-role=readiness", "-war-spire-api="+*issuedAPI, "-war-spire-private="+*issuedPrivate, "-war-spire-id="+*issuedIdentity)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if startup.Err() != nil {
+				t.Fatal("issued credential prerequisite exhausted startup")
+			}
+			milestone("original-main-startup")
+			main := f.awaitStartupContext(startup, f.start(env, filepath.Join(*bundle, "modules"), 10), true)
 			milestone("original-main-snapshot")
 			if err := awaitIssuedSnapshot(startup, main.done, main.log.String); err != nil {
 				t.Fatal("issued main snapshot readiness failed", err)
