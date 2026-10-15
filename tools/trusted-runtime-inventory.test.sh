@@ -61,3 +61,25 @@ for observation in inspect-failed extract-failed cleanup-failed timeout; do
   if grep -q '^TRUSTED_RUNTIME_INVENTORY ' "$state/report"; then echo 'published incomplete inventory' >&2; exit 1; fi
 done
 echo 'trusted runtime inventory selection, complete-read, timeout and cleanup controls passed'
+# Exercise failed empty link inspection through the actual capture command.
+cat > "$state/bin/dpkg" <<'DPKG'
+#!/bin/sh
+printf 'amd64\n'
+DPKG
+cat > "$state/bin/dpkg-query" <<'QUERY'
+#!/bin/sh
+printf 'package\tbase-files\t1\tamd64\tinstalled\n'
+QUERY
+cat > "$state/bin/find" <<'FIND'
+#!/bin/sh
+case "$*" in *'-type l'*) exit 9;; esac
+exit 0
+FIND
+chmod +x "$state/bin/dpkg" "$state/bin/dpkg-query" "$state/bin/find"
+# Relocate only the fixed output for the macOS fixture; observation code is unchanged.
+sed "s|out=/usr/share/war-trusted-runtime/inventory.tsv|out=$state/capture.tsv|" "$root/tools/capture-trusted-runtime-inventory.sh" > "$state/capture.sh"
+capture_status=0
+PATH="$state/bin:$PATH" bash "$state/capture.sh" >/dev/null 2>&1 || capture_status=$?
+if [ "$capture_status" -ne 9 ]; then
+  echo 'failed link inspection status was lost' >&2; exit 1
+fi

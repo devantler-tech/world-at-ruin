@@ -9,7 +9,8 @@ dpkg --print-architecture >> "$out"
 dpkg-query -W -f='package\t${Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n' | sort >> "$out"
 inputs="$(mktemp)"
 for directory in /var/lib/apt/lists /etc/apt/apt.conf.d /etc/apt/sources.list.d; do
-  if [ -n "$(find "$directory" -maxdepth 1 -type l -print)" ]; then
+  links="$(find "$directory" -maxdepth 1 -type l -print)"
+  if [ -n "$links" ]; then
     echo 'runtime inventory refuses linked APT inputs' >&2; exit 1
   fi
   find "$directory" -maxdepth 1 -type f ! -name lock -print >> "$inputs"
