@@ -62,7 +62,7 @@ printf '[{"Id":"sha256:%064d","Os":"linux","Architecture":"amd64","Config":{"Use
 mkdir "$state/tmp"
 PATH="$state/bin:$PATH" TMPDIR="$state/tmp" WAR_TRUSTED_RUNTIME_INVENTORY=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"
 grep -q '^TRUSTED_RUNTIME_INVENTORY {"schema":1,' "$state/report"
-grep '^TRUSTED_RUNTIME_INVENTORY ' "$state/report" | sed 's/^TRUSTED_RUNTIME_INVENTORY //' | jq -e '.evidence=="observed-cold-build-inventory-only" and (.inventory.installed_packages|length)==12 and (.recipe_files|length)==19 and (.inventory.transaction.apt_targets|length)==1 and (.inventory.transaction.downloaded_archives|length)==10 and (.inventory.transaction.downloaded_archives | all(.apt_origin.trusted == true))' >/dev/null
+grep '^TRUSTED_RUNTIME_INVENTORY ' "$state/report" | sed 's/^TRUSTED_RUNTIME_INVENTORY //' | jq -e '.evidence=="observed-cold-build-inventory-only" and (.inventory.installed_packages|length)==12 and (.recipe_files|length)==19 and (.inventory.transaction.apt_targets|length)==1 and (.inventory.transaction.downloaded_archives|length)==10 and (.inventory.transaction.downloaded_archives | all((.apt_origins|length)==1 and all(.apt_origins[]; .trusted == true)))' >/dev/null
 for observation in inspect-failed extract-failed cleanup-failed timeout; do
   if PATH="$state/bin:$PATH" TMPDIR="$state/tmp" OBSERVATION="$observation" WAR_TRUSTED_INSPECT_SECONDS=2 WAR_TRUSTED_RUNTIME_INVENTORY=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"; then
     echo "accepted failed $observation observation" >&2; exit 1

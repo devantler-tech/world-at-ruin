@@ -61,6 +61,35 @@ func TestResolveOriginsJoinsTheCompleteAuthenticatedTarget(t *testing.T) {
 	}
 }
 
+func TestResolveOriginsRetainsEveryAuthenticatedTargetForIdenticalArchiveBytes(t *testing.T) {
+	request, target := fixture(t)
+	second := target
+	dir := t.TempDir()
+	second.IndexPath = filepath.Join(dir, "snapshot_updates_main_binary-amd64_Packages")
+	second.InReleasePath = filepath.Join(dir, "snapshot_updates_InRelease")
+	second.IndexURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages"
+	second.BaseURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/"
+	second.Release = "noble-updates"
+	contents := packageStanza(request, "pool/main/f/foo/foo_1.0+build1_amd64.deb")
+	if err := os.WriteFile(second.IndexPath, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second.InReleasePath, []byte("second signed release\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveOrigins([]planRequest{request}, []targetRecord{target, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releases := map[string]bool{}
+	for _, item := range got {
+		releases[item.Release] = true
+	}
+	if len(got) != 2 || !releases["noble"] || !releases["noble-updates"] {
+		t.Fatalf("complete authenticated target set not retained: %+v", got)
+	}
+}
+
 func TestResolveOriginsRefusesIncompleteAmbiguousAndConflictingEvidence(t *testing.T) {
 	request, target := fixture(t)
 	mutations := map[string]func() ([]planRequest, []targetRecord){

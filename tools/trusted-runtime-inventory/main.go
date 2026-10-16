@@ -52,11 +52,11 @@ type inventory struct {
 }
 type archiveObservation struct {
 	installedPackage
-	Basename string        `json:"basename"`
-	URI      string        `json:"requested_uri"`
-	Bytes    int64         `json:"bytes"`
-	SHA256   string        `json:"sha256"`
-	Origin   archiveOrigin `json:"apt_origin"`
+	Basename string          `json:"basename"`
+	URI      string          `json:"requested_uri"`
+	Bytes    int64           `json:"bytes"`
+	SHA256   string          `json:"sha256"`
+	Origins  []archiveOrigin `json:"apt_origins"`
 }
 type archiveOrigin struct {
 	PackageFilename string         `json:"package_filename"`
@@ -234,7 +234,8 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 	}
 	base, acquired := map[string]installedPackage{}, map[string]bool{}
 	plans, archives := map[string]archiveObservation{}, map[string]archiveObservation{}
-	origins, originIdentities := map[string]archiveOrigin{}, map[string]installedPackage{}
+	origins, originIdentities := map[string][]archiveOrigin{}, map[string]installedPackage{}
+	originCount := 0
 	targets := map[string]aptTarget{}
 	arguments := map[string]bool{}
 	for _, line := range lines[:len(lines)-1] {
@@ -299,14 +300,20 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 			targets[item.Index.Path] = item
 			out.Targets = append(out.Targets, item)
 		case "origin":
-			if len(origins) >= 1024 {
+			if originCount >= 4096 {
 				return refuse()
 			}
 			name, identity, item, err := parseOriginRecord(f[1:])
-			if err != nil || origins[name].PackageFilename != "" {
+			if err != nil || (originIdentities[name].Name != "" && originIdentities[name] != identity) {
 				return refuse()
 			}
-			origins[name], originIdentities[name] = item, identity
+			for _, existing := range origins[name] {
+				if existing == item {
+					return refuse()
+				}
+			}
+			origins[name] = append(origins[name], item)
+			originIdentities[name], originCount = identity, originCount+1
 		default:
 			return refuse()
 		}
@@ -317,13 +324,19 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 	var totalBytes int64
 	for name, item := range archives {
 		plan := plans[name]
-		origin := origins[name]
-		target := targets[origin.Index.Path]
-		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || !requestMatchesOrigin(plan.URI, origin.IndexURI, origin.Release, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
+		archiveOrigins := origins[name]
+		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || len(archiveOrigins) == 0 {
 			return refuse()
 		}
+		for _, origin := range archiveOrigins {
+			target := targets[origin.Index.Path]
+			if !requestMatchesOrigin(plan.URI, origin.IndexURI, origin.Release, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
+				return refuse()
+			}
+		}
+		sort.Slice(archiveOrigins, func(i, j int) bool { return archiveOrigins[i].Index.Path < archiveOrigins[j].Index.Path })
 		item.URI = plan.URI
-		item.Origin = origin
+		item.Origins = archiveOrigins
 		totalBytes += item.Bytes
 		if totalBytes > 256*1024*1024 {
 			return refuse()

@@ -405,10 +405,12 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 	matches := make([][]originRecord, len(requests))
 	conflicts := make([]bool, len(requests))
 	var evidence []targetEvidence
+	seenTargetPaths, seenTargetURIs := map[string]bool{}, map[string]bool{}
 	for _, target := range targets {
-		if target.Trusted != "yes" {
+		if target.Trusted != "yes" || seenTargetPaths[target.IndexPath] || seenTargetURIs[target.IndexURI] {
 			return nil, nil, errors.New("untrusted package target")
 		}
+		seenTargetPaths[target.IndexPath], seenTargetURIs[target.IndexURI] = true, true
 		archiveRepository, err := archiveRepositoryURI(target.IndexURI, target.Release)
 		if err != nil {
 			return nil, nil, err
@@ -455,15 +457,20 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 	}
 	var out []originRecord
 	for i := range requests {
-		if conflicts[i] || len(matches[i]) != 1 {
+		if conflicts[i] || len(matches[i]) == 0 {
 			first := targets[0]
 			fmt.Fprintf(os.Stderr, "archive origin join refused: request=%q package=%q version=%q architecture=%q matches=%d conflict=%t first_index=%q first_repository=%q first_base=%q\n",
 				requests[i].URI, requests[i].Package, requests[i].Version, requests[i].Architecture, len(matches[i]), conflicts[i], first.IndexURI, first.RepoURI, first.BaseURI)
 			return nil, nil, errors.New("archive origin missing, conflicting or ambiguous")
 		}
-		out = append(out, matches[i][0])
+		out = append(out, matches[i]...)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Basename < out[j].Basename })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Basename == out[j].Basename {
+			return out[i].IndexPath < out[j].IndexPath
+		}
+		return out[i].Basename < out[j].Basename
+	})
 	sort.Slice(evidence, func(i, j int) bool { return evidence[i].IndexPath < evidence[j].IndexPath })
 	return out, evidence, nil
 }

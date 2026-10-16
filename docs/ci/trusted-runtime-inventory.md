@@ -32,11 +32,11 @@ bounded set of package targets that APT 2.8.3 marks trusted. It hashes each reta
 Packages file exactly as stored and uses APT's fixed helper to decode supported
 compressed indexes for bounded deb822 parsing. It derives each target's local
 InRelease path from APT's base URI naming rule, hashes the regular single-link
-Packages and InRelease files, and requires every acquired tuple to match exactly
-one target on its effective archive repository, derived from the selected
+Packages and InRelease files, and requires every acquired tuple to match one or
+more byte-identical targets on the effective archive repository derived from each
 Packages target URI, plus APT-encoded package filename,
 package/version/architecture, byte count and SHA-256. A missing, untrusted,
-partial, linked, conflicting or ambiguous target refuses before package scripts execute.
+partial, linked, duplicate or conflicting target refuses before package scripts execute.
 
 The same arguments and cache then run with `--no-download`, without missing-file
 tolerance or a download fallback. The existing final installed-set verifier still
@@ -48,9 +48,9 @@ a failed acquisition, verification or no-download installation.
 `preinstall_packages`, `apt_targets` and `downloaded_archives`. Each target retains
 its trusted Release identity and exact Packages/InRelease file identities. Each
 archive includes its observed tuple, basename, bytes, SHA-256, `requested_uri` and
-one `apt_origin` joined to that target. Every pre-install plan/acquired-archive pair
-must join to exactly one member of the complete authenticated target set before the
-report is emitted. Transaction
+the complete nonempty `apt_origins` set joined to those targets. Every pre-install
+plan/acquired-archive pair must join only to byte-identical members of the complete
+authenticated target set before the report is emitted. Transaction
 archives explain new or changed packages; they are not the full installed set.
 `direct_arguments` is the canonically sorted set of direct package pins; the
 wrapper preserves the original invocation order across all three APT commands.

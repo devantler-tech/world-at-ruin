@@ -103,7 +103,7 @@ func TestObservedInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Packages) != 12 || len(got.Files) != 6 || got.Architecture != "amd64" || len(got.Transaction.Archives) != 10 || len(got.Transaction.Inherited) != 2 || len(got.Transaction.Targets) != 1 || got.Transaction.Archives[0].Origin.Index.SHA256 == "" || !got.Transaction.Archives[0].Origin.Trusted {
+	if len(got.Packages) != 12 || len(got.Files) != 6 || got.Architecture != "amd64" || len(got.Transaction.Archives) != 10 || len(got.Transaction.Inherited) != 2 || len(got.Transaction.Targets) != 1 || len(got.Transaction.Archives[0].Origins) != 1 || got.Transaction.Archives[0].Origins[0].Index.SHA256 == "" || !got.Transaction.Archives[0].Origins[0].Trusted {
 		t.Fatalf("incomplete inventory: %+v", got)
 	}
 	other, err := parseInventory([]byte(inventoryFixture()), strings.Repeat("b", 64))
@@ -120,6 +120,24 @@ func TestObservedInventory(t *testing.T) {
 	if a.String() != b.String() {
 		t.Fatal("map iteration changed canonical report")
 	}
+}
+
+func TestTransactionRetainsEveryAuthenticatedOriginForOneArchive(t *testing.T) {
+	indexHash, releaseHash := strings.Repeat("c", 64), strings.Repeat("d", 64)
+	files := fmt.Sprintf("file\t%s\t456\t/var/lib/apt/lists/snapshot_updates_main_binary-amd64_Packages\nfile\t%s\t789\t/var/lib/apt/lists/snapshot_updates_InRelease\n", indexHash, releaseHash)
+	target := fmt.Sprintf("target\thttps://snapshot.ubuntu.com/dists/noble-updates/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_updates_main_binary-amd64_Packages\t456\t%s\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble-updates/\tnoble-updates\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble-updates\tnoble-updates\t/var/lib/apt/lists/snapshot_updates_InRelease\t789\t%s\n", indexHash, releaseHash)
+	origin := fmt.Sprintf("origin\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\ttest/libgl1.deb\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble-updates/\tnoble-updates\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble-updates\tnoble-updates\thttps://snapshot.ubuntu.com/dists/noble-updates/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_updates_main_binary-amd64_Packages\t456\t%s\t/var/lib/apt/lists/snapshot_updates_InRelease\t789\t%s\n", indexHash, releaseHash)
+	raw := strings.Replace(inventoryFixture(), "transaction-complete\n", files+target+origin+"transaction-complete\n", 1)
+	got, err := parseInventory([]byte(raw), strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, archive := range got.Transaction.Archives {
+		if archive.Name == "libgl1" && len(archive.Origins) == 2 && len(got.Transaction.Targets) == 2 {
+			return
+		}
+	}
+	t.Fatal("complete authenticated origin set not retained")
 }
 
 func TestArchiveOriginAcceptsAPTsEncodedRepositoryFilename(t *testing.T) {
