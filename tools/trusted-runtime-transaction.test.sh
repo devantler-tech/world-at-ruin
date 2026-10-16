@@ -38,7 +38,9 @@ if [[ "$*" = *--print-uris* ]]; then
       for n in 1 2 3 4 5; do printf "'https://snapshot.ubuntu.com/test/foo%s.deb' foo%s.deb 67108864 SHA256:%s\n" "$n" "$n" "$TRANSACTION_TEST_HASH"; done
       exit 0;;
   esac
-  row="'https://snapshot.ubuntu.com/test/foo.deb' foo.deb 4 SHA256:$TRANSACTION_TEST_HASH"
+  uri=https://snapshot.ubuntu.com/test/foo.deb
+  if [ "$mode" = credential-uri ]; then uri=https://user@snapshot.ubuntu.com/test/foo.deb; fi
+  row="'$uri' foo.deb 4 SHA256:$TRANSACTION_TEST_HASH"
   if [ "$mode" = unterminated-plan ]; then printf '%s' "$row"; else printf '%s\n' "$row"; fi
   if [ "$mode" = duplicate-plan ]; then printf '%s\n' "$row"; fi
   [ "$mode" != failed-plan ]
@@ -114,7 +116,7 @@ TMPDIR="$state/work" bash "$state/observe.sh" 1 apt-get install -y --no-install-
 grep -qx transaction-complete "$state/report"
 # No private archive/cache state may survive the helper's successful exit.
 [ -z "$(find "$state/work" -mindepth 1 -print)" ]
-for refusal in empty-plan malformed-plan oversized-plan storage-budget unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline missing-offline output-link; do
+for refusal in empty-plan malformed-plan oversized-plan storage-budget credential-uri unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline missing-offline output-link; do
   rm -f "$state/installed" "$state/install-attempted" "$state/trace" "$state/downloaded" "$state/report"
   if TMPDIR="$state/work" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
     echo "accepted $refusal transaction" >&2; exit 1
@@ -125,6 +127,9 @@ for refusal in empty-plan malformed-plan oversized-plan storage-budget untermina
     [ ! -f "$state/installed" ] && [ ! -f "$state/report" ]
   fi
   if [ "$refusal" != missing-offline ] && [ "$refusal" != output-link ]; then [ ! -f "$state/install-attempted" ]; fi
+  case "$refusal" in
+    empty-plan|malformed-plan|oversized-plan|storage-budget|credential-uri|unterminated-plan|duplicate-plan|failed-plan) [ ! -f "$state/downloaded" ];;
+  esac
   [ -z "$(find "$state/work" -mindepth 1 -print)" ]
 done
-printf '%s\n' 'runtime transaction: original install, private-cache/no-download path and 24 refusal controls passed'
+printf '%s\n' 'runtime transaction: original install, private-cache/no-download path and 25 refusal controls passed'
