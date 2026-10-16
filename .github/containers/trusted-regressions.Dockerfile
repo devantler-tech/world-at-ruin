@@ -22,7 +22,6 @@ RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.s
     'Acquire::Retries "6";' \
     'Acquire::http::Timeout "20";' \
     'Acquire::https::Timeout "20";' \
-    'Acquire::GzipIndexes "false";' \
     'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/50snapshot \
     && apt-get update \
     && bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" \

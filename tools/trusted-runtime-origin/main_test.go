@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,5 +169,52 @@ func TestTargetManifestRefusesARepeatedIndexUnderChangedMetadata(t *testing.T) {
 	}
 	if _, err := parseTargetManifest(strings.NewReader(row("Ubuntu") + row("Changed"))); err == nil {
 		t.Fatal("accepted one package index as two targets")
+	}
+}
+
+func TestCompressedIndexUsesTheFixedBoundedDecoder(t *testing.T) {
+	request, _ := fixture(t)
+	dir := t.TempDir()
+	index := filepath.Join(dir, "snapshot_main_binary-amd64_Packages.lz4")
+	raw := []byte("retained compressed bytes")
+	if err := os.WriteFile(index, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index+".decoded", []byte(packageStanza(request, "pool/main/f/foo/foo_1.0+build1_amd64.deb")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, "apt-helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nset -eu\n[ \"$1\" = cat-file ] && [ \"$#\" -eq 2 ]\ncat \"$2.decoded\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := aptHelperPath
+	aptHelperPath = helper
+	defer func() { aptHelperPath = original }()
+	seen := 0
+	hash, bytes, err := parsePackageIndex(index, func(item packageRecord) error {
+		seen++
+		return nil
+	})
+	expectedHash := fmt.Sprintf("%x", sha256.Sum256(raw))
+	if err != nil || seen != 1 || hash != expectedHash || bytes != int64(len(raw)) {
+		t.Fatalf("compressed index evidence incomplete: seen=%d hash=%q bytes=%d err=%v", seen, hash, bytes, err)
+	}
+}
+
+func TestCompressedIndexRefusesIncompleteDecodedContent(t *testing.T) {
+	dir := t.TempDir()
+	index := filepath.Join(dir, "snapshot_main_binary-amd64_Packages.lz4")
+	if err := os.WriteFile(index, []byte("retained compressed bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, "apt-helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nset -eu\n[ \"$1\" = cat-file ] && [ \"$#\" -eq 2 ]\nprintf 'Package: partial\\n'\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := aptHelperPath
+	aptHelperPath = helper
+	defer func() { aptHelperPath = original }()
+	if _, _, err := parsePackageIndex(index, func(packageRecord) error { return nil }); err == nil {
+		t.Fatal("accepted incomplete decoded content")
 	}
 }

@@ -28,14 +28,14 @@ plan output, duplicate destinations/packages, missing/extra/linked archives,
 pending partial files and changed baseline state refuse installation.
 
 Before the offline install, the repository-built origin helper reads the complete
-bounded set of package targets that APT 2.8.3 marks trusted. The diagnostic keeps
-package indexes uncompressed so the helper can parse their deb822 records without
-adding a package decoder to the runtime. It derives each target's local InRelease
-path from APT's base URI naming rule, hashes the regular single-link Packages and
-InRelease files, and requires every acquired tuple to match exactly one target on
-repository URI plus APT-encoded package filename, package/version/architecture,
-byte count and SHA-256. A missing, untrusted, partial, linked, conflicting or
-ambiguous target refuses before package scripts execute.
+bounded set of package targets that APT 2.8.3 marks trusted. It hashes each retained
+Packages file exactly as stored and uses APT's fixed helper to decode supported
+compressed indexes for bounded deb822 parsing. It derives each target's local
+InRelease path from APT's base URI naming rule, hashes the regular single-link
+Packages and InRelease files, and requires every acquired tuple to match exactly
+one target on repository URI plus APT-encoded package filename,
+package/version/architecture, byte count and SHA-256. A missing, untrusted,
+partial, linked, conflicting or ambiguous target refuses before package scripts execute.
 
 The same arguments and cache then run with `--no-download`, without missing-file
 tolerance or a download fallback. The existing final installed-set verifier still

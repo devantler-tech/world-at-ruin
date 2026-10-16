@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -22,6 +23,7 @@ import (
 const (
 	maximumManifestBytes = 1024 * 1024
 	maximumIndexBytes    = 256 * 1024 * 1024
+	maximumExpandedBytes = 512 * 1024 * 1024
 	maximumReleaseBytes  = 16 * 1024 * 1024
 	maximumLineBytes     = 1024 * 1024
 )
@@ -33,6 +35,7 @@ var (
 	archivePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~%_-]*\.deb$`)
 	pathPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._~%/-]*$`)
 	fieldPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+	aptHelperPath  = "/usr/lib/apt/apt-helper"
 )
 
 type planRequest struct {
@@ -235,12 +238,17 @@ func digestFile(path string, maximum int64) (string, int64, error) {
 		return "", 0, err
 	}
 	defer file.Close()
+	digest, err := digestOpenFile(file, info)
+	return digest, info.Size(), err
+}
+
+func digestOpenFile(file *os.File, info os.FileInfo) (string, error) {
 	h := sha256.New()
 	written, err := io.Copy(h, file)
 	if err != nil || written != info.Size() {
-		return "", 0, errors.New("origin input read refused")
+		return "", errors.New("origin input read refused")
 	}
-	return hex.EncodeToString(h.Sum(nil)), written, nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func parsePackageIndex(path string, visit func(packageRecord) error) (string, int64, error) {
@@ -249,8 +257,36 @@ func parsePackageIndex(path string, visit func(packageRecord) error) (string, in
 		return "", 0, err
 	}
 	defer file.Close()
-	h := sha256.New()
-	scanner := bufio.NewScanner(io.TeeReader(file, h))
+	digest, err := digestOpenFile(file, info)
+	if err != nil {
+		return "", 0, err
+	}
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
+		return "", 0, errors.New("package index rewind refused")
+	}
+	reader := io.Reader(file)
+	var command *exec.Cmd
+	commandFinished := true
+	if !strings.HasSuffix(path, "_Packages") {
+		extension := filepath.Ext(path)
+		if !strings.HasSuffix(strings.TrimSuffix(path, extension), "_Packages") || !map[string]bool{".bz2": true, ".gz": true, ".lz4": true, ".xz": true, ".zst": true}[extension] {
+			return "", 0, errors.New("package index encoding refused")
+		}
+		command = exec.Command(aptHelperPath, "cat-file", path)
+		stdout, pipeErr := command.StdoutPipe()
+		if pipeErr != nil || command.Start() != nil {
+			return "", 0, errors.New("package index decoder refused")
+		}
+		reader, commandFinished = stdout, false
+		defer func() {
+			if !commandFinished {
+				_ = command.Process.Kill()
+				_ = command.Wait()
+			}
+		}()
+	}
+	limited := &io.LimitedReader{R: reader, N: maximumExpandedBytes + 1}
+	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 4096), maximumLineBytes)
 	fields := map[string]string{}
 	stanzas := 0
@@ -310,17 +346,33 @@ func parsePackageIndex(path string, visit func(packageRecord) error) (string, in
 			fields[key] = value
 		}
 	}
-	if err = scanner.Err(); err != nil {
+	if err = scanner.Err(); err != nil || limited.N <= 0 {
 		return "", 0, errors.New("package index read refused")
 	}
 	if err = finish(); err != nil {
 		return "", 0, err
 	}
-	position, err := file.Seek(0, io.SeekCurrent)
-	if err != nil || position != info.Size() || stanzas == 0 {
+	if command != nil {
+		err = command.Wait()
+		commandFinished = true
+		if err != nil {
+			return "", 0, errors.New("package index decoder incomplete")
+		}
+	} else {
+		position, seekErr := file.Seek(0, io.SeekCurrent)
+		if seekErr != nil || position != info.Size() {
+			return "", 0, errors.New("package index incomplete")
+		}
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return "", 0, errors.New("package index replacement refused")
+	}
+	currentStat, currentOK := current.Sys().(*syscall.Stat_t)
+	if !current.Mode().IsRegular() || !os.SameFile(info, current) || current.Size() != info.Size() || !currentOK || currentStat.Nlink != 1 || stanzas == 0 {
 		return "", 0, errors.New("package index incomplete")
 	}
-	return hex.EncodeToString(h.Sum(nil)), info.Size(), nil
+	return digest, info.Size(), nil
 }
 
 func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRecord, []targetEvidence, error) {
