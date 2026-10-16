@@ -26,12 +26,12 @@ func fixture(t *testing.T) (planRequest, targetRecord) {
 	}
 	target := targetRecord{
 		IndexPath: index, IndexURI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
-		RepoURI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/", BaseURI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/", Release: "noble", Component: "main",
+		RepoURI: "http://archive.ubuntu.com/ubuntu/", BaseURI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/", Release: "noble", Component: "main",
 		Architecture: "amd64", Trusted: "yes", Codename: "noble", Suite: "noble", Origin: "Ubuntu", Label: "Ubuntu",
 		InReleasePath: release,
 	}
 	request := planRequest{
-		URI: target.RepoURI + "pool/main/f/foo/foo_1.0%2bbuild1_amd64.deb", Basename: "foo_1.0+build1_amd64.deb", Package: "foo", Version: "1.0",
+		URI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/foo/foo_1.0%2bbuild1_amd64.deb", Basename: "foo_1.0+build1_amd64.deb", Package: "foo", Version: "1.0",
 		Architecture: "amd64", Bytes: 4, SHA256: fixtureHash,
 	}
 	return request, target

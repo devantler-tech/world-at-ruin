@@ -33,7 +33,8 @@ Packages file exactly as stored and uses APT's fixed helper to decode supported
 compressed indexes for bounded deb822 parsing. It derives each target's local
 InRelease path from APT's base URI naming rule, hashes the regular single-link
 Packages and InRelease files, and requires every acquired tuple to match exactly
-one target on repository URI plus APT-encoded package filename,
+one target on its effective archive repository, derived from the selected release
+base, plus APT-encoded package filename,
 package/version/architecture, byte count and SHA-256. A missing, untrusted,
 partial, linked, conflicting or ambiguous target refuses before package scripts execute.
 

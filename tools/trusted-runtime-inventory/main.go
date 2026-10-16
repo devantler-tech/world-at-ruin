@@ -109,10 +109,17 @@ func evidenceURL(raw string, slash bool) bool {
 	return !slash || strings.HasSuffix(raw, "/")
 }
 
-// requestMatchesOrigin compares APT's escaped request suffix with the raw
-// Filename carried by the selected Packages record.
-func requestMatchesOrigin(requestURI, repositoryURI, filename string) bool {
-	if !strings.HasPrefix(requestURI, repositoryURI) {
+// requestMatchesOrigin derives APT's effective archive repository from the
+// selected release base, then compares the escaped request suffix with the raw
+// Filename carried by that target's Packages record. The configured REPO_URI
+// can differ when APT redirects a source through its immutable snapshot service.
+func requestMatchesOrigin(requestURI, baseURI, release, filename string) bool {
+	suffix := "dists/" + release + "/"
+	if !packagePattern.MatchString(release) || !strings.HasSuffix(baseURI, suffix) {
+		return false
+	}
+	repositoryURI := strings.TrimSuffix(baseURI, suffix)
+	if !evidenceURL(repositoryURI, true) || !strings.HasPrefix(requestURI, repositoryURI) {
 		return false
 	}
 	decoded, err := url.PathUnescape(strings.TrimPrefix(requestURI, repositoryURI))
@@ -311,7 +318,7 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 		plan := plans[name]
 		origin := origins[name]
 		target := targets[origin.Index.Path]
-		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || !requestMatchesOrigin(plan.URI, origin.RepositoryURI, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
+		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || !requestMatchesOrigin(plan.URI, origin.BaseURI, origin.Release, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
 			return refuse()
 		}
 		item.URI = plan.URI

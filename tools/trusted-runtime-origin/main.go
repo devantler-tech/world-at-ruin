@@ -114,6 +114,18 @@ func aptArchiveURI(repositoryURI, filename string) string {
 	return repositoryURI + encoded.String()
 }
 
+func archiveRepositoryURI(baseURI, release string) (string, error) {
+	suffix := "dists/" + release + "/"
+	if !packagePattern.MatchString(release) || !strings.HasSuffix(baseURI, suffix) {
+		return "", errors.New("archive repository base refused")
+	}
+	repositoryURI := strings.TrimSuffix(baseURI, suffix)
+	if !safeURL(repositoryURI, true) {
+		return "", errors.New("archive repository URI refused")
+	}
+	return repositoryURI, nil
+}
+
 func aptListsDirectory() string {
 	if os.Getenv("WAR_TRUSTED_RUNTIME_ORIGIN_TEST") == "1" {
 		candidate := os.Getenv("WAR_APT_LISTS_DIR")
@@ -198,6 +210,9 @@ func parseTargetManifest(reader io.Reader) ([]targetRecord, error) {
 		item := targetRecord{
 			IndexPath: fields[0], IndexURI: fields[1], RepoURI: fields[2], BaseURI: fields[3], Release: fields[4], Component: fields[5], Architecture: fields[6],
 			Trusted: fields[7], Codename: fields[8], Suite: fields[9], Origin: fields[10], Label: fields[11], InReleasePath: releasePath,
+		}
+		if _, err = archiveRepositoryURI(item.BaseURI, item.Release); err != nil {
+			return err
 		}
 		identity := strings.Join(fields, "\t")
 		if !safeAbsolutePath(item.IndexPath) || !safeAbsolutePath(item.InReleasePath) || !safeURL(item.IndexURI, false) || !safeURL(item.RepoURI, true) || !safeURL(item.BaseURI, true) || item.Trusted != "yes" || (item.Architecture != "amd64" && item.Architecture != "all") || !safeText(item.Release, 128) || !safeText(item.Component, 128) || !safeText(item.Codename, 128) || !safeText(item.Suite, 128) || !safeText(item.Origin, 256) || !safeText(item.Label, 256) || seen[identity] || seenPaths[item.IndexPath] || seenURIs[item.IndexURI] {
@@ -393,6 +408,10 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 		if target.Trusted != "yes" {
 			return nil, nil, errors.New("untrusted package target")
 		}
+		archiveRepository, err := archiveRepositoryURI(target.BaseURI, target.Release)
+		if err != nil {
+			return nil, nil, err
+		}
 		releaseHash, releaseBytes, err := digestFile(target.InReleasePath, maximumReleaseBytes)
 		if err != nil {
 			return nil, nil, err
@@ -402,7 +421,7 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 			item  packageRecord
 		}
 		indexHash, indexBytes, err := parsePackageIndex(target.IndexPath, func(item packageRecord) error {
-			archiveURI := aptArchiveURI(target.RepoURI, item.Filename)
+			archiveURI := aptArchiveURI(archiveRepository, item.Filename)
 			i, exists := byURI[archiveURI]
 			if !exists {
 				return nil
