@@ -239,20 +239,67 @@ func fileSet(items []evidenceFile, absolute bool) (map[string]evidenceFile, erro
 	return out, nil
 }
 
+func dockerRunInstructions(raw []byte) ([]string, error) {
+	var logical strings.Builder
+	var runs []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		continued := strings.HasSuffix(line, "\\")
+		part := strings.TrimSpace(strings.TrimSuffix(line, "\\"))
+		if strings.HasPrefix(part, "#") {
+			continue
+		}
+		if part != "" {
+			if logical.Len() > 0 {
+				logical.WriteByte(' ')
+			}
+			logical.WriteString(part)
+		}
+		if continued {
+			continue
+		}
+		instruction := strings.TrimSpace(logical.String())
+		logical.Reset()
+		fields := strings.Fields(instruction)
+		if len(fields) > 1 && strings.EqualFold(fields[0], "RUN") {
+			runs = append(runs, strings.Join(fields[1:], " "))
+		}
+	}
+	if logical.Len() != 0 {
+		return nil, errors.New("runtime recipe has an incomplete Dockerfile instruction")
+	}
+	return runs, nil
+}
+
 func parseRecipe(raw []byte) (string, string, []string, error) {
-	if bytes.Count(raw, []byte(`bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`)) != 1 {
+	runs, err := dockerRunInstructions(raw)
+	if err != nil {
+		return "", "", nil, err
+	}
+	const observer = `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
+	const command = "apt-get install -y --no-install-recommends"
+	wrapped := "&& " + observer + " " + command
+	installCount, observerCount, transaction := 0, 0, ""
+	for _, run := range runs {
+		installCount += strings.Count(run, command)
+		count := strings.Count(run, wrapped)
+		observerCount += count
+		if count == 1 {
+			transaction = run
+		}
+	}
+	if observerCount != 1 {
 		return "", "", nil, errors.New("runtime transaction verifier invocation missing or repeated")
 	}
 	bases := runtimeFrom.FindAllSubmatch(raw, -1)
-	snapshots := snapshotSetting.FindAllSubmatch(raw, -1)
+	snapshots := snapshotSetting.FindAllStringSubmatch(strings.Join(runs, "\n"), -1)
 	if len(bases) != 1 || len(snapshots) != 1 {
 		return "", "", nil, errors.New("runtime base or snapshot identity missing")
 	}
-	const command = "apt-get install -y --no-install-recommends"
-	if strings.Count(string(raw), command) != 1 {
+	if installCount != 1 {
 		return "", "", nil, errors.New("runtime install declaration missing or repeated")
 	}
-	_, tail, _ := strings.Cut(string(raw), command)
+	_, tail, _ := strings.Cut(transaction, wrapped)
 	tail, _, found := strings.Cut(tail, "&&")
 	if !found {
 		return "", "", nil, errors.New("runtime install boundary missing")
@@ -375,7 +422,7 @@ func samePackages(left, right []packageIdentity) bool {
 	return true
 }
 
-func validateReport(report coldReport, packageBytes, baseBytes, recipe []byte) error {
+func validateReport(report coldReport, root string, packageBytes, baseBytes, recipe []byte) error {
 	if report.Schema != 1 || report.Evidence != "observed-cold-build-inventory-only" || !manifestPattern.MatchString(report.Image.ID) || report.Image.OS != "linux" || report.Image.Architecture != "amd64" || report.Inventory.Architecture != "amd64" || report.Image.Config.User != "1001:1001" || report.Image.Config.WorkingDir != "/project" || len(report.Image.Config.Entrypoint) != 1 || report.Image.Config.Entrypoint[0] != "/usr/local/bin/godot" || !digestPattern.MatchString(report.Inventory.Engine) || !versionPattern.MatchString(report.EngineVersion) || len(report.EngineArchiveSHA512) != 128 {
 		return errors.New("cold report identity refused")
 	}
@@ -395,18 +442,17 @@ func validateReport(report coldReport, packageBytes, baseBytes, recipe []byte) e
 	if err != nil {
 		return err
 	}
+	if len(recipeFiles) != len(requiredRecipeFiles) {
+		return errors.New("cold report recipe evidence is not the exact required set")
+	}
 	for _, path := range requiredRecipeFiles {
-		if recipeFiles[path].Path == "" {
+		item := recipeFiles[path]
+		if item.Path == "" {
 			return errors.New("cold report recipe evidence incomplete")
 		}
-	}
-	for path, raw := range map[string][]byte{
-		".github/containers/trusted-runtime-packages.lock.json": packageBytes,
-		".github/containers/trusted-runtime-bases.lock.json":    baseBytes,
-	} {
-		item := recipeFiles[path]
-		if item.SHA256 != sha256Hex(raw) || item.Bytes != int64(len(raw)) {
-			return errors.New("cold report does not bind current reviewed locks")
+		current, readErr := regularBytes(filepath.Join(root, path), maximumInputBytes)
+		if readErr != nil || item.SHA256 != sha256Hex(current) || item.Bytes != int64(len(current)) {
+			return errors.New("cold report does not bind every current recipe file")
 		}
 	}
 	locked, err := decodePackageLock(packageBytes)
@@ -478,7 +524,7 @@ func generate(raw []byte, root string) (archiveLock, error) {
 	if err != nil {
 		return result, err
 	}
-	if err = validateReport(report, packageBytes, baseBytes, recipe); err != nil {
+	if err = validateReport(report, root, packageBytes, baseBytes, recipe); err != nil {
 		return result, err
 	}
 	locked, _ := decodePackageLock(packageBytes)

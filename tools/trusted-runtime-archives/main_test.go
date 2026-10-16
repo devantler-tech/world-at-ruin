@@ -68,27 +68,36 @@ func fixtureRecipe(t *testing.T) (string, map[string]any) {
 			t.Fatal(err)
 		}
 	}
-	report := fixtureReport(packageRaw, baseRaw)
+	for _, path := range requiredRecipeFiles {
+		absolute := filepath.Join(root, path)
+		if _, err := os.Stat(absolute); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(absolute), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(absolute, []byte("fixture "+path+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := fixtureReport(t, root)
 	return root, report
 }
 
-func fixtureReport(packageRaw, baseRaw []byte) map[string]any {
+func fixtureReport(t *testing.T, root string) map[string]any {
+	t.Helper()
 	archive := fixtureArchive()
 	origin := archive.Origins[0]
 	file := func(path string) map[string]any {
 		return map[string]any{"path": path, "sha256": strings.Repeat("f", 64), "bytes": 1}
 	}
-	packageDigest := sha256Hex(packageRaw)
-	baseDigest := sha256Hex(baseRaw)
 	recipes := make([]any, 0, len(requiredRecipeFiles))
 	for _, path := range requiredRecipeFiles {
-		item := map[string]any{"path": path, "sha256": strings.Repeat("f", 64), "bytes": 1}
-		switch path {
-		case ".github/containers/trusted-runtime-packages.lock.json":
-			item["sha256"], item["bytes"] = packageDigest, len(packageRaw)
-		case ".github/containers/trusted-runtime-bases.lock.json":
-			item["sha256"], item["bytes"] = baseDigest, len(baseRaw)
+		raw, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
 		}
+		item := map[string]any{"path": path, "sha256": sha256Hex(raw), "bytes": len(raw)}
 		recipes = append(recipes, item)
 	}
 	return map[string]any{
@@ -175,6 +184,22 @@ func TestGenerateCanonicalArchiveExpectation(t *testing.T) {
 	}
 }
 
+func TestParseRecipeRequiresExecutableObserverBeforeInstall(t *testing.T) {
+	prefix := "FROM ubuntu:24.04@" + fixtureManifest + "\n" +
+		"RUN printf 'APT::Snapshot \"20261003T000000Z\";' > /etc/apt/apt.conf.d/50snapshot\n"
+	observer := `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
+	for name, recipe := range map[string]string{
+		"comment only":  prefix + "# " + observer + "\nRUN apt-get install -y --no-install-recommends foo=1.0 && true\n",
+		"after install": prefix + "RUN apt-get install -y --no-install-recommends foo=1.0 && " + observer + " true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := parseRecipe([]byte(recipe)); err == nil {
+				t.Fatal("non-executable or misordered observer satisfied the recipe binding")
+			}
+		})
+	}
+}
+
 func TestGenerateRefusesIncompleteConflictingAndUnboundEvidence(t *testing.T) {
 	for name, mutate := range map[string]func(map[string]any){
 		"schema": func(r map[string]any) { r["schema"] = 2 },
@@ -192,6 +217,9 @@ func TestGenerateRefusesIncompleteConflictingAndUnboundEvidence(t *testing.T) {
 		},
 		"wrong argument": func(r map[string]any) {
 			r["inventory"].(map[string]any)["transaction"].(map[string]any)["direct_arguments"] = []string{"foo=2.0"}
+		},
+		"extra recipe file": func(r map[string]any) {
+			r["recipe_files"] = append(r["recipe_files"].([]any), map[string]any{"path": "tools/unreviewed.sh", "sha256": strings.Repeat("f", 64), "bytes": 1})
 		},
 		"unknown field": func(r map[string]any) { r["unexpected"] = true },
 		"duplicate archive": func(r map[string]any) {
@@ -222,6 +250,28 @@ func TestGenerateRefusesIncompleteConflictingAndUnboundEvidence(t *testing.T) {
 	}
 	if _, err := generate(raw, root); err == nil {
 		t.Fatal("report detached from the current installed-package lock")
+	}
+
+	for name, replace := range map[string]func(string) error{
+		"changed helper": func(path string) error { return os.WriteFile(path, []byte("changed\n"), 0600) },
+		"linked helper": func(path string) error {
+			if err := os.Rename(path, path+".real"); err != nil {
+				return err
+			}
+			return os.Symlink(path+".real", path)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, report := fixtureRecipe(t)
+			raw, _ := json.Marshal(report)
+			path := filepath.Join(root, "tools", "propose-trusted-runtime-archives.sh")
+			if err := replace(path); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := generate(raw, root); err == nil {
+				t.Fatal("report detached from a current recipe helper")
+			}
+		})
 	}
 }
 
