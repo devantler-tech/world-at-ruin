@@ -139,6 +139,9 @@ func TestResolveOriginsRefusesIncompleteAmbiguousAndConflictingEvidence(t *testi
 			dir := t.TempDir()
 			changed.IndexPath = filepath.Join(dir, "conflicting_Packages")
 			changed.InReleasePath = filepath.Join(dir, "conflicting_InRelease")
+			changed.IndexURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages"
+			changed.BaseURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/"
+			changed.Release = "noble-updates"
 			conflict := strings.ReplaceAll(packageStanza(request, "pool/main/f/foo/foo_1.0+build1_amd64.deb"), fixtureHash, strings.Repeat("a", 64))
 			if err := os.WriteFile(changed.IndexPath, []byte(conflict), 0600); err != nil {
 				t.Fatal(err)

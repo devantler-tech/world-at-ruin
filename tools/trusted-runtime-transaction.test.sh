@@ -62,8 +62,10 @@ if [ "${1:-}" = indextargets ]; then
   if [ "$mode" = ambiguous-source ]; then printf '%s\n' "$row"; fi
   if [ "$mode" = conflicting-source ]; then
     other="$TRANSACTION_TEST_STATE/conflicting_Packages"
+    other_release="$TRANSACTION_TEST_STATE/snapshot.ubuntu.com_dists_noble-updates_InRelease"
     sed "s/^SHA256:.*/SHA256: $(printf '%064d' 3)/" "$TRANSACTION_ORIGIN_INDEX_BASE" > "$other"
-    printf '%s\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t%s\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tnoble\tnoble\tUbuntu\tUbuntu\n' "$other" "$repo"
+    printf 'signed updates release\n' > "$other_release"
+    printf '%s\thttps://snapshot.ubuntu.com/dists/noble-updates/main/binary-amd64/Packages\t%s\thttps://snapshot.ubuntu.com/dists/noble-updates/\tnoble-updates\tmain\tamd64\tyes\tnoble\tnoble-updates\tUbuntu\tUbuntu\n' "$other" "$repo"
   fi
   [ "$mode" != failed-target-reader ]
 elif [[ "$*" = *--print-uris* ]]; then
@@ -163,6 +165,7 @@ for refusal in empty-plan malformed-plan oversized-plan storage-budget credentia
   else
     [ ! -f "$state/installed" ] && [ ! -f "$state/report" ]
   fi
+  if [ "$refusal" = conflicting-source ]; then grep -q 'conflict=true' "$state/error"; fi
   if [ "$refusal" != missing-offline ] && [ "$refusal" != output-link ]; then [ ! -f "$state/install-attempted" ]; fi
   case "$refusal" in
     empty-plan|malformed-plan|oversized-plan|storage-budget|credential-uri|unterminated-plan|duplicate-plan|failed-plan) [ ! -f "$state/downloaded" ];;

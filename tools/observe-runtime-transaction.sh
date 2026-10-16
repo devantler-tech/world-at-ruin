@@ -105,7 +105,7 @@ if [ -L "$cache/partial" ] || [ ! -d "$cache/partial" ]; then exit 1; fi
 find "$cache/partial" -mindepth 1 -print > "$state/partial"
 if [ -s "$state/partial" ]; then exit 1; fi
 # Keep the exact APT 2.8 target interface as evidence. The helper reads every
-# authenticated Packages target and refuses a missing, conflicting or ambiguous
+# authenticated Packages target and refuses a missing, conflicting, invalid or repeated
 # join before the offline installation can execute package scripts.
 # shellcheck disable=SC2016 # APT expands its own target placeholders.
 target_format='$(FILENAME)'$'\t''$(URI)'$'\t''$(REPO_URI)'$'\t''$(BASE_URI)'$'\t''$(RELEASE)'$'\t''$(COMPONENT)'$'\t''$(ARCHITECTURE)'$'\t''$(TRUSTED)'$'\t''$(CODENAME)'$'\t''$(SUITE)'$'\t''$(ORIGIN)'$'\t''$(LABEL)'
