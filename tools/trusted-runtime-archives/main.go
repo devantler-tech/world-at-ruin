@@ -274,7 +274,7 @@ func dockerRunInstructions(raw []byte) ([]string, error) {
 	return runs, nil
 }
 
-func unquotedShellOccurrences(value, needle string) ([]int, error) {
+func unquotedShellPositions(value string) ([]int, error) {
 	var positions []int
 	singleQuoted, doubleQuoted, escaped := false, false, false
 	for i := 0; i < len(value); i++ {
@@ -301,9 +301,7 @@ func unquotedShellOccurrences(value, needle string) ([]int, error) {
 		if character == '#' && (i == 0 || strings.ContainsRune(" \t\r\n", rune(value[i-1]))) {
 			break
 		}
-		if strings.HasPrefix(value[i:], needle) {
-			positions = append(positions, i)
-		}
+		positions = append(positions, i)
 	}
 	if singleQuoted || doubleQuoted || escaped {
 		return nil, errors.New("runtime recipe has incomplete shell quoting")
@@ -311,42 +309,38 @@ func unquotedShellOccurrences(value, needle string) ([]int, error) {
 	return positions, nil
 }
 
-func validateShellFlow(value string) error {
-	singleQuoted, doubleQuoted, escaped := false, false, false
-	for i := 0; i < len(value); i++ {
-		character := value[i]
-		if escaped {
-			escaped = false
-			continue
-		}
-		if character == '\\' && !singleQuoted {
-			escaped = true
-			continue
-		}
-		if character == '\'' && !doubleQuoted {
-			singleQuoted = !singleQuoted
-			continue
-		}
-		if character == '"' && !singleQuoted {
-			doubleQuoted = !doubleQuoted
-			continue
-		}
-		if singleQuoted || doubleQuoted {
-			continue
-		}
-		if character == '#' && (i == 0 || strings.ContainsRune(" \t\r\n", rune(value[i-1]))) {
-			break
-		}
-		if strings.HasPrefix(value[i:], "&&") || strings.HasPrefix(value[i:], ";;") {
-			i++
-			continue
-		}
-		if strings.HasPrefix(value[i:], "||") || strings.HasPrefix(value[i:], "$(") || strings.ContainsRune("|&;`", rune(character)) {
-			return errors.New("runtime transaction uses alternate shell control flow")
+func unquotedShellOccurrences(value, needle string) ([]int, error) {
+	candidates, err := unquotedShellPositions(value)
+	if err != nil {
+		return nil, err
+	}
+	var positions []int
+	for _, position := range candidates {
+		if strings.HasPrefix(value[position:], needle) {
+			positions = append(positions, position)
 		}
 	}
-	if singleQuoted || doubleQuoted || escaped {
-		return errors.New("runtime recipe has incomplete shell quoting")
+	return positions, nil
+}
+
+func validateShellFlow(value string) error {
+	positions, err := unquotedShellPositions(value)
+	if err != nil {
+		return err
+	}
+	skipBefore := 0
+	for _, position := range positions {
+		if position < skipBefore {
+			continue
+		}
+		character := value[position]
+		if strings.HasPrefix(value[position:], "&&") || strings.HasPrefix(value[position:], ";;") {
+			skipBefore = position + 2
+			continue
+		}
+		if strings.HasPrefix(value[position:], "||") || strings.HasPrefix(value[position:], "$(") || strings.ContainsRune("|&;`", rune(character)) {
+			return errors.New("runtime transaction uses alternate shell control flow")
+		}
 	}
 	return nil
 }
@@ -674,7 +668,7 @@ func validateLock(value archiveLock) error {
 	}
 	previous = ""
 	for _, archive := range value.Archives {
-		if err := validateArchive(archive, originsAsTargets(archive.Origins)); err != nil || archive.Name <= previous {
+		if err := validateArchive(archive, value.Targets); err != nil || archive.Name <= previous {
 			return errors.New("archive lock entries must be valid, unique and sorted")
 		}
 		originPrevious := ""
@@ -688,19 +682,6 @@ func validateLock(value archiveLock) error {
 		previous = archive.Name
 	}
 	return nil
-}
-
-func originsAsTargets(origins []originExpectation) []targetObservation {
-	result := make([]targetObservation, 0, len(origins))
-	for _, item := range origins {
-		result = append(result, targetObservation{
-			Trusted: item.Trusted, Index: item.Index, InRelease: item.InRelease, Architecture: item.Architecture,
-			RepositoryURI: item.RepositoryURI, BaseURI: item.BaseURI, IndexURI: item.IndexURI,
-			Release: item.Release, Component: item.Component, Origin: item.Origin,
-			Codename: item.Codename, Suite: item.Suite, Label: item.Label,
-		})
-	}
-	return result
 }
 
 func decodeLock(raw []byte) (archiveLock, error) {

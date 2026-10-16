@@ -5,11 +5,12 @@ Every Linux cold build enforces
 package scripts. The lock fixes all 55 archives selected by the current Ubuntu
 snapshot: package/version/architecture, basename, requested URI, byte count,
 SHA-256 and every matching trusted Packages/InRelease origin. It also binds the
-runtime manifest, snapshot, ten direct arguments and exact base/package lock
-bytes. Normal and diagnostic builds enforce this lock. A separately selected,
-disposable maintenance build can produce evidence for a replacement after an
-intentional snapshot or pin change; it cannot admit a runtime or update the
-repository.
+complete eight-target authenticated APT census, including targets that supplied
+no selected archive, plus the runtime manifest, snapshot, ten direct arguments
+and exact base/package lock bytes. Normal and diagnostic builds enforce this
+lock. A separately selected, disposable maintenance build can produce evidence
+for a replacement after an intentional snapshot or pin change; it cannot admit
+a runtime or update the repository.
 
 The first lock was derived from the complete report emitted by successful CI run
 [38911091987, job 117006833815](https://github.com/devantler-tech/world-at-ruin/actions/runs/38911091987/job/117006833815).
@@ -67,8 +68,9 @@ bash tools/trusted-runtime-inventory.test.sh
 bash tools/client-proof-workflow-guard.test.sh
 ```
 
-The mutation controls cover missing, extra, duplicate, wrong-tuple, wrong-size,
-corrupt, truncated and linked inputs. They also prove a failed comparison cannot
-reach the offline install. The lock authorizes only the current cold build. It
+The mutation controls cover missing, extra or detached targets and archives,
+duplicate records, wrong tuples, wrong sizes, corrupt bytes, truncation and
+linked inputs. They also prove a failed comparison cannot reach the offline
+install. The lock authorizes only the current cold build. It
 does not authorize an archive producer, store, publication mechanism or warm
 reuse; those remain in [#1397](https://github.com/devantler-tech/world-at-ruin/issues/1397).

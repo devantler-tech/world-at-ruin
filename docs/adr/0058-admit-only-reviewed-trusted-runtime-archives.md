@@ -14,8 +14,10 @@ set, APT inputs, transaction, authenticated target joins and recipe identities.
 It binds the result to the runtime manifest, snapshot, direct arguments and the
 exact reviewed base and installed-package lock bytes. Each entry fixes the
 package tuple, basename, requested URI, size, SHA-256 and complete nonempty set
-of trusted Packages/InRelease origins. The source report digest and resulting
-image ID remain review evidence in the lock.
+of trusted Packages/InRelease origins. The lock separately fixes the complete
+authenticated target census, including targets that supplied no archive, and
+requires every archive origin to join that reviewed census. The source report
+digest and resulting image ID remain review evidence in the lock.
 
 Every cold build now downloads into its invocation-private cache, validates the
 archives and authenticated origins, and compares the complete observation with

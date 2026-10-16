@@ -2186,5 +2186,191 @@
         }
       ]
     }
+  ],
+  "apt_targets": [
+    {
+      "index_uri": "http://archive.ubuntu.com/ubuntu/dists/noble-backports/main/binary-amd64/Packages",
+      "repository_uri": "http://archive.ubuntu.com/ubuntu/",
+      "base_uri": "http://archive.ubuntu.com/ubuntu/dists/noble-backports/",
+      "release": "noble-backports",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble-backports",
+      "index": {
+        "path": "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-backports_main_binary-amd64_Packages.lz4",
+        "sha256": "bdb7c408eb3b79ad32583ff785b554a2f8f7a6444f09f6b4ec258febdf947228",
+        "bytes": 79250
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-backports_InRelease",
+        "sha256": "0c50b27548e18bc431d38cb402d9fb54469c30c7ae1ec2da85a53fe1912d9f2e",
+        "bytes": 126173
+      }
+    },
+    {
+      "index_uri": "http://archive.ubuntu.com/ubuntu/dists/noble-updates/main/binary-amd64/Packages",
+      "repository_uri": "http://archive.ubuntu.com/ubuntu/",
+      "base_uri": "http://archive.ubuntu.com/ubuntu/dists/noble-updates/",
+      "release": "noble-updates",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble-updates",
+      "index": {
+        "path": "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-updates_main_binary-amd64_Packages.lz4",
+        "sha256": "79a4c026c50455b679fec5d3ab37f0b54cab0da9533c1237d7c1d129c9a38299",
+        "bytes": 2898011
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble-updates_InRelease",
+        "sha256": "9fab6bf80533f41b88a9ae85a53d41c72f4182d0f7e2842eafcf4860fb74e64a",
+        "bytes": 126125
+      }
+    },
+    {
+      "index_uri": "http://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64/Packages",
+      "repository_uri": "http://archive.ubuntu.com/ubuntu/",
+      "base_uri": "http://archive.ubuntu.com/ubuntu/dists/noble/",
+      "release": "noble",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble",
+      "index": {
+        "path": "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages.lz4",
+        "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+        "bytes": 2950155
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/archive.ubuntu.com_ubuntu_dists_noble_InRelease",
+        "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+        "bytes": 255850
+      }
+    },
+    {
+      "index_uri": "http://security.ubuntu.com/ubuntu/dists/noble-security/main/binary-amd64/Packages",
+      "repository_uri": "http://security.ubuntu.com/ubuntu/",
+      "base_uri": "http://security.ubuntu.com/ubuntu/dists/noble-security/",
+      "release": "noble-security",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble-security",
+      "index": {
+        "path": "/var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_main_binary-amd64_Packages.lz4",
+        "sha256": "ddf067f62b09ab17be2fc32ef18453ee2cb9d6d7ac0a1701d96658246d7ebf70",
+        "bytes": 2362523
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_InRelease",
+        "sha256": "c1644ad9ec4f88e09ba52254604b3566186350c5780e3770cb955da167c89b7b",
+        "bytes": 126127
+      }
+    },
+    {
+      "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-backports/main/binary-amd64/Packages",
+      "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+      "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-backports/",
+      "release": "noble-backports",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble-backports",
+      "index": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-backports_main_binary-amd64_Packages.lz4",
+        "sha256": "bdb7c408eb3b79ad32583ff785b554a2f8f7a6444f09f6b4ec258febdf947228",
+        "bytes": 79250
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-backports_InRelease",
+        "sha256": "dc4d31dc0a8897dbecfd0375a4041b4aeb4a6fae00c688cf923daec3c4a258f8",
+        "bytes": 126173
+      }
+    },
+    {
+      "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+      "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+      "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+      "release": "noble-security",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble-security",
+      "index": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+        "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+        "bytes": 2205411
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+        "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+        "bytes": 126127
+      }
+    },
+    {
+      "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+      "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+      "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+      "release": "noble-updates",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble-updates",
+      "index": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+        "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+        "bytes": 2828599
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+        "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+        "bytes": 126125
+      }
+    },
+    {
+      "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+      "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+      "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+      "release": "noble",
+      "component": "main",
+      "architecture": "amd64",
+      "trusted": true,
+      "origin": "Ubuntu",
+      "label": "Ubuntu",
+      "codename": "noble",
+      "suite": "noble",
+      "index": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+        "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+        "bytes": 2950155
+      },
+      "inrelease": {
+        "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+        "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+        "bytes": 255850
+      }
+    }
   ]
 }

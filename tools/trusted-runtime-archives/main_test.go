@@ -350,3 +350,15 @@ func TestEmitAndVerificationInputsMustBeRegularCompleteFiles(t *testing.T) {
 		t.Fatal("linked archive lock emitted authority")
 	}
 }
+
+func TestLockRequiresArchiveOriginsInReviewedTargetCensus(t *testing.T) {
+	_, lockRaw := fixtureGeneratedLock(t)
+	var lock archiveLock
+	if err := json.Unmarshal(lockRaw, &lock); err != nil {
+		t.Fatal(err)
+	}
+	lock.Targets[0].RepositoryURI = "https://snapshot.ubuntu.com/other/"
+	if err := validateLock(lock); err == nil {
+		t.Fatal("archive origin detached from the reviewed target census")
+	}
+}
