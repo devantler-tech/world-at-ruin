@@ -11,6 +11,14 @@ import (
 
 const fixtureManifest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func fixturePackages() []any {
+	return []any{
+		map[string]any{"name": "apt", "version": "2.8.3", "architecture": "amd64"},
+		map[string]any{"name": "base-files", "version": "1", "architecture": "amd64"},
+		map[string]any{"name": "foo", "version": "1.0", "architecture": "amd64"},
+	}
+}
+
 func fixtureOrigin() originExpectation {
 	return originExpectation{
 		PackageFilename: "pool/main/f/foo/foo_1.0_amd64.deb",
@@ -42,12 +50,7 @@ func fixtureRecipe(t *testing.T) (string, map[string]any) {
 	}
 	packageLock := map[string]any{
 		"schema": 1, "architecture": "amd64", "runtime_manifest": fixtureManifest,
-		"snapshot": "20261003T000000Z",
-		"packages": []any{
-			map[string]any{"name": "apt", "version": "2.8.3", "architecture": "amd64"},
-			map[string]any{"name": "base-files", "version": "1", "architecture": "amd64"},
-			map[string]any{"name": "foo", "version": "1.0", "architecture": "amd64"},
-		},
+		"snapshot": "20261003T000000Z", "packages": fixturePackages(),
 	}
 	packageRaw, _ := json.Marshal(packageLock)
 	baseRaw := []byte(`{"schema":1,"proofs":[]}`)
@@ -96,11 +99,7 @@ func fixtureReport(packageRaw, baseRaw []byte) map[string]any {
 		},
 		"inventory": map[string]any{
 			"architecture": "amd64", "engine_sha256": strings.Repeat("2", 64),
-			"installed_packages": []any{
-				map[string]any{"name": "apt", "version": "2.8.3", "architecture": "amd64"},
-				map[string]any{"name": "base-files", "version": "1", "architecture": "amd64"},
-				map[string]any{"name": "foo", "version": "1.0", "architecture": "amd64"},
-			},
+			"installed_packages": fixturePackages(),
 			"apt_inputs": []any{
 				file("/etc/apt/sources.list.d/ubuntu.sources"), file("/etc/apt/apt.conf.d/50snapshot"),
 				file("/usr/share/keyrings/ubuntu-archive-keyring.gpg"), file("/etc/ssl/certs/ca-certificates.crt"),
@@ -138,6 +137,24 @@ func fixtureTransaction() string {
 		"archive\t" + a.Basename + "\tfoo\t1.0\tamd64\t4\t" + a.SHA256 + "\n" +
 		"target\t" + o.IndexURI + "\t" + o.Index.Path + "\t200\t" + o.Index.SHA256 + "\t" + o.RepositoryURI + "\t" + o.BaseURI + "\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\t" + o.InRelease.Path + "\t100\t" + o.InRelease.SHA256 + "\n" +
 		"origin\t" + a.Basename + "\tfoo\t1.0\tamd64\t" + o.PackageFilename + "\t" + o.RepositoryURI + "\t" + o.BaseURI + "\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\t" + o.IndexURI + "\t" + o.Index.Path + "\t200\t" + o.Index.SHA256 + "\t" + o.InRelease.Path + "\t100\t" + o.InRelease.SHA256 + "\n"
+}
+
+func fixtureGeneratedLock(t *testing.T) (string, []byte) {
+	t.Helper()
+	root, report := fixtureRecipe(t)
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := generate(raw, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockRaw, err := json.Marshal(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, lockRaw
 }
 
 func TestGenerateCanonicalArchiveExpectation(t *testing.T) {
@@ -209,15 +226,9 @@ func TestGenerateRefusesIncompleteConflictingAndUnboundEvidence(t *testing.T) {
 }
 
 func TestVerifyRefusesArchiveAndOriginMutations(t *testing.T) {
-	root, report := fixtureRecipe(t)
-	raw, _ := json.Marshal(report)
-	lock, err := generate(raw, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lockRaw, _ := json.Marshal(lock)
+	_, lockRaw := fixtureGeneratedLock(t)
 	good := fixtureTransaction()
-	if err = verify(lockRaw, []byte(good)); err != nil {
+	if err := verify(lockRaw, []byte(good)); err != nil {
 		t.Fatal(err)
 	}
 	mutations := map[string]string{
@@ -241,29 +252,23 @@ func TestVerifyRefusesArchiveAndOriginMutations(t *testing.T) {
 }
 
 func TestEmitAndVerificationInputsMustBeRegularCompleteFiles(t *testing.T) {
-	root, report := fixtureRecipe(t)
-	raw, _ := json.Marshal(report)
-	lock, err := generate(raw, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lockRaw, _ := json.Marshal(lock)
+	root, lockRaw := fixtureGeneratedLock(t)
 	lockPath := filepath.Join(root, ".github", "containers", "trusted-runtime-archives.lock.json")
-	if err = os.WriteFile(lockPath, lockRaw, 0600); err != nil {
+	if err := os.WriteFile(lockPath, lockRaw, 0600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err = emit(root, &out); err != nil || out.Len() == 0 {
+	if err := emit(root, &out); err != nil || out.Len() == 0 {
 		t.Fatalf("valid lock did not emit: %v", err)
 	}
-	if err = os.Rename(lockPath, lockPath+".real"); err != nil {
+	if err := os.Rename(lockPath, lockPath+".real"); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Symlink(lockPath+".real", lockPath); err != nil {
+	if err := os.Symlink(lockPath+".real", lockPath); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err = emit(root, &out); err == nil || out.Len() != 0 {
+	if err := emit(root, &out); err == nil || out.Len() != 0 {
 		t.Fatal("linked archive lock emitted authority")
 	}
 }

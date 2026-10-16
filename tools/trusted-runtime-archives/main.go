@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const maximumInputBytes = 2 * 1024 * 1024
@@ -65,20 +66,20 @@ type packageIdentity struct {
 }
 
 type originExpectation struct {
-	PackageFilename string       `json:"package_filename"`
-	RepositoryURI   string       `json:"repository_uri"`
-	BaseURI         string       `json:"base_uri"`
-	Release         string       `json:"release"`
-	Component       string       `json:"component"`
-	Architecture    string       `json:"target_architecture"`
 	Trusted         bool         `json:"trusted"`
-	Origin          string       `json:"origin"`
-	Label           string       `json:"label"`
-	Codename        string       `json:"codename"`
-	Suite           string       `json:"suite"`
-	IndexURI        string       `json:"index_uri"`
 	Index           evidenceFile `json:"index"`
 	InRelease       evidenceFile `json:"inrelease"`
+	PackageFilename string       `json:"package_filename"`
+	Architecture    string       `json:"target_architecture"`
+	RepositoryURI   string       `json:"repository_uri"`
+	BaseURI         string       `json:"base_uri"`
+	IndexURI        string       `json:"index_uri"`
+	Release         string       `json:"release"`
+	Component       string       `json:"component"`
+	Origin          string       `json:"origin"`
+	Codename        string       `json:"codename"`
+	Suite           string       `json:"suite"`
+	Label           string       `json:"label"`
 }
 
 type archiveExpectation struct {
@@ -93,17 +94,17 @@ type archiveExpectation struct {
 }
 
 type targetObservation struct {
-	IndexURI      string       `json:"index_uri"`
-	RepositoryURI string       `json:"repository_uri"`
-	BaseURI       string       `json:"base_uri"`
 	Release       string       `json:"release"`
-	Component     string       `json:"component"`
-	Architecture  string       `json:"architecture"`
-	Trusted       bool         `json:"trusted"`
-	Origin        string       `json:"origin"`
 	Label         string       `json:"label"`
-	Codename      string       `json:"codename"`
+	RepositoryURI string       `json:"repository_uri"`
+	Component     string       `json:"component"`
 	Suite         string       `json:"suite"`
+	BaseURI       string       `json:"base_uri"`
+	Origin        string       `json:"origin"`
+	Architecture  string       `json:"architecture"`
+	Codename      string       `json:"codename"`
+	IndexURI      string       `json:"index_uri"`
+	Trusted       bool         `json:"trusted"`
 	Index         evidenceFile `json:"index"`
 	InRelease     evidenceFile `json:"inrelease"`
 }
@@ -172,28 +173,29 @@ func strictJSON(raw []byte, target any) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
+	decodeErr := decoder.Decode(target)
+	var extra json.RawMessage
+	terminalErr := decoder.Decode(&extra)
+	if decodeErr != nil {
+		return decodeErr
 	}
-	if decoder.Decode(new(any)) != io.EOF {
+	if terminalErr != io.EOF {
 		return errors.New("archive expectation input has trailing or partial content")
 	}
 	return nil
 }
 
 func regularBytes(path string, maximum int64) ([]byte, error) {
-	named, err := os.Lstat(path)
-	if err != nil || !named.Mode().IsRegular() || named.Size() <= 0 || named.Size() > maximum {
-		return nil, errors.New("archive expectation input is not a bounded regular file")
-	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("archive expectation input cannot be opened")
 	}
 	defer file.Close()
 	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(named, opened) || opened.Size() != named.Size() {
-		return nil, errors.New("archive expectation input changed while opening")
+	named, namedErr := os.Lstat(path)
+	stat, statOK := opened.Sys().(*syscall.Stat_t)
+	if err != nil || namedErr != nil || !opened.Mode().IsRegular() || !named.Mode().IsRegular() || !os.SameFile(named, opened) || opened.Size() <= 0 || opened.Size() > maximum || opened.Size() != named.Size() || !statOK || stat.Nlink != 1 {
+		return nil, errors.New("archive expectation input is linked, changed or outside bounds")
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil || int64(len(raw)) != opened.Size() {
@@ -524,7 +526,12 @@ func validateLock(value archiveLock) error {
 func originsAsTargets(origins []originExpectation) []targetObservation {
 	result := make([]targetObservation, 0, len(origins))
 	for _, item := range origins {
-		result = append(result, targetObservation{item.IndexURI, item.RepositoryURI, item.BaseURI, item.Release, item.Component, item.Architecture, item.Trusted, item.Origin, item.Label, item.Codename, item.Suite, item.Index, item.InRelease})
+		result = append(result, targetObservation{
+			Trusted: item.Trusted, Index: item.Index, InRelease: item.InRelease, Architecture: item.Architecture,
+			RepositoryURI: item.RepositoryURI, BaseURI: item.BaseURI, IndexURI: item.IndexURI,
+			Release: item.Release, Component: item.Component, Origin: item.Origin,
+			Codename: item.Codename, Suite: item.Suite, Label: item.Label,
+		})
 	}
 	return result
 }
