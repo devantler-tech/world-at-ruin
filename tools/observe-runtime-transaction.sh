@@ -8,7 +8,9 @@ case "$mode" in 0) exec "$@";; 1) ;; *) exit 2;; esac
 if [ "$#" -lt 5 ] || [ "$1 $2 $3 $4" != 'apt-get install -y --no-install-recommends' ]; then exit 2; fi
 expected=/tmp/expected-packages.tsv
 out=/usr/share/war-trusted-runtime/transaction.tsv
+origin_helper=/tmp/trusted-runtime-origin
 if [ ! -f "$expected" ] || [ -L "$expected" ]; then exit 1; fi
+if [ ! -x "$origin_helper" ] || [ -L "$origin_helper" ]; then exit 1; fi
 if [ -e "$out" ] || [ -L "$out" ]; then exit 1; fi
 state="$(mktemp -d)"
 cleanup() {
@@ -51,6 +53,7 @@ if [ -n "$terminal" ]; then exit 1; fi
 : > "$state/names"
 : > "$state/requests"
 : > "$state/acquired"
+: > "$state/archive-identities"
 : > "$state/package-names"
 plan_pattern="^'([^'[:space:]]+)' ([A-Za-z0-9][A-Za-z0-9+.:~%_-]*[.]deb) ([1-9][0-9]*) SHA256:([0-9a-f]{64})$"
 uri_pattern='^https?://[^/@?#[:space:]]+(/[^?#[:space:]]*)?$'
@@ -90,6 +93,7 @@ while IFS=$'\t' read -r uri name bytes hash; do
   printf '%s\n' "$package" >> "$state/package-names"
   if grep -Fxq "$record" "$state/before"; then echo 'redundant inherited archive refused' >&2; exit 1; fi
   printf '%s\n' "$record" >> "$state/acquired"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$uri" "$name" "$package" "$version" "$architecture" "$bytes" "$hash" >> "$state/archive-identities"
   printf 'archive\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$package" "$version" "$architecture" "$bytes" "$hash" >> "$state/result"
 done < "$state/requests"
 # Reject all unaccounted cache entries; APT owns only its regular lock and partial directory.
@@ -100,6 +104,14 @@ if [ ! -f "$cache/lock" ] || [ -L "$cache/lock" ] || [ "$(stat -c %h "$cache/loc
 if [ -L "$cache/partial" ] || [ ! -d "$cache/partial" ]; then exit 1; fi
 find "$cache/partial" -mindepth 1 -print > "$state/partial"
 if [ -s "$state/partial" ]; then exit 1; fi
+# Keep the exact APT 2.8 target interface as evidence. The helper reads every
+# authenticated Packages target and refuses a missing, conflicting, invalid or repeated
+# join before the offline installation can execute package scripts.
+# shellcheck disable=SC2016 # APT expands its own target placeholders.
+target_format='$(FILENAME)'$'\t''$(URI)'$'\t''$(REPO_URI)'$'\t''$(BASE_URI)'$'\t''$(RELEASE)'$'\t''$(COMPONENT)'$'\t''$(ARCHITECTURE)'$'\t''$(TRUSTED)'$'\t''$(CODENAME)'$'\t''$(SUITE)'$'\t''$(ORIGIN)'$'\t''$(LABEL)'
+if ! bounded_capture "$state/targets" apt-get indextargets 'Identifier: Packages' --format "$target_format"; then exit 1; fi
+if [ ! -s "$state/targets" ]; then exit 1; fi
+if ! "$origin_helper" "$state/archive-identities" "$state/targets" >> "$state/result"; then exit 1; fi
 # Upgrades replace the old tuple; every inherited/new tuple must explain the reviewed final set.
 awk -F '\t' 'NR==FNR {replacement[$2]=$0; next} !($2 in replacement) {print} END {for (name in replacement) print replacement[name]}' "$state/acquired" "$state/before" | sort > "$state/expected-final"
 if ! cmp "$expected" "$state/expected-final"; then exit 1; fi

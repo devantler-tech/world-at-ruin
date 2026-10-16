@@ -219,13 +219,14 @@ for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
-mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${workflow_source}/tools/trusted-runtime-packages" "${trusted}/docs/phase-0" \
+mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${workflow_source}/tools/trusted-runtime-packages" "${workflow_source}/tools/trusted-runtime-origin" "${trusted}/docs/phase-0" \
   "${candidate}/server/wire" "${candidate}/.github/workflows"
 cp "${repo_root}/.github/containers/trusted-regressions.Dockerfile" "${workflow_source}/.github/containers/"
 cp "${repo_root}/.github/containers/"trusted-runtime-bases.*.json "${workflow_source}/.github/containers/"
 cp "${repo_root}/.github/containers/trusted-runtime-packages.lock.json" "${workflow_source}/.github/containers/"
 cp "${repo_root}/tools/trusted-runtime-packages/main.go" "${workflow_source}/tools/trusted-runtime-packages/"
 cp "${repo_root}/tools/trusted-runtime-bases/main.go" "${workflow_source}/tools/trusted-runtime-bases/"
+cp "${repo_root}/tools/trusted-runtime-origin/main.go" "${workflow_source}/tools/trusted-runtime-origin/"
 printf 'historical frame fixture\n' >"${trusted}/docs/phase-0/cave-chamber.png"
 printf 'candidate source data\n' >"${candidate}/server/wire/wire.go"
 printf 'candidate source data\n' >"${candidate}/.github/workflows/ci.yaml"

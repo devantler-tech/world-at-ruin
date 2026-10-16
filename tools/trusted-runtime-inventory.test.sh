@@ -44,13 +44,17 @@ printf '[{"Id":"sha256:%064d","Os":"linux","Architecture":"amd64","Config":{"Use
     printf 'package\t%s\t%s\tamd64\tinstalled\n' "${pin%%=*}" "${pin#*=}"
   done
   printf 'apt-version\t2.8.3\nbase-package\tbase-files\t13ubuntu10.3\tamd64\tinstalled\nbase-package\tapt\t2.8.3\tamd64\tinstalled\n'
+  printf 'target\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t%064d\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\t/var/lib/apt/lists/snapshot_InRelease\t789\t%064d\n' 3 4
   for pin in libfontconfig1=2.15.0-1.1ubuntu2 libx11-6=2:1.8.7-1build1 libxcursor1=1:1.2.1-1build1 libxinerama1=2:1.1.4-3build1 libgl1=1.7.0-1build1 libxi6=2:1.8.1-1build1 libxrandr2=2:1.5.2-2build1 libwayland-client0=1.22.0-2.1build1 libxkbcommon0=1.6.0-1build1 libdbus-1-3=1.14.10-4ubuntu4.1; do
     name=${pin%%=*}
     printf 'argument\t%s\nplan\thttps://snapshot.ubuntu.com/test/%s.deb\t%s.deb\t123\t%064d\narchive\t%s.deb\t%s\t%s\tamd64\t123\t%064d\n' "$pin" "$name" "$name" 1 "$name" "$name" "${pin#*=}" 1
+    printf 'origin\t%s.deb\t%s\t%s\tamd64\ttest/%s.deb\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t%064d\t/var/lib/apt/lists/snapshot_InRelease\t789\t%064d\n' "$name" "$name" "${pin#*=}" "$name" 3 4
   done
   printf 'transaction-complete\n'
-  for file in /var/lib/apt/lists/snapshot_InRelease /var/lib/apt/lists/snapshot_main_binary-amd64_Packages.lz4 /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt.conf.d/50snapshot /usr/share/keyrings/ubuntu-archive-keyring.gpg /etc/ssl/certs/ca-certificates.crt; do
-    printf 'file\t%064d\t123\t%s\n' 1 "$file"
+  for file in /var/lib/apt/lists/snapshot_InRelease /var/lib/apt/lists/snapshot_main_binary-amd64_Packages /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt.conf.d/50snapshot /usr/share/keyrings/ubuntu-archive-keyring.gpg /etc/ssl/certs/ca-certificates.crt; do
+    digest=1 size=123
+    case "$file" in *_InRelease) digest=4 size=789;; *_Packages) digest=3 size=456;; esac
+    printf 'file\t%064d\t%s\t%s\n' "$digest" "$size" "$file"
   done
   engine="$(shasum -a 256 "$state/bin/godot")"
   printf 'engine\t%s\nEND\n' "${engine%% *}"
@@ -58,7 +62,7 @@ printf '[{"Id":"sha256:%064d","Os":"linux","Architecture":"amd64","Config":{"Use
 mkdir "$state/tmp"
 PATH="$state/bin:$PATH" TMPDIR="$state/tmp" WAR_TRUSTED_RUNTIME_INVENTORY=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"
 grep -q '^TRUSTED_RUNTIME_INVENTORY {"schema":1,' "$state/report"
-grep '^TRUSTED_RUNTIME_INVENTORY ' "$state/report" | sed 's/^TRUSTED_RUNTIME_INVENTORY //' | jq -e '.evidence=="observed-cold-build-inventory-only" and (.inventory.installed_packages|length)==12 and (.recipe_files|length)==18 and (.inventory.transaction.downloaded_archives|length)==10' >/dev/null
+grep '^TRUSTED_RUNTIME_INVENTORY ' "$state/report" | sed 's/^TRUSTED_RUNTIME_INVENTORY //' | jq -e '.evidence=="observed-cold-build-inventory-only" and (.inventory.installed_packages|length)==12 and (.recipe_files|length)==19 and (.inventory.transaction.apt_targets|length)==1 and (.inventory.transaction.downloaded_archives|length)==10 and (.inventory.transaction.downloaded_archives | all((.apt_origins|length)==1 and all(.apt_origins[]; .trusted == true)))' >/dev/null
 for observation in inspect-failed extract-failed cleanup-failed timeout; do
   if PATH="$state/bin:$PATH" TMPDIR="$state/tmp" OBSERVATION="$observation" WAR_TRUSTED_INSPECT_SECONDS=2 WAR_TRUSTED_RUNTIME_INVENTORY=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"; then
     echo "accepted failed $observation observation" >&2; exit 1

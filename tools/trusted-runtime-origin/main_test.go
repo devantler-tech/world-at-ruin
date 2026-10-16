@@ -1,0 +1,252 @@
+package main
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const fixtureHash = "770e607624d689265ca6c44884d0807d9b054d23c473c106c72be9de08b7376c"
+
+func fixture(t *testing.T) (planRequest, targetRecord) {
+	t.Helper()
+	dir := t.TempDir()
+	index := filepath.Join(dir, "snapshot_main_binary-amd64_Packages")
+	release := filepath.Join(dir, "snapshot_InRelease")
+	packageFile := "pool/main/f/foo/foo_1.0+build1_amd64.deb"
+	contents := fmt.Sprintf("Package: foo\nVersion: 1.0\nArchitecture: amd64\nFilename: %s\nSize: 4\nSHA256: %s\n\n", packageFile, fixtureHash)
+	if err := os.WriteFile(index, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(release, []byte("signed release\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	target := targetRecord{
+		IndexPath: index, IndexURI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+		RepoURI: "http://archive.ubuntu.com/ubuntu/", BaseURI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/", Release: "noble", Component: "main",
+		Architecture: "amd64", Trusted: "yes", Codename: "noble", Suite: "noble", Origin: "Ubuntu", Label: "Ubuntu",
+		InReleasePath: release,
+	}
+	request := planRequest{
+		URI: "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/foo/foo_1.0%2bbuild1_amd64.deb", Basename: "foo_1.0+build1_amd64.deb", Package: "foo", Version: "1.0",
+		Architecture: "amd64", Bytes: 4, SHA256: fixtureHash,
+	}
+	return request, target
+}
+
+func TestResolveOriginsJoinsTheCompleteAuthenticatedTarget(t *testing.T) {
+	request, target := fixture(t)
+	file, err := os.OpenFile(target.IndexPath, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.WriteString("Optional-Empty-Field:\n\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveOrigins([]planRequest{request}, []targetRecord{target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Basename != request.Basename || got[0].PackageFilename != "pool/main/f/foo/foo_1.0+build1_amd64.deb" || got[0].IndexSHA256 == "" || got[0].InReleaseSHA256 == "" {
+		t.Fatalf("incomplete origin join: %+v", got)
+	}
+	if got[0].RepositoryURI != target.RepoURI || got[0].Release != "noble" || got[0].Component != "main" || got[0].Origin != "Ubuntu" {
+		t.Fatalf("release identity lost: %+v", got[0])
+	}
+}
+
+func TestResolveOriginsRetainsEveryAuthenticatedTargetForIdenticalArchiveBytes(t *testing.T) {
+	request, target := fixture(t)
+	second := target
+	dir := t.TempDir()
+	second.IndexPath = filepath.Join(dir, "snapshot_updates_main_binary-amd64_Packages")
+	second.InReleasePath = filepath.Join(dir, "snapshot_updates_InRelease")
+	second.IndexURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages"
+	second.BaseURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/"
+	second.Release = "noble-updates"
+	contents := packageStanza(request, "pool/main/f/foo/foo_1.0+build1_amd64.deb")
+	if err := os.WriteFile(second.IndexPath, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second.InReleasePath, []byte("second signed release\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveOrigins([]planRequest{request}, []targetRecord{target, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	releases := map[string]bool{}
+	for _, item := range got {
+		releases[item.Release] = true
+	}
+	if len(got) != 2 || !releases["noble"] || !releases["noble-updates"] {
+		t.Fatalf("complete authenticated target set not retained: %+v", got)
+	}
+}
+
+func TestResolveOriginsRefusesIncompleteAmbiguousAndConflictingEvidence(t *testing.T) {
+	request, target := fixture(t)
+	mutations := map[string]func() ([]planRequest, []targetRecord){
+		"untrusted target": func() ([]planRequest, []targetRecord) {
+			changed := target
+			changed.Trusted = "no"
+			return []planRequest{request}, []targetRecord{changed}
+		},
+		"missing InRelease": func() ([]planRequest, []targetRecord) {
+			changed := target
+			changed.InReleasePath += ".missing"
+			return []planRequest{request}, []targetRecord{changed}
+		},
+		"linked index": func() ([]planRequest, []targetRecord) {
+			changed := target
+			link := changed.IndexPath + ".link"
+			if err := os.Symlink(changed.IndexPath, link); err != nil {
+				t.Fatal(err)
+			}
+			changed.IndexPath = link
+			return []planRequest{request}, []targetRecord{changed}
+		},
+		"partial stanza": func() ([]planRequest, []targetRecord) {
+			changed := target
+			if err := os.WriteFile(changed.IndexPath, []byte("Package: foo\nVersion: 1.0\nArchitecture: amd64\nFilename: pool/main/f/foo/foo_1.0_amd64.deb\nSize: 4\n\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			return []planRequest{request}, []targetRecord{changed}
+		},
+		"duplicate field": func() ([]planRequest, []targetRecord) {
+			changed := target
+			raw, err := os.ReadFile(changed.IndexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = []byte(strings.Replace(string(raw), "SHA256: ", "SHA256: "+fixtureHash+"\nSHA256: ", 1))
+			if err = os.WriteFile(changed.IndexPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			return []planRequest{request}, []targetRecord{changed}
+		},
+		"ambiguous source": func() ([]planRequest, []targetRecord) {
+			return []planRequest{request}, []targetRecord{target, target}
+		},
+		"conflicting source": func() ([]planRequest, []targetRecord) {
+			changed := target
+			dir := t.TempDir()
+			changed.IndexPath = filepath.Join(dir, "conflicting_Packages")
+			changed.InReleasePath = filepath.Join(dir, "conflicting_InRelease")
+			changed.IndexURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages"
+			changed.BaseURI = "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/"
+			changed.Release = "noble-updates"
+			conflict := strings.ReplaceAll(packageStanza(request, "pool/main/f/foo/foo_1.0+build1_amd64.deb"), fixtureHash, strings.Repeat("a", 64))
+			if err := os.WriteFile(changed.IndexPath, []byte(conflict), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(changed.InReleasePath, []byte("other signed release\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			return []planRequest{request}, []targetRecord{target, changed}
+		},
+		"URI mismatch": func() ([]planRequest, []targetRecord) {
+			changed := request
+			changed.URI = "https://snapshot.ubuntu.com/ubuntu/other/foo.deb"
+			return []planRequest{changed}, []targetRecord{target}
+		},
+		"tuple mismatch": func() ([]planRequest, []targetRecord) {
+			changed := request
+			changed.Version = "2.0"
+			return []planRequest{changed}, []targetRecord{target}
+		},
+		"same-size digest substitution": func() ([]planRequest, []targetRecord) {
+			changed := request
+			changed.SHA256 = strings.Repeat("b", 64)
+			return []planRequest{changed}, []targetRecord{target}
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			request, target = fixture(t)
+			requests, targets := mutate()
+			if _, err := resolveOrigins(requests, targets); err == nil {
+				t.Fatal("accepted incomplete or ambiguous origin evidence")
+			}
+		})
+	}
+}
+
+func packageStanza(request planRequest, filename string) string {
+	return fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: %s\nFilename: %s\nSize: %d\nSHA256: %s\n\n", request.Package, request.Version, request.Architecture, filename, request.Bytes, request.SHA256)
+}
+
+func TestManifestReadersRequireCompleteBoundedRows(t *testing.T) {
+	request, target := fixture(t)
+	plan := fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%s\ttransaction\n", request.URI, request.Basename, request.Package, request.Version, request.Bytes, request.SHA256)
+	if _, err := parsePlanManifest(strings.NewReader(plan)); err == nil {
+		t.Fatal("accepted plan without architecture")
+	}
+	targets := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", target.IndexPath, target.IndexURI, target.RepoURI, target.Release, target.Component, target.Architecture, target.Trusted, target.Codename, target.Suite, target.Origin, target.Label, target.InReleasePath, "extra", "fields")
+	if _, err := parseTargetManifest(strings.NewReader(targets)); err == nil {
+		t.Fatal("accepted target with extra fields")
+	}
+}
+
+func TestTargetManifestRefusesARepeatedIndexUnderChangedMetadata(t *testing.T) {
+	_, target := fixture(t)
+	row := func(origin string) string {
+		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", target.IndexPath, target.IndexURI, target.RepoURI, target.BaseURI, target.Release, target.Component, target.Architecture, target.Trusted, target.Codename, target.Suite, origin, target.Label)
+	}
+	if _, err := parseTargetManifest(strings.NewReader(row("Ubuntu") + row("Changed"))); err == nil {
+		t.Fatal("accepted one package index as two targets")
+	}
+}
+
+func TestCompressedIndexUsesTheFixedBoundedDecoder(t *testing.T) {
+	request, _ := fixture(t)
+	dir := t.TempDir()
+	index := filepath.Join(dir, "snapshot_main_binary-amd64_Packages.lz4")
+	raw := []byte("retained compressed bytes")
+	if err := os.WriteFile(index, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index+".decoded", []byte(packageStanza(request, "pool/main/f/foo/foo_1.0+build1_amd64.deb")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, "apt-helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nset -eu\n[ \"$1\" = cat-file ] && [ \"$#\" -eq 2 ]\ncat \"$2.decoded\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := aptHelperPath
+	aptHelperPath = helper
+	defer func() { aptHelperPath = original }()
+	seen := 0
+	hash, bytes, err := parsePackageIndex(index, func(item packageRecord) error {
+		seen++
+		return nil
+	})
+	expectedHash := fmt.Sprintf("%x", sha256.Sum256(raw))
+	if err != nil || seen != 1 || hash != expectedHash || bytes != int64(len(raw)) {
+		t.Fatalf("compressed index evidence incomplete: seen=%d hash=%q bytes=%d err=%v", seen, hash, bytes, err)
+	}
+}
+
+func TestCompressedIndexRefusesIncompleteDecodedContent(t *testing.T) {
+	dir := t.TempDir()
+	index := filepath.Join(dir, "snapshot_main_binary-amd64_Packages.lz4")
+	if err := os.WriteFile(index, []byte("retained compressed bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, "apt-helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nset -eu\n[ \"$1\" = cat-file ] && [ \"$#\" -eq 2 ]\nprintf 'Package: partial\\n'\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := aptHelperPath
+	aptHelperPath = helper
+	defer func() { aptHelperPath = original }()
+	if _, _, err := parsePackageIndex(index, func(packageRecord) error { return nil }); err == nil {
+		t.Fatal("accepted incomplete decoded content")
+	}
+}

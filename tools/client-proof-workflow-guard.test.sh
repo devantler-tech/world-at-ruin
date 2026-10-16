@@ -44,6 +44,7 @@ mutations=(
   '.jobs["client-sandbox"].steps[2].run |= sub("bash tools/trusted-runtime-bases.test.sh\n"; "")'
   '.jobs["client-sandbox"].steps[2].run |= sub("bash tools/trusted-runtime-packages.test.sh\n"; "")'
   '.jobs["client-sandbox"].steps[2].run |= sub("bash tools/trusted-runtime-transaction.test.sh\n"; "")'
+  '.jobs["client-sandbox"].steps[2].run |= sub("go test tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go\n"; "")'
   '.jobs["client-sandbox"].steps[-1].run = "echo complete=true"'
   '.jobs["client-sandbox"].steps[0].with.ref = "main"'
   '.jobs["ci-required-checks"].needs |= map(select(. != "client-sandbox"))'
