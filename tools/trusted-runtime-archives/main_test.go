@@ -210,9 +210,10 @@ func TestParseRecipeRequiresExecutableObserverBeforeInstall(t *testing.T) {
 		"RUN printf 'APT::Snapshot \"20261003T000000Z\";' > /etc/apt/apt.conf.d/50snapshot\n"
 	observer := `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
 	for name, recipe := range map[string]string{
-		"comment only":    prefix + "# " + observer + "\nRUN apt-get install -y --no-install-recommends foo=1.0 && true\n",
-		"after install":   prefix + "RUN apt-get install -y --no-install-recommends foo=1.0 && " + observer + " true\n",
-		"quoted observer": prefix + "RUN printf '%s\\n' '&& " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true' && \"apt-get\" install -y --no-install-recommends foo=1.0 && true\n",
+		"comment only":           prefix + "# " + observer + "\nRUN apt-get install -y --no-install-recommends foo=1.0 && true\n",
+		"after install":          prefix + "RUN apt-get install -y --no-install-recommends foo=1.0 && " + observer + " true\n",
+		"quoted observer":        prefix + "RUN printf '%s\\n' '&& " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true' && \"apt-get\" install -y --no-install-recommends foo=1.0 && true\n",
+		"short circuit fallback": prefix + "RUN false && " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true || \"apt-get\" install -y --no-install-recommends foo=1.0\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, _, err := parseRecipe([]byte(recipe)); err == nil {
@@ -303,6 +304,10 @@ func TestVerifyRefusesArchiveAndOriginMutations(t *testing.T) {
 	if err := verify(lockRaw, []byte(good)); err != nil {
 		t.Fatal(err)
 	}
+	target := strings.Split(good, "\n")[6]
+	extraTarget := strings.Replace(target, "binary-amd64", "binary-all", 1)
+	extraTarget = strings.Replace(extraTarget, "snapshot_Packages", "snapshot_all_Packages", 1)
+	extraTarget = strings.Replace(extraTarget, "\tnoble\tmain\tamd64\tyes", "\tnoble\tmain\tall\tyes", 1)
 	mutations := map[string]string{
 		"missing":      strings.Replace(good, "archive\tfoo_1.0_amd64.deb\tfoo\t1.0\tamd64\t4\t"+strings.Repeat("d", 64)+"\n", "", 1),
 		"extra":        good + "archive\tbar.deb\tbar\t1\tamd64\t4\t" + strings.Repeat("d", 64) + "\n",
@@ -311,6 +316,7 @@ func TestVerifyRefusesArchiveAndOriginMutations(t *testing.T) {
 		"wrong size":   strings.Replace(good, "\t4\t"+strings.Repeat("d", 64), "\t5\t"+strings.Repeat("d", 64), 1),
 		"corrupt":      strings.Replace(good, strings.Repeat("d", 64), strings.Repeat("9", 64), 1),
 		"duplicate":    good + strings.Split(good, "\n")[5] + "\n",
+		"extra target": good + extraTarget + "\n",
 		"untrusted":    strings.ReplaceAll(good, "\tamd64\tyes\tUbuntu", "\tamd64\tno\tUbuntu"),
 		"partial":      good[:len(good)-1],
 	}

@@ -123,6 +123,7 @@ type archiveLock struct {
 	BaseLockSHA256    string               `json:"base_lock_sha256"`
 	ReportSHA256      string               `json:"source_report_sha256"`
 	ReportImageID     string               `json:"source_image_id"`
+	Targets           []targetObservation  `json:"apt_targets"`
 	Archives          []archiveExpectation `json:"archives"`
 }
 
@@ -310,6 +311,46 @@ func unquotedShellOccurrences(value, needle string) ([]int, error) {
 	return positions, nil
 }
 
+func validateShellFlow(value string) error {
+	singleQuoted, doubleQuoted, escaped := false, false, false
+	for i := 0; i < len(value); i++ {
+		character := value[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if character == '\\' && !singleQuoted {
+			escaped = true
+			continue
+		}
+		if character == '\'' && !doubleQuoted {
+			singleQuoted = !singleQuoted
+			continue
+		}
+		if character == '"' && !singleQuoted {
+			doubleQuoted = !doubleQuoted
+			continue
+		}
+		if singleQuoted || doubleQuoted {
+			continue
+		}
+		if character == '#' && (i == 0 || strings.ContainsRune(" \t\r\n", rune(value[i-1]))) {
+			break
+		}
+		if strings.HasPrefix(value[i:], "&&") || strings.HasPrefix(value[i:], ";;") {
+			i++
+			continue
+		}
+		if strings.HasPrefix(value[i:], "||") || strings.HasPrefix(value[i:], "$(") || strings.ContainsRune("|&;`", rune(character)) {
+			return errors.New("runtime transaction uses alternate shell control flow")
+		}
+	}
+	if singleQuoted || doubleQuoted || escaped {
+		return errors.New("runtime recipe has incomplete shell quoting")
+	}
+	return nil
+}
+
 func parseRecipe(raw []byte) (string, string, []string, error) {
 	runs, err := dockerRunInstructions(raw)
 	if err != nil {
@@ -331,6 +372,9 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 		}
 		observerCount += len(observers)
 		if len(observers) == 1 {
+			if scanErr = validateShellFlow(run); scanErr != nil {
+				return "", "", nil, scanErr
+			}
 			transaction = run
 			transactionOffset = observers[0]
 		}
@@ -409,6 +453,22 @@ func validateTargets(items []targetObservation, aptFiles map[string]evidenceFile
 		seenPaths[item.Index.Path], seenURIs[item.IndexURI] = true, true
 	}
 	return nil
+}
+
+func validateSelfContainedTargets(items []targetObservation) error {
+	if len(items) == 0 || len(items) > 128 {
+		return errors.New("archive target set missing or over bound")
+	}
+	files := map[string]evidenceFile{}
+	for _, item := range items {
+		for _, evidence := range []evidenceFile{item.Index, item.InRelease} {
+			if previous, exists := files[evidence.Path]; exists && previous != evidence {
+				return errors.New("archive target evidence path conflicts")
+			}
+			files[evidence.Path] = evidence
+		}
+	}
+	return validateTargets(items, files)
 }
 
 func requestMatchesOrigin(request string, origin originExpectation) bool {
@@ -579,11 +639,13 @@ func generate(raw []byte, root string) (archiveLock, error) {
 	sort.Strings(arguments)
 	archives := append([]archiveExpectation(nil), report.Inventory.Transaction.Archives...)
 	sort.Slice(archives, func(i, j int) bool { return archives[i].Name < archives[j].Name })
+	targets := append([]targetObservation(nil), report.Inventory.Transaction.Targets...)
+	sort.Slice(targets, func(i, j int) bool { return targetKey(targets[i]) < targetKey(targets[j]) })
 	result = archiveLock{
 		Schema: 1, Architecture: "amd64", RuntimeManifest: locked.RuntimeManifest, Snapshot: locked.Snapshot,
 		APTVersion: report.Inventory.Transaction.APTVersion, DirectArguments: arguments,
 		PackageLockSHA256: sha256Hex(packageBytes), BaseLockSHA256: sha256Hex(baseBytes),
-		ReportSHA256: sha256Hex(raw), ReportImageID: report.Image.ID, Archives: archives,
+		ReportSHA256: sha256Hex(raw), ReportImageID: report.Image.ID, Targets: targets, Archives: archives,
 	}
 	return result, validateLock(result)
 }
@@ -591,6 +653,17 @@ func generate(raw []byte, root string) (archiveLock, error) {
 func validateLock(value archiveLock) error {
 	if value.Schema != 1 || value.Architecture != "amd64" || !manifestPattern.MatchString(value.RuntimeManifest) || !snapshotPattern.MatchString(value.Snapshot) || !versionPattern.MatchString(value.APTVersion) || !digestPattern.MatchString(value.PackageLockSHA256) || !digestPattern.MatchString(value.BaseLockSHA256) || !digestPattern.MatchString(value.ReportSHA256) || !manifestPattern.MatchString(value.ReportImageID) || len(value.DirectArguments) == 0 || len(value.Archives) == 0 || len(value.Archives) > 1024 {
 		return errors.New("archive lock identity refused")
+	}
+	if err := validateSelfContainedTargets(value.Targets); err != nil {
+		return err
+	}
+	targetPrevious := ""
+	for _, target := range value.Targets {
+		key := targetKey(target)
+		if key <= targetPrevious {
+			return errors.New("archive lock targets must be unique and sorted")
+		}
+		targetPrevious = key
 	}
 	previous := ""
 	for _, argument := range value.DirectArguments {
@@ -704,6 +777,25 @@ func parseOriginFields(fields []string) (originExpectation, error) {
 	return item, validateOrigin(item)
 }
 
+func parseTargetFields(fields []string) (targetObservation, error) {
+	var item targetObservation
+	if len(fields) != 17 || fields[9] != "yes" {
+		return item, errors.New("transaction target record refused")
+	}
+	indexBytes, indexErr := strconv.ParseInt(fields[2], 10, 64)
+	releaseBytes, releaseErr := strconv.ParseInt(fields[15], 10, 64)
+	if indexErr != nil || releaseErr != nil {
+		return item, errors.New("transaction target size refused")
+	}
+	item = targetObservation{
+		IndexURI: fields[0], Index: evidenceFile{Path: fields[1], Bytes: indexBytes, SHA256: fields[3]},
+		RepositoryURI: fields[4], BaseURI: fields[5], Release: fields[6], Component: fields[7], Architecture: fields[8], Trusted: true,
+		Origin: fields[10], Label: fields[11], Codename: fields[12], Suite: fields[13],
+		InRelease: evidenceFile{Path: fields[14], Bytes: releaseBytes, SHA256: fields[16]},
+	}
+	return item, nil
+}
+
 func verify(lockRaw, transactionRaw []byte) error {
 	value, err := decodeLock(lockRaw)
 	if err != nil {
@@ -719,6 +811,7 @@ func verify(lockRaw, transactionRaw []byte) error {
 	plans := map[string]planRecord{}
 	archives := map[string]archiveExpectation{}
 	origins := map[string][]originExpectation{}
+	var targets []targetObservation
 	var arguments []string
 	aptVersion := ""
 	for _, line := range strings.Split(strings.TrimSuffix(string(transactionRaw), "\n"), "\n") {
@@ -781,13 +874,27 @@ func verify(lockRaw, transactionRaw []byte) error {
 			if len(fields) != 18 {
 				return errors.New("transaction target record refused")
 			}
+			target, parseErr := parseTargetFields(fields[1:])
+			if parseErr != nil {
+				return parseErr
+			}
+			targets = append(targets, target)
 		default:
 			return errors.New("unexpected or completed transaction evidence refused")
 		}
 	}
 	sort.Strings(arguments)
-	if aptVersion != value.APTVersion || strings.Join(arguments, "\n") != strings.Join(value.DirectArguments, "\n") || len(plans) != len(value.Archives) || len(archives) != len(value.Archives) || len(origins) != len(value.Archives) {
+	if aptVersion != value.APTVersion || strings.Join(arguments, "\n") != strings.Join(value.DirectArguments, "\n") || len(plans) != len(value.Archives) || len(archives) != len(value.Archives) || len(origins) != len(value.Archives) || len(targets) != len(value.Targets) {
 		return errors.New("transaction archive set incomplete or detached from recipe")
+	}
+	if err = validateSelfContainedTargets(targets); err != nil {
+		return err
+	}
+	sort.Slice(targets, func(i, j int) bool { return targetKey(targets[i]) < targetKey(targets[j]) })
+	for i := range value.Targets {
+		if targets[i] != value.Targets[i] {
+			return errors.New("transaction target census differs from reviewed lock")
+		}
 	}
 	for _, expected := range value.Archives {
 		plan, ok := plans[expected.Basename]

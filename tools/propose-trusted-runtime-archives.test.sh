@@ -28,9 +28,17 @@ printf '%s\n' "$*" >> "$PROPOSAL_TRACE"
 [ -s "$4" ] && [ "$5" = "$PROPOSAL_ROOT" ]
 printf '{"schema":1,"archives":[]}\n'
 GO
-chmod +x "$fixture/tools/build-trusted-regression-runtime.sh" "$state/bin/go"
+cat > "$state/bin/docker" <<'DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker %s\n' "$*" >> "$PROPOSAL_TRACE"
+[ "$#" -eq 3 ] && [ "$1 $2" = 'image rm' ] && [ "$3" = "$PROPOSAL_IMAGE" ]
+[ "${PROPOSAL_FAILURE:-}" != cleanup ]
+DOCKER
+chmod +x "$fixture/tools/build-trusted-regression-runtime.sh" "$state/bin/go" "$state/bin/docker"
 proposal_root="$(cd "$fixture" && pwd -P)"
-export PATH="$state/bin:$PATH" PROPOSAL_TRACE="$state/trace" PROPOSAL_ROOT="$proposal_root"
+proposal_image="$(printf 'sha256:%064d' 1)"
+export PATH="$state/bin:$PATH" PROPOSAL_TRACE="$state/trace" PROPOSAL_ROOT="$proposal_root" PROPOSAL_IMAGE="$proposal_image"
 if ! bash "$fixture/tools/propose-trusted-runtime-archives.sh" "$state/out/proposal" > "$state/stdout" 2> "$state/stderr"; then
   cat "$state/stderr" >&2
   exit 1
@@ -41,14 +49,26 @@ grep -qx 'sha256:000000000000000000000000000000000000000000000000000000000000000
 grep -qx '{"schema":1,"evidence":"proposal"}' "$state/out/proposal/report.json"
 grep -qx '{"schema":1,"archives":\[\]}' "$state/out/proposal/trusted-runtime-archives.lock.json"
 [ "$(grep -c '^build$' "$state/trace")" -eq 1 ]
+grep -qx "docker image rm $proposal_image" "$state/trace"
 
 for failure in build duplicate; do
+  : > "$state/trace"
   destination="$state/out/$failure"
   if PROPOSAL_FAILURE="$failure" bash "$fixture/tools/propose-trusted-runtime-archives.sh" "$destination" > "$state/stdout" 2> "$state/stderr"; then
     echo "accepted $failure proposal evidence" >&2; exit 1
   fi
   [ ! -e "$destination" ]
+  case "$failure" in
+    build) ! grep -q '^docker ' "$state/trace";;
+    duplicate) grep -qx "docker image rm $proposal_image" "$state/trace";;
+  esac
 done
+: > "$state/trace"
+if PROPOSAL_FAILURE=cleanup bash "$fixture/tools/propose-trusted-runtime-archives.sh" "$state/out/cleanup" > "$state/stdout" 2> "$state/stderr"; then
+  echo 'ignored proposal image cleanup failure' >&2; exit 1
+fi
+[ -d "$state/out/cleanup" ]
+grep -qx "docker image rm $proposal_image" "$state/trace"
 : > "$state/trace"
 if bash "$fixture/tools/propose-trusted-runtime-archives.sh" "$state/out/proposal" >/dev/null 2>&1; then
   echo 'overwrote existing proposal evidence' >&2; exit 1

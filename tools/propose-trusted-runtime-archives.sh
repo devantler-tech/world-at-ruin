@@ -9,6 +9,13 @@ if [ -e "$destination" ] || [ -L "$destination" ] || [ ! -d "$parent" ] || [ -L 
 state="$(mktemp -d)"
 cleanup() {
   local status=$?
+  local cleanup_image=""
+  if [ -s "$state/image" ] && [ ! -L "$state/image" ] && [ "$(wc -l < "$state/image")" -eq 1 ]; then
+    cleanup_image="$(cat "$state/image")"
+    if [[ "$cleanup_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      docker image rm "$cleanup_image" >/dev/null 2>&1 || status=1
+    fi
+  fi
   rm -rf "$state" || status=1
   exit "$status"
 }
