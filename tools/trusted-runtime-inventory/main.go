@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,7 @@ const maximumInventoryBytes = 1024 * 1024
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 var packagePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.:~-]*$`)
+var archiveNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~%_-]*\.deb$`)
 var directPins = map[string]string{
 	"libfontconfig1": "2.15.0-1.1ubuntu2", "libx11-6": "2:1.8.7-1build1",
 	"libxcursor1": "1:1.2.1-1build1", "libxinerama1": "2:1.1.4-3build1",
@@ -45,7 +47,156 @@ type inventory struct {
 	Packages     []installedPackage `json:"installed_packages"`
 	Files        []ingredientFile   `json:"apt_inputs"`
 	Engine       string             `json:"engine_sha256"`
+	Transaction  transaction        `json:"transaction"`
 }
+type archiveObservation struct {
+	installedPackage
+	Basename string `json:"basename"`
+	URI      string `json:"requested_uri"`
+	Bytes    int64  `json:"bytes"`
+	SHA256   string `json:"sha256"`
+}
+type transaction struct {
+	APTVersion string               `json:"apt_version"`
+	Arguments  []string             `json:"direct_arguments"`
+	Inherited  []installedPackage   `json:"preinstall_packages"`
+	Archives   []archiveObservation `json:"downloaded_archives"`
+}
+
+// transactionIdentity validates data fields without deriving package identity from filenames.
+func transactionIdentity(fields []string) (installedPackage, error) {
+	if len(fields) != 3 || !packagePattern.MatchString(fields[0]) || !versionPattern.MatchString(fields[1]) || (fields[2] != "amd64" && fields[2] != "all") {
+		return installedPackage{}, errors.New("transaction package identity refused")
+	}
+	return installedPackage{fields[0], fields[1], fields[2]}, nil
+}
+
+// archiveMetadata accepts bounded archive names and complete SHA-256/size observations.
+func archiveMetadata(name, sizeText, hash string) (archiveObservation, error) {
+	var out archiveObservation
+	if !archiveNamePattern.MatchString(name) || !digestPattern.MatchString(hash) {
+		return out, errors.New("transaction archive request refused")
+	}
+	size, err := strconv.ParseInt(sizeText, 10, 64)
+	if err != nil || size <= 0 || size > 64*1024*1024 {
+		return out, errors.New("transaction archive size refused")
+	}
+	out.Basename, out.Bytes, out.SHA256 = name, size, hash
+	return out, nil
+}
+
+// planRecord retains requested URLs as data, never as authenticated selected-index evidence.
+func planRecord(fields []string) (archiveObservation, error) {
+	item, err := archiveMetadata(fields[1], fields[2], fields[3])
+	if err != nil {
+		return item, err
+	}
+	uri, err := url.Parse(fields[0])
+	if err != nil || (uri.Scheme != "https" && uri.Scheme != "http") || uri.Hostname() == "" || uri.User != nil || uri.RawQuery != "" || uri.Fragment != "" || strings.ContainsAny(fields[0], "\r\n\t\x00 ") {
+		return archiveObservation{}, errors.New("transaction request URI refused")
+	}
+	item.URI = fields[0]
+	return item, nil
+}
+
+// parseTransaction accounts for the full installed set; it grants no archive-origin authority.
+func parseTransaction(lines []string, final []installedPackage) (transaction, error) {
+	var out transaction
+	refuse := func() (transaction, error) {
+		return transaction{}, errors.New("runtime transaction incomplete or inconsistent")
+	}
+	if len(lines) == 0 || lines[len(lines)-1] != "transaction-complete" {
+		return refuse()
+	}
+	base, acquired := map[string]installedPackage{}, map[string]bool{}
+	plans, archives := map[string]archiveObservation{}, map[string]archiveObservation{}
+	arguments := map[string]bool{}
+	for _, line := range lines[:len(lines)-1] {
+		f := strings.Split(line, "\t")
+		switch f[0] {
+		case "apt-version":
+			if len(f) != 2 || out.APTVersion != "" || !versionPattern.MatchString(f[1]) {
+				return refuse()
+			}
+			out.APTVersion = f[1]
+		case "argument":
+			if len(f) != 2 || arguments[f[1]] {
+				return refuse()
+			}
+			name, version, ok := strings.Cut(f[1], "=")
+			if !ok || directPins[name] != version || version == "" {
+				return refuse()
+			}
+			arguments[f[1]] = true
+			out.Arguments = append(out.Arguments, f[1])
+		case "base-package":
+			if len(f) != 5 || f[4] != "installed" || len(base) >= 2048 {
+				return refuse()
+			}
+			item, err := transactionIdentity(f[1:4])
+			if err != nil || base[item.Name].Name != "" {
+				return refuse()
+			}
+			base[item.Name] = item
+			out.Inherited = append(out.Inherited, item)
+		case "plan":
+			if len(f) != 5 || len(plans) >= 1024 {
+				return refuse()
+			}
+			item, err := planRecord(f[1:])
+			if err != nil || plans[item.Basename].Basename != "" {
+				return refuse()
+			}
+			plans[item.Basename] = item
+		case "archive":
+			if len(f) != 7 || len(archives) >= 1024 {
+				return refuse()
+			}
+			identity, err := transactionIdentity(f[2:5])
+			if err != nil || acquired[identity.Name] {
+				return refuse()
+			}
+			item, err := archiveMetadata(f[1], f[5], f[6])
+			if err != nil || archives[item.Basename].Basename != "" {
+				return refuse()
+			}
+			item.installedPackage = identity
+			archives[item.Basename], acquired[identity.Name] = item, true
+		default:
+			return refuse()
+		}
+	}
+	if len(arguments) != len(directPins) || len(base) == 0 || base["apt"].Version != out.APTVersion || out.APTVersion == "" || len(archives) == 0 || len(plans) != len(archives) {
+		return refuse()
+	}
+	var totalBytes int64
+	for name, item := range archives {
+		plan := plans[name]
+		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage {
+			return refuse()
+		}
+		item.URI = plan.URI
+		totalBytes += item.Bytes
+		if totalBytes > 256*1024*1024 {
+			return refuse()
+		}
+		base[item.Name] = item.installedPackage
+		out.Archives = append(out.Archives, item)
+	}
+	if len(base) != len(final) {
+		return refuse()
+	}
+	for _, item := range final {
+		if base[item.Name] != item {
+			return refuse()
+		}
+	}
+	sort.Strings(out.Arguments)
+	sort.Slice(out.Inherited, func(i, j int) bool { return out.Inherited[i].Name < out.Inherited[j].Name })
+	sort.Slice(out.Archives, func(i, j int) bool { return out.Archives[i].Basename < out.Archives[j].Basename })
+	return out, nil
+}
+
 type imageConfig struct {
 	User       string
 	WorkingDir string
@@ -82,6 +233,7 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 	}
 	out.Architecture = lines[1]
 	packages, files := map[string]string{}, map[string]bool{}
+	var transactionLines []string
 	signed, indexes := false, false
 	for _, line := range lines[2 : len(lines)-2] {
 		fields := strings.Split(line, "\t")
@@ -110,6 +262,8 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 				return fail()
 			}
 			out.Engine = fields[1]
+		case "apt-version", "argument", "base-package", "plan", "archive", "transaction-complete":
+			transactionLines = append(transactionLines, line)
 		default:
 			return fail()
 		}
@@ -127,6 +281,11 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 	if !signed || !indexes || out.Engine == "" || len(packages) <= len(directPins) {
 		return fail()
 	}
+	observedTransaction, err := parseTransaction(transactionLines, out.Packages)
+	if err != nil {
+		return fail()
+	}
+	out.Transaction = observedTransaction
 	sort.Slice(out.Packages, func(i, j int) bool { return out.Packages[i].Name < out.Packages[j].Name })
 	sort.Slice(out.Files, func(i, j int) bool { return out.Files[i].Path < out.Files[j].Path })
 	return out, nil
@@ -240,7 +399,7 @@ func run(args []string, output io.Writer) error {
 		return err
 	}
 	result := report{Schema: 1, Evidence: "observed-cold-build-inventory-only", Image: observedImage, Inventory: observed}
-	for _, path := range []string{".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh", "tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh", "tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh", "tools/trusted-runtime-inventory/main.go", ".github/containers/trusted-runtime-bases.sources.json", ".github/containers/trusted-runtime-bases.lock.json", "tools/trusted-runtime-bases/main.go", "tools/build-locked-trusted-runtime.sh", ".github/containers/trusted-runtime-packages.lock.json", "tools/trusted-runtime-packages/main.go", "tools/verify-trusted-runtime-packages.sh"} {
+	for _, path := range []string{".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh", "tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh", "tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh", "tools/trusted-runtime-inventory/main.go", ".github/containers/trusted-runtime-bases.sources.json", ".github/containers/trusted-runtime-bases.lock.json", "tools/trusted-runtime-bases/main.go", "tools/build-locked-trusted-runtime.sh", ".github/containers/trusted-runtime-packages.lock.json", "tools/trusted-runtime-packages/main.go", "tools/verify-trusted-runtime-packages.sh", "tools/observe-runtime-transaction.sh"} {
 		item, err := fileIdentity(filepath.Join(root, path), path, 1024*1024)
 		if err != nil {
 			return err

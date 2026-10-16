@@ -25,3 +25,8 @@ while IFS= read -r file; do
   printf 'file\t%s\t%s\t%s\n' "${digest%% *}" "$size" "$file" >> "$out"
 done < "$inputs"
 rm "$inputs"
+transaction=/usr/share/war-trusted-runtime/transaction.tsv
+[ -f "$transaction" ] && [ ! -L "$transaction" ]
+head -c 1048577 "$transaction" >> "$out"
+[ "$(wc -c < "$out")" -le 1048576 ]
+rm "$transaction"
