@@ -456,6 +456,9 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 	var out []originRecord
 	for i := range requests {
 		if conflicts[i] || len(matches[i]) != 1 {
+			first := targets[0]
+			fmt.Fprintf(os.Stderr, "archive origin join refused: request=%q package=%q version=%q architecture=%q matches=%d conflict=%t first_index=%q first_repository=%q first_base=%q\n",
+				requests[i].URI, requests[i].Package, requests[i].Version, requests[i].Architecture, len(matches[i]), conflicts[i], first.IndexURI, first.RepoURI, first.BaseURI)
 			return nil, nil, errors.New("archive origin missing, conflicting or ambiguous")
 		}
 		out = append(out, matches[i][0])
