@@ -51,6 +51,7 @@ var requiredRecipeFiles = []string{
 	"tools/verify-trusted-runtime-packages.sh",
 	"tools/observe-runtime-transaction.sh",
 	"tools/trusted-runtime-origin/main.go",
+	"tools/propose-trusted-runtime-archives.sh",
 }
 
 type evidenceFile struct {
@@ -239,7 +240,7 @@ func fileSet(items []evidenceFile, absolute bool) (map[string]evidenceFile, erro
 }
 
 func parseRecipe(raw []byte) (string, string, []string, error) {
-	if bytes.Count(raw, []byte(`bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY"`)) != 1 {
+	if bytes.Count(raw, []byte(`bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`)) != 1 {
 		return "", "", nil, errors.New("runtime transaction verifier invocation missing or repeated")
 	}
 	bases := runtimeFrom.FindAllSubmatch(raw, -1)

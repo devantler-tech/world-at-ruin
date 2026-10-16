@@ -57,7 +57,7 @@ func fixtureRecipe(t *testing.T) (string, map[string]any) {
 	recipe := "FROM golang:1.27.1@sha256:" + strings.Repeat("e", 64) + " AS certificates\n" +
 		"FROM ubuntu:24.04@" + fixtureManifest + "\n" +
 		"RUN printf 'APT::Snapshot \"20261003T000000Z\";' > /etc/apt/apt.conf.d/50snapshot \\\n" +
-		" && bash /tmp/observe-runtime-transaction.sh \"$WAR_RUNTIME_INVENTORY\" apt-get install -y --no-install-recommends foo=1.0 \\\n" +
+		" && bash /tmp/observe-runtime-transaction.sh \"$WAR_RUNTIME_INVENTORY\" \"$WAR_RUNTIME_ARCHIVE_POLICY\" apt-get install -y --no-install-recommends foo=1.0 \\\n" +
 		" && true\n"
 	for name, raw := range map[string][]byte{
 		"trusted-runtime-packages.lock.json": packageRaw,

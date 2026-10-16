@@ -26,14 +26,15 @@ printf '%s\n' "$*" >> "$TRACE"
 case "$1 $2" in
   'build --pull')
     [[ "$*" = *'--platform linux/amd64'* ]]
-    [[ "$*" = *'--build-arg WAR_RUNTIME_INVENTORY=0'* ]];;
+    [[ "$*" = *"--build-arg WAR_RUNTIME_INVENTORY=${EXPECTED_RUNTIME_MODE}"* ]]
+    [[ "$*" = *"--build-arg WAR_RUNTIME_ARCHIVE_POLICY=${EXPECTED_ARCHIVE_POLICY}"* ]];;
   'image inspect') printf 'sha256:%064d\n' 1;;
   *) exit 91;;
 esac
 DOCKER
 printf '#!/bin/sh\nexit 0\n' > "$state/bin/godot"
 chmod +x "$state/bin/docker" "$state/bin/godot"
-export PATH="$state/bin:$PATH" TRACE="$state/trace"
+export PATH="$state/bin:$PATH" TRACE="$state/trace" EXPECTED_RUNTIME_MODE=0 EXPECTED_ARCHIVE_POLICY=locked
 bash "$fixture/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"
 grep -qx 'sha256:0000000000000000000000000000000000000000000000000000000000000001' "$state/out"
 test "$(wc -l < "$TRACE" | tr -d ' ')" = 2
@@ -78,4 +79,17 @@ for refusal in missing-archive-lock partial-archive-lock changed-package-binding
   test ! -s "$state/out"
   test -s "$state/report"
 done
+# Archive maintenance is allowed to cross only the stale archive-lock binding. Base and
+# package locks remain validated before Docker, and the disposable proposal gets no old
+# expectation bytes that could be mistaken for authority.
+cp "$root/.github/containers/trusted-runtime-archives.lock.json" "$fixture/.github/containers/"
+jq '.package_lock_sha256="'"$(printf '%064d' 9)"'"' "$fixture/.github/containers/trusted-runtime-archives.lock.json" > "$state/changed"
+mv "$state/changed" "$fixture/.github/containers/trusted-runtime-archives.lock.json"
+mkdir "$state/proposal-context"
+: > "$TRACE"
+export EXPECTED_RUNTIME_MODE=1 EXPECTED_ARCHIVE_POLICY=proposal
+bash "$fixture/tools/build-locked-trusted-runtime.sh" "$fixture" "$state/proposal-context" 1 proposal-image proposal
+grep -q -- '--build-arg WAR_RUNTIME_INVENTORY=1' "$TRACE"
+grep -q -- '--build-arg WAR_RUNTIME_ARCHIVE_POLICY=proposal' "$TRACE"
+[ "$(cat "$state/proposal-context/expected-archives.json")" = '{}' ]
 echo 'trusted runtime base and archive proofs, platform selection and pre-Docker refusal controls passed'

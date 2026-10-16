@@ -3,6 +3,12 @@
 set -euo pipefail
 mode="${WAR_TRUSTED_RUNTIME_INVENTORY:-0}"
 case "$mode" in 0|1) ;; *) echo '::error::runtime inventory selection refused' >&2; exit 2;; esac
+proposal="${WAR_TRUSTED_RUNTIME_ARCHIVE_PROPOSAL:-0}"
+case "$proposal" in 0) policy=locked;; 1) policy=proposal;; *) echo '::error::runtime archive proposal selection refused' >&2; exit 2;; esac
+if [ "$policy" = proposal ] && [ "$mode" != 1 ]; then
+  echo '::error::runtime archive proposal requires complete inventory publication' >&2
+  exit 2
+fi
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=tools/trusted-regression-lifecycle.sh
 source "$root/tools/trusted-regression-lifecycle.sh"
@@ -26,8 +32,11 @@ cp "$root/tools/capture-trusted-runtime-inventory.sh" "$context/capture-trusted-
 cp "$root/tools/observe-runtime-transaction.sh" "$context/observe-runtime-transaction.sh"
 cp "$root/tools/trusted-runtime-origin/main.go" "$context/trusted-runtime-origin.go"
 cp "$root/tools/trusted-runtime-archives/main.go" "$context/trusted-runtime-archives.go"
+if [ "$policy" = proposal ]; then
+  echo 'TRUSTED_RUNTIME_ARCHIVE_PROPOSAL evidence-only=true' >&2
+fi
 trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" \
-  bash "$root/tools/build-locked-trusted-runtime.sh" "$root" "$context" "$mode" "world-trusted-regressions:build-$$" >&2
+  bash "$root/tools/build-locked-trusted-runtime.sh" "$root" "$context" "$mode" "world-trusted-regressions:build-$$" "$policy" >&2
 if [ "$mode" = 1 ]; then
   trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime image inspection" bash "$root/tools/inspect-trusted-runtime.sh" "world-trusted-regressions:build-$$" "$context" > "$context/identity"
   printf 'TRUSTED_RUNTIME_INVENTORY ' >&2

@@ -7,6 +7,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /trusted-runtime-origin
 
 FROM ubuntu:24.04@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b
 ARG WAR_RUNTIME_INVENTORY=0
+ARG WAR_RUNTIME_ARCHIVE_POLICY=locked
 COPY capture-trusted-runtime-inventory.sh /tmp/capture-trusted-runtime-inventory.sh
 COPY observe-runtime-transaction.sh expected-packages.tsv expected-archives.json /tmp/
 COPY --from=certificates /trusted-runtime-origin /trusted-runtime-archives /tmp/
@@ -25,7 +26,7 @@ RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.s
     'Acquire::https::Timeout "20";' \
     'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/50snapshot \
     && apt-get update \
-    && bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" \
+    && bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY" \
     apt-get install -y --no-install-recommends \
     libfontconfig1=2.15.0-1.1ubuntu2 libx11-6=2:1.8.7-1build1 \
     libxcursor1=1:1.2.1-1build1 libxinerama1=2:1.1.4-3build1 \

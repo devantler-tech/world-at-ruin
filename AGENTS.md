@@ -421,8 +421,13 @@ nonempty set of byte-identical APT 2.8 trusted Packages targets before package
 scripts run. Preserve the complete target census, regular single-link
 Packages/InRelease reads, URI + tuple + byte + SHA-256 join, duplicate/conflict
 refusals, reviewed archive-expectation equality, same-cache offline install and
-final installed-set equality. The report is evidence for proposing an archive
-expectation; only the reviewed repository lock authorizes the cold build. Run
+final installed-set equality. Normal and diagnostic builds always use the
+reviewed archive lock. Only the manually dispatched proposal workflow may pair
+complete inventory publication with the evidence-only proposal selector; that
+path bypasses only the stale expectation comparison, deletes its disposable
+image and grants no repository update or runtime-admission authority. The report
+is evidence for proposing an archive expectation; only the reviewed repository
+lock authorizes the cold build. Run
 `go test -race tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go`,
 `go test -race tools/trusted-runtime-archives/main.go tools/trusted-runtime-archives/main_test.go`,
 `go test -race tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go`

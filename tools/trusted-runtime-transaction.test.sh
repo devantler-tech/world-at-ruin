@@ -3,7 +3,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck disable=SC2016 # Match the literal Dockerfile variable.
-if ! grep -Fq '&& bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY"' "$root/.github/containers/trusted-regressions.Dockerfile"; then
+if ! grep -Fq '&& bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"' "$root/.github/containers/trusted-regressions.Dockerfile"; then
   echo "runtime does not collect the pre-install transaction" >&2
   exit 1
 fi
@@ -155,18 +155,40 @@ HASH
 chmod +x "$state/bin/"*
 export PATH="$state/bin:$PATH"
 # Both selections enforce the reviewed archive set; off publishes no diagnostic.
-TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 0 apt-get install -y --no-install-recommends foo=1.0
+TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 0 locked apt-get install -y --no-install-recommends foo=1.0
 [ -f "$state/installed" ] && [ ! -f "$state/report" ]
 [ "$(grep -c foo=1.0 "$state/trace")" -eq 3 ]
 [ "$(grep -c -- --no-download "$state/trace")" -eq 1 ]
 # The selected path must finish its observation before the no-download install.
 rm "$state/installed" "$state/install-attempted" "$state/trace"
-TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0
+TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 1 locked apt-get install -y --no-install-recommends foo=1.0
 [ -f "$state/installed" ]
 [ "$(grep -c foo=1.0 "$state/trace")" -eq 3 ]
 [ "$(grep -c -- --no-download "$state/trace")" -eq 1 ]
 [ "$(grep -o 'Dir::Cache::archives=[^ ]*' "$state/trace" | sort -u | wc -l)" -eq 1 ]
 grep -qx transaction-complete "$state/report"
+# A proposal build is the sole bootstrap path for a changed archive closure. It still
+# authenticates, hashes, origin-joins, installs offline and publishes a complete report,
+# but does not let the stale archive expectation authorize or block the disposable image.
+rm "$state/installed" "$state/install-attempted" "$state/trace" "$state/report"
+jq '.archives[0].sha256="'"$(printf '%064d' 8)"'"' "$state/archive-expectation.json" > "$state/changed"
+mv "$state/changed" "$state/archive-expectation.json"
+TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 1 proposal apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/proposal-error"
+[ -f "$state/installed" ] && [ -f "$state/report" ]
+[ "$(grep -c -- --no-download "$state/trace")" -eq 1 ]
+grep -qx transaction-complete "$state/report"
+grep -q 'archive proposal bypasses only the reviewed expectation comparison' "$state/proposal-error"
+# Proposal selection is diagnostic-only and must refuse before download when detached
+# from report publication or when the policy selector is unknown.
+rm -f "$state/installed" "$state/install-attempted" "$state/trace" "$state/downloaded" "$state/report"
+if TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 0 proposal apt-get install -y --no-install-recommends foo=1.0; then
+  echo 'accepted proposal without diagnostic publication' >&2; exit 1
+fi
+[ ! -f "$state/downloaded" ] && [ ! -f "$state/install-attempted" ]
+if TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 1 unknown apt-get install -y --no-install-recommends foo=1.0; then
+  echo 'accepted unknown archive policy' >&2; exit 1
+fi
+[ ! -f "$state/downloaded" ] && [ ! -f "$state/install-attempted" ]
 # No private archive/cache state may survive the helper's successful exit.
 [ -z "$(find "$state/work" -mindepth 1 -print)" ]
 for refusal in archive-expectation linked-expectation empty-plan malformed-plan oversized-plan storage-budget credential-uri unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline failed-target-reader untrusted-target missing-inrelease linked-index partial-stanza duplicate-field ambiguous-source conflicting-source effective-origin-mismatch origin-tuple-mismatch origin-digest-substitution missing-offline output-link; do
@@ -177,7 +199,7 @@ for refusal in archive-expectation linked-expectation empty-plan malformed-plan 
     archive-expectation) jq '.archives[0].sha256="'"$(printf '%064d' 8)"'"' "$state/archive-expectation.json" > "$state/changed"; mv "$state/changed" "$state/archive-expectation.json";;
     linked-expectation) rm "$state/archive-expectation.json"; ln -s "$state/archive-expectation.base.json" "$state/archive-expectation.json";;
   esac
-  if TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
+  if TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 locked apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
     echo "accepted $refusal transaction" >&2; exit 1
   fi
   if [ "$refusal" = output-link ]; then
@@ -193,4 +215,4 @@ for refusal in archive-expectation linked-expectation empty-plan malformed-plan 
   esac
   [ -z "$(find "$state/work" -mindepth 1 -print)" ]
 done
-printf '%s\n' 'runtime transaction: reviewed archives, authenticated origin join and 38 refusal controls passed'
+printf '%s\n' 'runtime transaction: reviewed archives, bounded proposal bootstrap, authenticated origin join and 40 refusal controls passed'

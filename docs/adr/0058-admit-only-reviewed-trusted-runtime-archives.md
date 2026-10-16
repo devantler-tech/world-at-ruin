@@ -24,6 +24,17 @@ then execute with `--no-download`; diagnostic selection only controls whether a
 report is published. Missing, extra, duplicated, truncated, linked, corrupted or
 drifted evidence fails closed.
 
+An intentional snapshot or pin change can make the old archive lock impossible
+to satisfy before a replacement report exists. A manually dispatched,
+read-only maintenance workflow therefore permits one explicit evidence-only
+proposal mode. It requires complete inventory publication and bypasses only the
+old archive comparison. APT authentication, the complete trusted-origin join,
+archive bounds and hashes, final package equality and the same-cache offline
+install remain mandatory. The disposable image is removed after the report and
+generated proposal are extracted. The proposal has no admission authority; a
+reviewed replacement lock and a successful ordinary locked build are still
+required.
+
 This decision adds no archive store, producer identity, publication path,
 credential or warm-executor admission. A future reuse design must independently
 define custody and prove that reused bytes satisfy this same boundary. Those

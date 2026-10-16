@@ -1100,6 +1100,7 @@ jobs:
           go test tools/trusted-runtime-archives/main.go tools/trusted-runtime-archives/main_test.go
           bash tools/trusted-runtime-inventory.test.sh
           bash tools/trusted-runtime-transaction.test.sh
+          bash tools/propose-trusted-runtime-archives.test.sh
       - name: Install Godot (pinned, checksum-verified)
         run: bash tools/install-ci-godot.sh
       - name: Real sandbox refuses escape and runs the full trusted suite
