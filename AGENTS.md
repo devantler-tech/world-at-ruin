@@ -1142,6 +1142,13 @@ the permanent blocking policy.
   real cold-build evidence and limits are in
   [the inventory guide](docs/ci/trusted-runtime-inventory.md). This is diagnostic
   data, never an expected dependency lock or executor admission authority (#1397).
+  Selected collection also records the complete pre-install APT transaction,
+  inherited identities and private-cache archive tuples/bytes. Plan/digest/set
+  checks precede a same-argument no-download install; the independent final
+  installed-set verifier remains required. Run
+  `tools/trusted-runtime-transaction.test.sh` for cache, partial-read and corruption
+  refusals. Requested URLs are observations, not selected authenticated metadata
+  provenance or an independently reviewed archive lock (#1428).
 - **Trusted setup is bounded:** runtime builds, image inspection, editor import and sandbox probes
   use reviewed host deadlines; cancellation forwards to the active child and cleanup verifies
   absence of invocation-owned containers. The scene verdict watchdog remains 180 seconds. Run

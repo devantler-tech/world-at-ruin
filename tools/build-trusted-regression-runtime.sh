@@ -23,6 +23,7 @@ trap 'trusted_cleanup_status=$? trusted_cleanup_started=true; cleanup' EXIT
 trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 cp "$(command -v godot)" "$context/godot"
 cp "$root/tools/capture-trusted-runtime-inventory.sh" "$context/capture-trusted-runtime-inventory.sh"
+cp "$root/tools/observe-runtime-transaction.sh" "$context/observe-runtime-transaction.sh"
 trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" \
   bash "$root/tools/build-locked-trusted-runtime.sh" "$root" "$context" "$mode" "world-trusted-regressions:build-$$" >&2
 if [ "$mode" = 1 ]; then

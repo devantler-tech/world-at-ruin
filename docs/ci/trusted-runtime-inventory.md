@@ -11,10 +11,38 @@ Go, jq, Docker and GNU timeout must be available.
 The report records every installed package, including base and transitive
 packages; the package architecture and installed state; SHA-256 identities and
 sizes of APT indexes, source/configuration files, archive keyring and copied CA
-bundle; the installed engine checksum; seventeen builder/helper, base-proof and package-lock source identities;
+bundle; the installed engine checksum; eighteen builder/helper, base-proof and package-lock source identities;
 and the resulting image's Linux/amd64, non-root, working-directory and
 entrypoint contract. APT performs its ordinary signature and HTTPS checks.
 Its index observations are captured before the package lists are removed.
+
+The selected diagnostic wraps the same ten direct install arguments. It records
+APT's installed version, every pre-install package identity, and the complete
+very-quiet print-URIs plan with explicit SHA-256 selection. APT downloads into an
+empty invocation-local cache before any package scripts run. Each archive's
+regular-file identity, link count, byte count and complete SHA-256 must match the
+plan. Package/version/architecture comes from `dpkg-deb`, never from a filename.
+The inherited identities plus the acquired tuples must exactly explain the
+reviewed installed-package expectation. Failed or partial readers, unexpected
+plan output, duplicate destinations/packages, missing/extra/linked archives,
+pending partial files and changed baseline state refuse installation.
+
+The same arguments and cache then run with `--no-download`, without missing-file
+tolerance or a download fallback. The existing final installed-set verifier still
+runs from freshly copied expected bytes. The default mode directly executes the
+original install command. A selected build publishes no complete transaction after
+a failed acquisition, verification or no-download installation.
+
+`inventory.transaction` carries `apt_version`, `direct_arguments`,
+`preinstall_packages` and `downloaded_archives`. Each archive includes its observed
+tuple, basename, bytes, SHA-256 and `requested_uri`. The complete pre-install plan
+and acquired set are joined one-to-one before the report is emitted. Transaction
+archives explain new or changed packages; they are not the full installed set.
+`direct_arguments` is the canonically sorted set of direct package pins; the
+wrapper preserves the original invocation order across all three APT commands.
+The plan is limited to 1,024 archives, 64 MiB per archive and 256 MiB total before
+download. Private cache bytes are deleted on every exit within the existing build
+deadline and do not remain in a successful image layer.
 
 The selected build uses the existing 900-second build limit. Image inspection,
 fixed-path extraction, container absence verification and report validation
@@ -35,7 +63,10 @@ This is an **observed cold-build inventory**. The builder separately verifies
 the [platform-specific base metadata proof](trusted-runtime-bases.md) before
 Docker runs; the inventory binds those proof and checker bytes to this observation.
 Every build also enforces the [complete installed identity expectation](trusted-runtime-packages.md).
-The inventory does not independently authenticate package archive bytes,
+APT's download-only phase retains its normal authentication. Print-URIs runs
+before APT's archive authentication and is not itself an authentication receipt.
+Requested URLs and index filenames do not identify the selected authenticated
+Packages-to-Release chain. This diagnostic does not independently authenticate package archive bytes,
 producer authorization, artifact provenance or future cache admission. It
 publishes no executor archive, enables no reuse and proves no warm saving.
 Those decisions and whether to retain this diagnostic after adoption belong
@@ -43,11 +74,21 @@ to [#1397](https://github.com/devantler-tech/world-at-ruin/issues/1397).
 Caller engine version/ZIP checksum fields describe the selected installer;
 the separate executable checksum joins the host engine to the observed image.
 
+For archive-lock maintenance, retain one complete successful native report and
+verify its exact source/job/recipe identities independently before reviewing any
+proposed expectation. A report cannot authorize its own executor. An unavailable
+snapshot/package or a mismatched tuple stops the build: collect a proposed change
+in a disposable maintenance build, review it, and prove the final locked path.
+Never disable authentication or validity checks to recover. Independent selected
+metadata provenance and a reviewed archive-byte expectation remain
+[#1428](https://github.com/devantler-tech/world-at-ruin/issues/1428).
+
 Validate with:
 
 ```sh
 go test -race tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go
 bash tools/trusted-runtime-inventory.test.sh
+bash tools/trusted-runtime-transaction.test.sh
 bash tools/client-proof-workflow-guard.test.sh
 bash tools/trusted-regression-deadlines.test.sh
 ```

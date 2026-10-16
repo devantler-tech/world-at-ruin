@@ -17,11 +17,69 @@ func inventoryFixture() string {
 		fmt.Fprintf(&b, "package\t%s\t%s\tamd64\tinstalled\n", name, version)
 	}
 	b.WriteString("package\tbase-files\t13ubuntu10.3\tamd64\tinstalled\n")
+	b.WriteString("package\tapt\t2.8.3\tamd64\tinstalled\n")
 	for _, path := range []string{"/var/lib/apt/lists/snapshot_InRelease", "/var/lib/apt/lists/snapshot_main_binary-amd64_Packages.lz4", "/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/apt.conf.d/50snapshot", "/usr/share/keyrings/ubuntu-archive-keyring.gpg", "/etc/ssl/certs/ca-certificates.crt"} {
 		fmt.Fprintf(&b, "file\t%s\t123\t%s\n", strings.Repeat("a", 64), path)
 	}
+	b.WriteString(transactionRecords())
 	fmt.Fprintf(&b, "engine\t%s\nEND\n", strings.Repeat("b", 64))
 	return b.String()
+}
+
+// transactionRecords separates inherited identities from the archives acquired before install.
+func transactionRecords() string {
+	var b strings.Builder
+	b.WriteString("apt-version\t2.8.3\nbase-package\tbase-files\t13ubuntu10.3\tamd64\tinstalled\nbase-package\tapt\t2.8.3\tamd64\tinstalled\n")
+	for name, version := range directPins {
+		fmt.Fprintf(&b, "argument\t%s=%s\n", name, version)
+		fmt.Fprintf(&b, "plan\thttps://snapshot.ubuntu.com/test/%s.deb\t%s.deb\t123\t%s\n", name, name, strings.Repeat("a", 64))
+		fmt.Fprintf(&b, "archive\t%s.deb\t%s\t%s\tamd64\t123\t%s\n", name, name, version, strings.Repeat("a", 64))
+	}
+	b.WriteString("transaction-complete\n")
+	return b.String()
+}
+
+// TestTransactionObservationsNeverAcceptPartialPlans keeps plausible prefixes fail closed.
+func TestTransactionObservationsNeverAcceptPartialPlans(t *testing.T) {
+	raw := inventoryFixture()
+	mutations := map[string]string{
+		"total archive budget":        strings.ReplaceAll(raw, "\t123\t", "\t67108864\t"),
+		"no baseline":                 strings.ReplaceAll(raw, "base-package\tbase-files\t13ubuntu10.3\tamd64\tinstalled\n", ""),
+		"missing completion":          strings.ReplaceAll(raw, "transaction-complete\n", ""),
+		"missing plan":                strings.ReplaceAll(raw, "plan\thttps://snapshot.ubuntu.com/test/libgl1.deb\tlibgl1.deb\t123\t"+strings.Repeat("a", 64)+"\n", ""),
+		"missing archive":             strings.ReplaceAll(raw, "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("a", 64)+"\n", ""),
+		"wrong tuple":                 strings.Replace(raw, "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1", "archive\tlibgl1.deb\tlibgl1\t99", 1),
+		"same size corruption":        strings.Replace(raw, "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("a", 64), "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("c", 64), 1),
+		"wrong argument":              strings.Replace(raw, "argument\tlibgl1=1.7.0-1build1", "argument\tlibgl1=99", 1),
+		"duplicate archive":           strings.Replace(raw, "transaction-complete", "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("a", 64)+"\ntransaction-complete", 1),
+		"trailing transaction":        strings.Replace(raw, "transaction-complete\n", "transaction-complete\napt-version\t2.8.3\n", 1),
+		"unaccounted inherited":       strings.Replace(raw, "base-package\tbase-files\t13ubuntu10.3", "base-package\tother-files\t13ubuntu10.3", 1),
+		"duplicate plan":              strings.Replace(raw, "transaction-complete", "plan\thttps://snapshot.ubuntu.com/test/libgl1.deb\tlibgl1.deb\t123\t"+strings.Repeat("a", 64)+"\ntransaction-complete", 1),
+		"credential URI":              strings.Replace(raw, "https://snapshot.ubuntu.com/test/libgl1.deb", "https://user@snapshot.ubuntu.com/test/libgl1.deb", 1),
+		"escaped filename":            strings.Replace(raw, "\tlibgl1.deb\t123", "\t../libgl1.deb\t123", 1),
+		"oversized archive":           strings.Replace(raw, "\tlibgl1.deb\t123", "\tlibgl1.deb\t67108865", 1),
+		"wrong apt version":           strings.Replace(raw, "apt-version\t2.8.3", "apt-version\t99", 1),
+		"redundant inherited archive": strings.Replace(raw, "transaction-complete", "base-package\tlibgl1\t1.7.0-1build1\tamd64\tinstalled\ntransaction-complete", 1),
+	}
+	for name, changed := range mutations {
+		t.Run(name, func(t *testing.T) {
+			if changed == raw {
+				t.Fatal("negative control did not alter the observation")
+			}
+			if _, err := parseInventory([]byte(changed), strings.Repeat("b", 64)); err == nil {
+				t.Fatal("accepted incomplete transaction")
+			}
+		})
+	}
+}
+
+// TestTransactionUpgrade replaces a baseline version while preserving every inherited identity.
+func TestTransactionUpgrade(t *testing.T) {
+	raw := strings.Replace(inventoryFixture(), "transaction-complete", "base-package\tlibgl1\t1.0\tamd64\tinstalled\ntransaction-complete", 1)
+	got, err := parseInventory([]byte(raw), strings.Repeat("b", 64))
+	if err != nil || len(got.Transaction.Inherited) != 3 || len(got.Transaction.Archives) != 10 {
+		t.Fatalf("complete upgrade refused: %v", err)
+	}
 }
 
 // TestObservedInventory checks full inventory capture and deterministic report ordering.
@@ -30,7 +88,7 @@ func TestObservedInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Packages) != 11 || len(got.Files) != 6 || got.Architecture != "amd64" {
+	if len(got.Packages) != 12 || len(got.Files) != 6 || got.Architecture != "amd64" || len(got.Transaction.Archives) != 10 || len(got.Transaction.Inherited) != 2 {
 		t.Fatalf("incomplete inventory: %+v", got)
 	}
 	other, err := parseInventory([]byte(inventoryFixture()), strings.Repeat("b", 64))

@@ -215,7 +215,7 @@ cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
 # Execute the real launcher/controller with a divergent event-base helper pair.
 # Only the external compiler/container runtime are stubs in this ownership test.
 cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
-for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory verify-trusted-runtime-packages sandbox-godot; do
+for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory observe-runtime-transaction verify-trusted-runtime-packages sandbox-godot; do
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"

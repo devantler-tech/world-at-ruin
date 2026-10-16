@@ -7,7 +7,7 @@ trap 'rm -rf "$state"' EXIT
 fixture="$state/recipe"
 mkdir -p "$fixture/.github/containers" "$fixture/tools/trusted-runtime-bases" "$fixture/tools/trusted-runtime-packages" "$state/bin"
 for file in build-trusted-regression-runtime.sh build-locked-trusted-runtime.sh \
-  capture-trusted-runtime-inventory.sh verify-trusted-runtime-packages.sh trusted-regression-lifecycle.sh \
+  capture-trusted-runtime-inventory.sh observe-runtime-transaction.sh verify-trusted-runtime-packages.sh trusted-regression-lifecycle.sh \
   trusted-regression-phase.sh trusted-phase-command.sh process-group-lifecycle.sh; do
   cp "$root/tools/$file" "$fixture/tools/$file"
 done
