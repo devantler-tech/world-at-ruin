@@ -52,6 +52,8 @@ var requiredRecipeFiles = []string{
 	"tools/observe-runtime-transaction.sh",
 	"tools/trusted-runtime-origin/main.go",
 	"tools/propose-trusted-runtime-archives.sh",
+	".github/containers/trusted-runtime-archives.lock.json",
+	"tools/trusted-runtime-archives/main.go",
 }
 
 type evidenceFile struct {

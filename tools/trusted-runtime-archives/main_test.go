@@ -5,11 +5,42 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 const fixtureManifest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func TestRequiredRecipeFilesMatchInventoryContract(t *testing.T) {
+	want := []string{
+		".github/containers/trusted-regressions.Dockerfile",
+		"tools/build-trusted-regression-runtime.sh",
+		"tools/install-ci-godot.sh",
+		"tools/trusted-regression-lifecycle.sh",
+		"tools/trusted-regression-phase.sh",
+		"tools/trusted-phase-command.sh",
+		"tools/process-group-lifecycle.sh",
+		"tools/capture-trusted-runtime-inventory.sh",
+		"tools/inspect-trusted-runtime.sh",
+		"tools/trusted-runtime-inventory/main.go",
+		".github/containers/trusted-runtime-bases.sources.json",
+		".github/containers/trusted-runtime-bases.lock.json",
+		"tools/trusted-runtime-bases/main.go",
+		"tools/build-locked-trusted-runtime.sh",
+		".github/containers/trusted-runtime-packages.lock.json",
+		"tools/trusted-runtime-packages/main.go",
+		"tools/verify-trusted-runtime-packages.sh",
+		"tools/observe-runtime-transaction.sh",
+		"tools/trusted-runtime-origin/main.go",
+		"tools/propose-trusted-runtime-archives.sh",
+		".github/containers/trusted-runtime-archives.lock.json",
+		"tools/trusted-runtime-archives/main.go",
+	}
+	if !reflect.DeepEqual(requiredRecipeFiles, want) {
+		t.Fatalf("archive generator recipe set differs from the 22-file inventory contract:\n got: %q\nwant: %q", requiredRecipeFiles, want)
+	}
+}
 
 func fixturePackages() []any {
 	return []any{
