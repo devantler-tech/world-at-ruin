@@ -56,6 +56,13 @@ const SHAPE_WEIGHT_MIN := -1.0
 const SHAPE_WEIGHT_MAX := 2.0
 const BONE_FACTOR_MIN := 0.5
 const BONE_FACTOR_MAX := 2.0
+## Smallest bone factor the build applies as written. Zero, a near-zero value, a
+## negative value and every non-finite value turn the rest transforms they scale
+## into infinities, collapsed bones or a mirrored body. The reader still accepts
+## every finite number (v1..v4 documents stay readable), so the build substitutes
+## the neutral 1.0 for a degenerate factor and warns; the saved document is never
+## changed. Every shipped recipe and golden fixture sits in [0.95, 1.22].
+const DEGENERATE_FACTOR_EPSILON := 0.001
 
 ## Contrapposto — the rest stance (#237, first slice of #224).
 ##
@@ -224,15 +231,15 @@ static func build(recipe: Dictionary) -> Node3D:
 	# Bone ops first (rest edits, no engine global reads), then poses.
 	for key: String in recipe.get("bone_girth", {}):
 		for bone in _bones_for(skeleton, key):
-			_apply_girth(skeleton, bone, recipe["bone_girth"][key])
+			_apply_girth(skeleton, bone, _applied_factor("bone_girth", key, recipe["bone_girth"][key]))
 	for key: String in recipe.get("bone_scale", {}):
 		for bone in _bones_for(skeleton, key):
-			KitAssembly.scale_bone_subtree(skeleton, bone, recipe["bone_scale"][key])
+			KitAssembly.scale_bone_subtree(skeleton, bone, _applied_factor("bone_scale", key, recipe["bone_scale"][key]))
 	for key: String in recipe.get("joint_push", {}):
 		if key in STATURE_JOINTS:
 			continue
 		for bone in _bones_for(skeleton, key):
-			_scale_joint_origin(skeleton, bone, recipe["joint_push"][key])
+			_scale_joint_origin(skeleton, bone, _applied_factor("joint_push", key, recipe["joint_push"][key]))
 	# Arms down from the bake's T-pose — the standing pose every body wears
 	# until real animation arrives (rotation-only rest edits: TRS-safe).
 	for arm in ["upperarm_l", "upperarm_r"]:
@@ -250,7 +257,7 @@ static func build(recipe: Dictionary) -> Node3D:
 		for key: String in STATURE_JOINTS:
 			if pushes.has(key):
 				for bone in _bones_for(skeleton, STATURE_JOINTS[key]):
-					_scale_joint_origin(skeleton, bone, pushes[key])
+					_scale_joint_origin(skeleton, bone, _applied_factor("joint_push", key, pushes[key]))
 		instance.position.y += historical_ankle - _lowest_ankle_rest_y(skeleton)
 	KitAssembly.commit_rests_and_apply_shapes(skeleton, mesh_instance, recipe.get("shapes", {}))
 
@@ -797,6 +804,18 @@ static func _bones_for(skeleton: Skeleton3D, key: String) -> PackedInt32Array:
 		if i >= 0:
 			out.append(i)
 	return out
+
+
+## The factor the build applies for one bone key: the stored value when it is a
+## usable finite number above [constant DEGENERATE_FACTOR_EPSILON], otherwise the
+## neutral 1.0. A degenerate factor is what a hand-edited or corrupted document can
+## hold, never what the writer can produce, so it is built as absent and logged.
+static func _applied_factor(field: String, key: String, stored: Variant) -> float:
+	var factor := float(stored)
+	if is_finite(factor) and factor > DEGENERATE_FACTOR_EPSILON:
+		return factor
+	push_warning("CharacterFactory: %s '%s' is degenerate (%s); building it as 1.0" % [field, key, str(stored)])
+	return 1.0
 
 
 ## Uniform girth around one bone; immediate children exactly compensated
