@@ -413,6 +413,17 @@ and `bash tools/trusted-runtime-packages.test.sh`. This is an installed identity
 expectation, not archive provenance or reusable-executor authority. See
 [the maintenance procedure](docs/ci/trusted-runtime-packages.md) and ADR 0057.
 
+The opt-in cold-runtime diagnostic joins every acquired archive to exactly one
+APT 2.8 trusted Packages target before package scripts run. Preserve the complete
+target census, regular single-link Packages/InRelease reads, URI + tuple + byte +
+SHA-256 join, ambiguity/conflict refusals, same-cache offline install and final
+installed-set equality. The report is evidence for reviewing a later archive
+expectation; it cannot create that expectation or authorize reuse. Run
+`go test -race tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go`,
+`go test -race tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go`
+and `bash tools/trusted-runtime-transaction.test.sh`. See
+[the inventory procedure](docs/ci/trusted-runtime-inventory.md).
+
 The required duplication gate uses the same jscpd 5.0.16 settings as MegaLinter.
 Run `bash tools/duplication-guard.test.sh` after installing its locked scanner
 with `npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund`.

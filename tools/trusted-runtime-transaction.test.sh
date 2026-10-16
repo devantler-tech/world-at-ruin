@@ -16,10 +16,18 @@ printf 'safe' > "$state/sentinel"
 export TRANSACTION_TEST_HASH
 TRANSACTION_TEST_HASH="$(shasum -a 256 "$state/payload")"
 TRANSACTION_TEST_HASH=${TRANSACTION_TEST_HASH%% *}
+export TRANSACTION_ORIGIN_INDEX="$state/origin_Packages"
+export TRANSACTION_ORIGIN_RELEASE="$state/snapshot.ubuntu.com_dists_noble_InRelease"
+export TRANSACTION_ORIGIN_INDEX_BASE="$state/origin_Packages.base"
+printf 'Package: foo\nVersion: 1.0\nArchitecture: amd64\nFilename: test/foo.deb\nSize: 4\nSHA256: %s\n\n' "$TRANSACTION_TEST_HASH" > "$TRANSACTION_ORIGIN_INDEX_BASE"
+cp "$TRANSACTION_ORIGIN_INDEX_BASE" "$TRANSACTION_ORIGIN_INDEX"
+printf 'signed release\n' > "$TRANSACTION_ORIGIN_RELEASE"
+GOTOOLCHAIN=local GOWORK=off go build -o "$state/origin-helper" "$root/tools/trusted-runtime-origin/main.go"
 printf 'package\tapt\t2.8.3\tamd64\tinstalled\n' > "$state/before"
 { cat "$state/before"; printf 'package\tfoo\t1.0\tamd64\tinstalled\n'; } > "$state/expected"
 sed -e "s|expected=/tmp/expected-packages.tsv|expected=$state/expected|" \
     -e "s|out=/usr/share/war-trusted-runtime/transaction.tsv|out=$state/report|" \
+    -e "s|origin_helper=/tmp/trusted-runtime-origin|origin_helper=$state/origin-helper|" \
     "$root/tools/observe-runtime-transaction.sh" > "$state/observe.sh"
 cat > "$state/bin/apt-get" <<'APT'
 #!/usr/bin/env bash
@@ -29,7 +37,34 @@ mode=${TRANSACTION_TEST_CASE:-good}
 for argument in "$@"; do
   case "$argument" in Dir::Cache::archives=*) cache=${argument#*=};; esac
 done
-if [[ "$*" = *--print-uris* ]]; then
+if [ "${1:-}" = indextargets ]; then
+  rm -f "$TRANSACTION_ORIGIN_INDEX"
+  cp "$TRANSACTION_ORIGIN_INDEX_BASE" "$TRANSACTION_ORIGIN_INDEX"
+  release=$TRANSACTION_ORIGIN_RELEASE
+  index=$TRANSACTION_ORIGIN_INDEX
+  printf 'signed release\n' > "$release"
+  trusted=yes
+  repo=https://snapshot.ubuntu.com/
+  case "$mode" in
+    untrusted-target) trusted=no;;
+    missing-inrelease) rm "$release";;
+    linked-index) rm "$index"; ln -s "$TRANSACTION_ORIGIN_INDEX_BASE" "$index";;
+    partial-stanza) sed '/^SHA256:/d' "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
+    duplicate-field) sed "s/^SHA256:.*/&\nSHA256: $TRANSACTION_TEST_HASH/" "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
+    origin-uri-mismatch) repo=https://snapshot.ubuntu.com/other/;;
+    origin-tuple-mismatch) sed 's/^Version: 1.0$/Version: 2.0/' "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
+    origin-digest-substitution) sed "s/^SHA256:.*/SHA256: $(printf '%064d' 2)/" "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
+  esac
+  row=$(printf '%s\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t%s\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\t%s\tnoble\tnoble\tUbuntu\tUbuntu' "$index" "$repo" "$trusted")
+  printf '%s\n' "$row"
+  if [ "$mode" = ambiguous-source ]; then printf '%s\n' "$row"; fi
+  if [ "$mode" = conflicting-source ]; then
+    other="$TRANSACTION_TEST_STATE/conflicting_Packages"
+    sed "s/^SHA256:.*/SHA256: $(printf '%064d' 3)/" "$TRANSACTION_ORIGIN_INDEX_BASE" > "$other"
+    printf '%s\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t%s\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tnoble\tnoble\tUbuntu\tUbuntu\n' "$other" "$repo"
+  fi
+  [ "$mode" != failed-target-reader ]
+elif [[ "$*" = *--print-uris* ]]; then
   [[ "$*" = *'Acquire::ForceHash=sha256'* ]]
   case "$mode" in
     empty-plan) exit 0;; malformed-plan) echo 'unexpected progress'; exit 0;;
@@ -108,7 +143,7 @@ bash "$state/observe.sh" 0 apt-get install -y --no-install-recommends foo=1.0
 [ "$(wc -l < "$state/trace")" -eq 1 ]
 # The selected path must finish its observation before the no-download install.
 rm "$state/installed" "$state/install-attempted" "$state/trace"
-TMPDIR="$state/work" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0
+TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0
 [ -f "$state/installed" ]
 [ "$(grep -c foo=1.0 "$state/trace")" -eq 3 ]
 [ "$(grep -c -- --no-download "$state/trace")" -eq 1 ]
@@ -116,9 +151,9 @@ TMPDIR="$state/work" bash "$state/observe.sh" 1 apt-get install -y --no-install-
 grep -qx transaction-complete "$state/report"
 # No private archive/cache state may survive the helper's successful exit.
 [ -z "$(find "$state/work" -mindepth 1 -print)" ]
-for refusal in empty-plan malformed-plan oversized-plan storage-budget credential-uri unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline missing-offline output-link; do
+for refusal in empty-plan malformed-plan oversized-plan storage-budget credential-uri unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline failed-target-reader untrusted-target missing-inrelease linked-index partial-stanza duplicate-field ambiguous-source conflicting-source origin-uri-mismatch origin-tuple-mismatch origin-digest-substitution missing-offline output-link; do
   rm -f "$state/installed" "$state/install-attempted" "$state/trace" "$state/downloaded" "$state/report"
-  if TMPDIR="$state/work" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
+  if TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
     echo "accepted $refusal transaction" >&2; exit 1
   fi
   if [ "$refusal" = output-link ]; then
@@ -132,4 +167,4 @@ for refusal in empty-plan malformed-plan oversized-plan storage-budget credentia
   esac
   [ -z "$(find "$state/work" -mindepth 1 -print)" ]
 done
-printf '%s\n' 'runtime transaction: original install, private-cache/no-download path and 25 refusal controls passed'
+printf '%s\n' 'runtime transaction: original install, authenticated origin join and 36 refusal controls passed'

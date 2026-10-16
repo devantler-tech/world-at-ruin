@@ -5,13 +5,14 @@ root="$(cd "$(dirname "$0")/.." && pwd -P)"
 state="$(mktemp -d)"
 trap 'rm -rf "$state"' EXIT
 fixture="$state/recipe"
-mkdir -p "$fixture/.github/containers" "$fixture/tools/trusted-runtime-bases" "$fixture/tools/trusted-runtime-packages" "$state/bin"
+mkdir -p "$fixture/.github/containers" "$fixture/tools/trusted-runtime-bases" "$fixture/tools/trusted-runtime-packages" "$fixture/tools/trusted-runtime-origin" "$state/bin"
 for file in build-trusted-regression-runtime.sh build-locked-trusted-runtime.sh \
   capture-trusted-runtime-inventory.sh observe-runtime-transaction.sh verify-trusted-runtime-packages.sh trusted-regression-lifecycle.sh \
   trusted-regression-phase.sh trusted-phase-command.sh process-group-lifecycle.sh; do
   cp "$root/tools/$file" "$fixture/tools/$file"
 done
 cp "$root/tools/trusted-runtime-packages/main.go" "$fixture/tools/trusted-runtime-packages/main.go"
+cp "$root/tools/trusted-runtime-origin/main.go" "$fixture/tools/trusted-runtime-origin/main.go"
 cp "$root/.github/containers/trusted-runtime-packages.lock.json" "$fixture/.github/containers/"
 cp "$root/tools/trusted-runtime-bases/main.go" "$fixture/tools/trusted-runtime-bases/main.go"
 cp "$root/.github/containers/"trusted-runtime-bases.*.json "$fixture/.github/containers/"

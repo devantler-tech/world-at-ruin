@@ -25,6 +25,7 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 var packagePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.:~-]*$`)
 var archiveNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~%_-]*\.deb$`)
+var pathPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._~%/-]*$`)
 var directPins = map[string]string{
 	"libfontconfig1": "2.15.0-1.1ubuntu2", "libx11-6": "2:1.8.7-1build1",
 	"libxcursor1": "1:1.2.1-1build1", "libxinerama1": "2:1.1.4-3build1",
@@ -51,16 +52,141 @@ type inventory struct {
 }
 type archiveObservation struct {
 	installedPackage
-	Basename string `json:"basename"`
-	URI      string `json:"requested_uri"`
-	Bytes    int64  `json:"bytes"`
-	SHA256   string `json:"sha256"`
+	Basename string        `json:"basename"`
+	URI      string        `json:"requested_uri"`
+	Bytes    int64         `json:"bytes"`
+	SHA256   string        `json:"sha256"`
+	Origin   archiveOrigin `json:"apt_origin"`
+}
+type archiveOrigin struct {
+	PackageFilename string         `json:"package_filename"`
+	RepositoryURI   string         `json:"repository_uri"`
+	BaseURI         string         `json:"base_uri"`
+	Release         string         `json:"release"`
+	Component       string         `json:"component"`
+	Architecture    string         `json:"target_architecture"`
+	Trusted         bool           `json:"trusted"`
+	Origin          string         `json:"origin"`
+	Label           string         `json:"label"`
+	Codename        string         `json:"codename"`
+	Suite           string         `json:"suite"`
+	IndexURI        string         `json:"index_uri"`
+	Index           ingredientFile `json:"index"`
+	InRelease       ingredientFile `json:"inrelease"`
+}
+type aptTarget struct {
+	IndexURI      string         `json:"index_uri"`
+	RepositoryURI string         `json:"repository_uri"`
+	BaseURI       string         `json:"base_uri"`
+	Release       string         `json:"release"`
+	Component     string         `json:"component"`
+	Architecture  string         `json:"architecture"`
+	Trusted       bool           `json:"trusted"`
+	Origin        string         `json:"origin"`
+	Label         string         `json:"label"`
+	Codename      string         `json:"codename"`
+	Suite         string         `json:"suite"`
+	Index         ingredientFile `json:"index"`
+	InRelease     ingredientFile `json:"inrelease"`
 }
 type transaction struct {
 	APTVersion string               `json:"apt_version"`
 	Arguments  []string             `json:"direct_arguments"`
 	Inherited  []installedPackage   `json:"preinstall_packages"`
+	Targets    []aptTarget          `json:"apt_targets"`
 	Archives   []archiveObservation `json:"downloaded_archives"`
+}
+
+func safeEvidenceText(value string, maximum int) bool {
+	return value != "" && len(value) <= maximum && !strings.ContainsAny(value, "\x00\r\n\t")
+}
+
+func evidenceURL(raw string, slash bool) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || strings.ContainsAny(raw, "\r\n\t\x00 ") {
+		return false
+	}
+	return !slash || strings.HasSuffix(raw, "/")
+}
+
+// aptArchiveURI mirrors APT 2.8's pkgAcquire::URIEncode default for a
+// repository Filename. The accepted filename alphabet excludes every other
+// byte that QuoteString would escape.
+func aptArchiveURI(repositoryURI, filename string) string {
+	var encoded strings.Builder
+	encoded.Grow(len(filename))
+	const hexadecimal = "0123456789abcdef"
+	for i := 0; i < len(filename); i++ {
+		value := filename[i]
+		if value == '+' || value == '~' || value == '%' {
+			encoded.WriteByte('%')
+			encoded.WriteByte(hexadecimal[value>>4])
+			encoded.WriteByte(hexadecimal[value&15])
+		} else {
+			encoded.WriteByte(value)
+		}
+	}
+	return repositoryURI + encoded.String()
+}
+
+func evidenceFile(path, sizeText, digest string, maximum int64) (ingredientFile, error) {
+	size, err := strconv.ParseInt(sizeText, 10, 64)
+	if err != nil || size <= 0 || size > maximum || !digestPattern.MatchString(digest) || !strings.HasPrefix(path, "/var/lib/apt/lists/") || strings.Contains(strings.TrimPrefix(path, "/var/lib/apt/lists/"), "/") || filepath.Clean(path) != path || strings.ContainsAny(path, "\r\n\t\x00") {
+		return ingredientFile{}, errors.New("APT evidence file refused")
+	}
+	return ingredientFile{Path: path, SHA256: digest, Bytes: size}, nil
+}
+
+func parseTargetRecord(fields []string) (aptTarget, error) {
+	var out aptTarget
+	if len(fields) != 17 || !evidenceURL(fields[0], false) || !evidenceURL(fields[4], true) || !evidenceURL(fields[5], true) || (fields[8] != "amd64" && fields[8] != "all") || fields[9] != "yes" {
+		return out, errors.New("APT target identity refused")
+	}
+	for _, value := range fields[6:14] {
+		if !safeEvidenceText(value, 256) {
+			return out, errors.New("APT target release identity refused")
+		}
+	}
+	index, err := evidenceFile(fields[1], fields[2], fields[3], 256*1024*1024)
+	if err != nil || !strings.Contains(filepath.Base(index.Path), "_Packages") {
+		return out, errors.New("APT target index refused")
+	}
+	release, err := evidenceFile(fields[14], fields[15], fields[16], 16*1024*1024)
+	if err != nil || !strings.HasSuffix(release.Path, "_InRelease") {
+		return out, errors.New("APT target release refused")
+	}
+	out = aptTarget{IndexURI: fields[0], RepositoryURI: fields[4], BaseURI: fields[5], Release: fields[6], Component: fields[7], Architecture: fields[8], Trusted: true, Origin: fields[10], Label: fields[11], Codename: fields[12], Suite: fields[13], Index: index, InRelease: release}
+	return out, nil
+}
+
+func parseOriginRecord(fields []string) (string, installedPackage, archiveOrigin, error) {
+	var origin archiveOrigin
+	if len(fields) != 22 || !archiveNamePattern.MatchString(fields[0]) || !pathPattern.MatchString(fields[4]) || filepath.IsAbs(fields[4]) || filepath.Clean(fields[4]) != fields[4] || strings.HasPrefix(fields[4], "../") || !evidenceURL(fields[5], true) || !evidenceURL(fields[6], true) || (fields[9] != "amd64" && fields[9] != "all") || fields[10] != "yes" || !evidenceURL(fields[15], false) {
+		return "", installedPackage{}, origin, errors.New("APT archive origin refused")
+	}
+	identity, err := transactionIdentity(fields[1:4])
+	if err != nil {
+		return "", installedPackage{}, origin, err
+	}
+	for _, value := range fields[7:15] {
+		if !safeEvidenceText(value, 256) {
+			return "", installedPackage{}, origin, errors.New("APT archive release identity refused")
+		}
+	}
+	index, err := evidenceFile(fields[16], fields[17], fields[18], 256*1024*1024)
+	if err != nil || !strings.Contains(filepath.Base(index.Path), "_Packages") {
+		return "", installedPackage{}, origin, errors.New("APT archive index refused")
+	}
+	release, err := evidenceFile(fields[19], fields[20], fields[21], 16*1024*1024)
+	if err != nil || !strings.HasSuffix(release.Path, "_InRelease") {
+		return "", installedPackage{}, origin, errors.New("APT archive release refused")
+	}
+	origin = archiveOrigin{PackageFilename: fields[4], RepositoryURI: fields[5], BaseURI: fields[6], Release: fields[7], Component: fields[8], Architecture: fields[9], Trusted: true, Origin: fields[11], Label: fields[12], Codename: fields[13], Suite: fields[14], IndexURI: fields[15], Index: index, InRelease: release}
+	return fields[0], identity, origin, nil
+}
+
+func originMatchesTarget(origin archiveOrigin, target aptTarget) bool {
+	return origin.RepositoryURI == target.RepositoryURI && origin.BaseURI == target.BaseURI && origin.Release == target.Release && origin.Component == target.Component && origin.Architecture == target.Architecture && origin.Trusted == target.Trusted && origin.Origin == target.Origin && origin.Label == target.Label && origin.Codename == target.Codename && origin.Suite == target.Suite && origin.IndexURI == target.IndexURI && origin.Index == target.Index && origin.InRelease == target.InRelease
 }
 
 // transactionIdentity validates data fields without deriving package identity from filenames.
@@ -99,7 +225,7 @@ func planRecord(fields []string) (archiveObservation, error) {
 	return item, nil
 }
 
-// parseTransaction accounts for the full installed set; it grants no archive-origin authority.
+// parseTransaction accounts for the installed set and APT target join; it grants no lock authority.
 func parseTransaction(lines []string, final []installedPackage) (transaction, error) {
 	var out transaction
 	refuse := func() (transaction, error) {
@@ -110,6 +236,8 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 	}
 	base, acquired := map[string]installedPackage{}, map[string]bool{}
 	plans, archives := map[string]archiveObservation{}, map[string]archiveObservation{}
+	origins, originIdentities := map[string]archiveOrigin{}, map[string]installedPackage{}
+	targets := map[string]aptTarget{}
 	arguments := map[string]bool{}
 	for _, line := range lines[:len(lines)-1] {
 		f := strings.Split(line, "\t")
@@ -162,20 +290,42 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 			}
 			item.installedPackage = identity
 			archives[item.Basename], acquired[identity.Name] = item, true
+		case "target":
+			if len(targets) >= 64 {
+				return refuse()
+			}
+			item, err := parseTargetRecord(f[1:])
+			if err != nil || targets[item.Index.Path].Index.Path != "" {
+				return refuse()
+			}
+			targets[item.Index.Path] = item
+			out.Targets = append(out.Targets, item)
+		case "origin":
+			if len(origins) >= 1024 {
+				return refuse()
+			}
+			name, identity, item, err := parseOriginRecord(f[1:])
+			if err != nil || origins[name].PackageFilename != "" {
+				return refuse()
+			}
+			origins[name], originIdentities[name] = item, identity
 		default:
 			return refuse()
 		}
 	}
-	if len(arguments) != len(directPins) || len(base) == 0 || base["apt"].Version != out.APTVersion || out.APTVersion == "" || len(archives) == 0 || len(plans) != len(archives) {
+	if len(arguments) != len(directPins) || len(base) == 0 || base["apt"].Version != out.APTVersion || out.APTVersion == "" || len(archives) == 0 || len(plans) != len(archives) || len(origins) != len(archives) || len(targets) == 0 {
 		return refuse()
 	}
 	var totalBytes int64
 	for name, item := range archives {
 		plan := plans[name]
-		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage {
+		origin := origins[name]
+		target := targets[origin.Index.Path]
+		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || plan.URI != aptArchiveURI(origin.RepositoryURI, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
 			return refuse()
 		}
 		item.URI = plan.URI
+		item.Origin = origin
 		totalBytes += item.Bytes
 		if totalBytes > 256*1024*1024 {
 			return refuse()
@@ -193,6 +343,7 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 	}
 	sort.Strings(out.Arguments)
 	sort.Slice(out.Inherited, func(i, j int) bool { return out.Inherited[i].Name < out.Inherited[j].Name })
+	sort.Slice(out.Targets, func(i, j int) bool { return out.Targets[i].Index.Path < out.Targets[j].Index.Path })
 	sort.Slice(out.Archives, func(i, j int) bool { return out.Archives[i].Basename < out.Archives[j].Basename })
 	return out, nil
 }
@@ -232,7 +383,7 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 		return fail()
 	}
 	out.Architecture = lines[1]
-	packages, files := map[string]string{}, map[string]bool{}
+	packages, files := map[string]string{}, map[string]ingredientFile{}
 	var transactionLines []string
 	signed, indexes := false, false
 	for _, line := range lines[2 : len(lines)-2] {
@@ -250,10 +401,10 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 			}
 			path := fields[3]
 			size, err := strconv.ParseInt(fields[2], 10, 64)
-			if err != nil || size <= 0 || size > 256*1024*1024 || filepath.Clean(path) != path || strings.ContainsAny(path, "\r\x00") || files[path] || len(files) >= 256 || !allowedInput(path) {
+			if err != nil || size <= 0 || size > 256*1024*1024 || filepath.Clean(path) != path || strings.ContainsAny(path, "\r\x00") || files[path].Path != "" || len(files) >= 256 || !allowedInput(path) {
 				return fail()
 			}
-			files[path] = true
+			files[path] = ingredientFile{Path: path, SHA256: fields[1], Bytes: size}
 			signed = signed || (strings.HasPrefix(path, "/var/lib/apt/lists/") && strings.HasSuffix(path, "_InRelease"))
 			indexes = indexes || (strings.HasPrefix(path, "/var/lib/apt/lists/") && strings.Contains(filepath.Base(path), "_Packages"))
 			out.Files = append(out.Files, ingredientFile{path, fields[1], size})
@@ -262,7 +413,7 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 				return fail()
 			}
 			out.Engine = fields[1]
-		case "apt-version", "argument", "base-package", "plan", "archive", "transaction-complete":
+		case "apt-version", "argument", "base-package", "plan", "archive", "target", "origin", "transaction-complete":
 			transactionLines = append(transactionLines, line)
 		default:
 			return fail()
@@ -274,7 +425,7 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 		}
 	}
 	for _, required := range []string{"/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/apt.conf.d/50snapshot", "/usr/share/keyrings/ubuntu-archive-keyring.gpg", "/etc/ssl/certs/ca-certificates.crt"} {
-		if !files[required] {
+		if files[required].Path == "" {
 			return fail()
 		}
 	}
@@ -284,6 +435,11 @@ func parseInventory(raw []byte, expectedEngine string) (inventory, error) {
 	observedTransaction, err := parseTransaction(transactionLines, out.Packages)
 	if err != nil {
 		return fail()
+	}
+	for _, target := range observedTransaction.Targets {
+		if files[target.Index.Path] != target.Index || files[target.InRelease.Path] != target.InRelease {
+			return fail()
+		}
 	}
 	out.Transaction = observedTransaction
 	sort.Slice(out.Packages, func(i, j int) bool { return out.Packages[i].Name < out.Packages[j].Name })
@@ -399,7 +555,7 @@ func run(args []string, output io.Writer) error {
 		return err
 	}
 	result := report{Schema: 1, Evidence: "observed-cold-build-inventory-only", Image: observedImage, Inventory: observed}
-	for _, path := range []string{".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh", "tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh", "tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh", "tools/trusted-runtime-inventory/main.go", ".github/containers/trusted-runtime-bases.sources.json", ".github/containers/trusted-runtime-bases.lock.json", "tools/trusted-runtime-bases/main.go", "tools/build-locked-trusted-runtime.sh", ".github/containers/trusted-runtime-packages.lock.json", "tools/trusted-runtime-packages/main.go", "tools/verify-trusted-runtime-packages.sh", "tools/observe-runtime-transaction.sh"} {
+	for _, path := range []string{".github/containers/trusted-regressions.Dockerfile", "tools/build-trusted-regression-runtime.sh", "tools/install-ci-godot.sh", "tools/trusted-regression-lifecycle.sh", "tools/trusted-regression-phase.sh", "tools/trusted-phase-command.sh", "tools/process-group-lifecycle.sh", "tools/capture-trusted-runtime-inventory.sh", "tools/inspect-trusted-runtime.sh", "tools/trusted-runtime-inventory/main.go", ".github/containers/trusted-runtime-bases.sources.json", ".github/containers/trusted-runtime-bases.lock.json", "tools/trusted-runtime-bases/main.go", "tools/build-locked-trusted-runtime.sh", ".github/containers/trusted-runtime-packages.lock.json", "tools/trusted-runtime-packages/main.go", "tools/verify-trusted-runtime-packages.sh", "tools/observe-runtime-transaction.sh", "tools/trusted-runtime-origin/main.go"} {
 		item, err := fileIdentity(filepath.Join(root, path), path, 1024*1024)
 		if err != nil {
 			return err

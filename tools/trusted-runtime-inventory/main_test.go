@@ -19,7 +19,14 @@ func inventoryFixture() string {
 	b.WriteString("package\tbase-files\t13ubuntu10.3\tamd64\tinstalled\n")
 	b.WriteString("package\tapt\t2.8.3\tamd64\tinstalled\n")
 	for _, path := range []string{"/var/lib/apt/lists/snapshot_InRelease", "/var/lib/apt/lists/snapshot_main_binary-amd64_Packages.lz4", "/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/apt.conf.d/50snapshot", "/usr/share/keyrings/ubuntu-archive-keyring.gpg", "/etc/ssl/certs/ca-certificates.crt"} {
-		fmt.Fprintf(&b, "file\t%s\t123\t%s\n", strings.Repeat("a", 64), path)
+		digest, size := strings.Repeat("a", 64), 123
+		if strings.HasSuffix(path, "_InRelease") {
+			digest, size = strings.Repeat("d", 64), 789
+		}
+		if strings.Contains(path, "_Packages") {
+			path, digest, size = strings.TrimSuffix(path, ".lz4"), strings.Repeat("c", 64), 456
+		}
+		fmt.Fprintf(&b, "file\t%s\t%d\t%s\n", digest, size, path)
 	}
 	b.WriteString(transactionRecords())
 	fmt.Fprintf(&b, "engine\t%s\nEND\n", strings.Repeat("b", 64))
@@ -30,10 +37,12 @@ func inventoryFixture() string {
 func transactionRecords() string {
 	var b strings.Builder
 	b.WriteString("apt-version\t2.8.3\nbase-package\tbase-files\t13ubuntu10.3\tamd64\tinstalled\nbase-package\tapt\t2.8.3\tamd64\tinstalled\n")
+	fmt.Fprintf(&b, "target\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t%s\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\t/var/lib/apt/lists/snapshot_InRelease\t789\t%s\n", strings.Repeat("c", 64), strings.Repeat("d", 64))
 	for name, version := range directPins {
 		fmt.Fprintf(&b, "argument\t%s=%s\n", name, version)
 		fmt.Fprintf(&b, "plan\thttps://snapshot.ubuntu.com/test/%s.deb\t%s.deb\t123\t%s\n", name, name, strings.Repeat("a", 64))
 		fmt.Fprintf(&b, "archive\t%s.deb\t%s\t%s\tamd64\t123\t%s\n", name, name, version, strings.Repeat("a", 64))
+		fmt.Fprintf(&b, "origin\t%s.deb\t%s\t%s\tamd64\ttest/%s.deb\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t%s\t/var/lib/apt/lists/snapshot_InRelease\t789\t%s\n", name, name, version, name, strings.Repeat("c", 64), strings.Repeat("d", 64))
 	}
 	b.WriteString("transaction-complete\n")
 	return b.String()
@@ -48,10 +57,16 @@ func TestTransactionObservationsNeverAcceptPartialPlans(t *testing.T) {
 		"missing completion":          strings.ReplaceAll(raw, "transaction-complete\n", ""),
 		"missing plan":                strings.ReplaceAll(raw, "plan\thttps://snapshot.ubuntu.com/test/libgl1.deb\tlibgl1.deb\t123\t"+strings.Repeat("a", 64)+"\n", ""),
 		"missing archive":             strings.ReplaceAll(raw, "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("a", 64)+"\n", ""),
+		"missing target":              strings.ReplaceAll(raw, "target\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t"+strings.Repeat("c", 64)+"\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\t/var/lib/apt/lists/snapshot_InRelease\t789\t"+strings.Repeat("d", 64)+"\n", ""),
+		"missing origin":              strings.ReplaceAll(raw, "origin\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\ttest/libgl1.deb\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t"+strings.Repeat("c", 64)+"\t/var/lib/apt/lists/snapshot_InRelease\t789\t"+strings.Repeat("d", 64)+"\n", ""),
 		"wrong tuple":                 strings.Replace(raw, "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1", "archive\tlibgl1.deb\tlibgl1\t99", 1),
+		"origin tuple mismatch":       strings.Replace(raw, "origin\tlibgl1.deb\tlibgl1\t1.7.0-1build1", "origin\tlibgl1.deb\tlibgl1\t99", 1),
+		"untrusted origin":            strings.Replace(raw, "\tmain\tamd64\tyes\tUbuntu", "\tmain\tamd64\tno\tUbuntu", 1),
+		"bad origin digest":           strings.Replace(raw, "\t456\t"+strings.Repeat("c", 64), "\t456\tbad", 1),
 		"same size corruption":        strings.Replace(raw, "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("a", 64), "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("c", 64), 1),
 		"wrong argument":              strings.Replace(raw, "argument\tlibgl1=1.7.0-1build1", "argument\tlibgl1=99", 1),
 		"duplicate archive":           strings.Replace(raw, "transaction-complete", "archive\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\t123\t"+strings.Repeat("a", 64)+"\ntransaction-complete", 1),
+		"duplicate origin":            strings.Replace(raw, "transaction-complete", "origin\tlibgl1.deb\tlibgl1\t1.7.0-1build1\tamd64\ttest/libgl1.deb\thttps://snapshot.ubuntu.com/\thttps://snapshot.ubuntu.com/dists/noble/\tnoble\tmain\tamd64\tyes\tUbuntu\tUbuntu\tnoble\tnoble\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t/var/lib/apt/lists/snapshot_main_binary-amd64_Packages\t456\t"+strings.Repeat("c", 64)+"\t/var/lib/apt/lists/snapshot_InRelease\t789\t"+strings.Repeat("d", 64)+"\ntransaction-complete", 1),
 		"trailing transaction":        strings.Replace(raw, "transaction-complete\n", "transaction-complete\napt-version\t2.8.3\n", 1),
 		"unaccounted inherited":       strings.Replace(raw, "base-package\tbase-files\t13ubuntu10.3", "base-package\tother-files\t13ubuntu10.3", 1),
 		"duplicate plan":              strings.Replace(raw, "transaction-complete", "plan\thttps://snapshot.ubuntu.com/test/libgl1.deb\tlibgl1.deb\t123\t"+strings.Repeat("a", 64)+"\ntransaction-complete", 1),
@@ -88,7 +103,7 @@ func TestObservedInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Packages) != 12 || len(got.Files) != 6 || got.Architecture != "amd64" || len(got.Transaction.Archives) != 10 || len(got.Transaction.Inherited) != 2 {
+	if len(got.Packages) != 12 || len(got.Files) != 6 || got.Architecture != "amd64" || len(got.Transaction.Archives) != 10 || len(got.Transaction.Inherited) != 2 || len(got.Transaction.Targets) != 1 || got.Transaction.Archives[0].Origin.Index.SHA256 == "" || !got.Transaction.Archives[0].Origin.Trusted {
 		t.Fatalf("incomplete inventory: %+v", got)
 	}
 	other, err := parseInventory([]byte(inventoryFixture()), strings.Repeat("b", 64))
@@ -104,6 +119,14 @@ func TestObservedInventory(t *testing.T) {
 	}
 	if a.String() != b.String() {
 		t.Fatal("map iteration changed canonical report")
+	}
+}
+
+func TestArchiveOriginUsesAPTsEncodedRepositoryFilename(t *testing.T) {
+	got := aptArchiveURI("https://snapshot.ubuntu.com/ubuntu/", "pool/f/foo_1.0+ds~beta%1_amd64.deb")
+	want := "https://snapshot.ubuntu.com/ubuntu/pool/f/foo_1.0%2bds%7ebeta%251_amd64.deb"
+	if got != want {
+		t.Fatalf("APT archive URI = %q, want %q", got, want)
 	}
 }
 
