@@ -5,11 +5,11 @@ export LC_ALL=C
 mode="${1:?inventory selection required}"
 shift
 case "$mode" in 0) exec "$@";; 1) ;; *) exit 2;; esac
-[ "$#" -ge 5 ] && [ "$1 $2 $3 $4" = 'apt-get install -y --no-install-recommends' ]
+if [ "$#" -lt 5 ] || [ "$1 $2 $3 $4" != 'apt-get install -y --no-install-recommends' ]; then exit 2; fi
 expected=/tmp/expected-packages.tsv
 out=/usr/share/war-trusted-runtime/transaction.tsv
-[ -f "$expected" ] && [ ! -L "$expected" ]
-[ ! -e "$out" ] && [ ! -L "$out" ]
+if [ ! -f "$expected" ] || [ -L "$expected" ]; then exit 1; fi
+if [ -e "$out" ] || [ -L "$out" ]; then exit 1; fi
 state="$(mktemp -d)"
 cleanup() {
   local status=$?
@@ -66,13 +66,13 @@ while IFS= read -r row; do
   printf 'plan\t%s\t%s\t%s\t%s\n' "$uri" "$name" "$bytes" "$hash" >> "$state/result"
   count=$((count+1))
   total=$((total+bytes))
-  [ "$count" -le 1024 ] && [ "$total" -le 268435456 ]
+  if [ "$count" -gt 1024 ] || [ "$total" -gt 268435456 ]; then exit 1; fi
 done < "$state/plan"
 [ "$count" -gt 0 ]
 "$@" --download-only -o "$cache_option"
 while IFS=$'\t' read -r uri name bytes hash; do
   archive="$cache/$name"
-  [ -f "$archive" ] && [ ! -L "$archive" ]
+  if [ ! -f "$archive" ] || [ -L "$archive" ]; then exit 1; fi
   [ "$(stat -c %h "$archive")" = 1 ]
   [ "$(wc -c < "$archive")" -eq "$bytes" ]
   observed="$(sha256sum "$archive")"
@@ -80,8 +80,8 @@ while IFS=$'\t' read -r uri name bytes hash; do
   # shellcheck disable=SC2016 # dpkg-deb expands its own field template.
   identity="$(dpkg-deb --show --showformat='${Package}\t${Version}\t${Architecture}\n' "$archive")"
   IFS=$'\t' read -r package version architecture extra <<< "$identity"
-  [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]*$ ]] && [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$ ]]
-  [ -z "${extra:-}" ] && { [ "$architecture" = amd64 ] || [ "$architecture" = all ]; }
+  if ! [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]*$ ]] || ! [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$ ]]; then exit 1; fi
+  if [ -n "${extra:-}" ] || { [ "$architecture" != amd64 ] && [ "$architecture" != all ]; }; then exit 1; fi
   # Require the complete metadata record, including the original delimiter count.
   [ "$identity" = "$(printf '%s\t%s\t%s' "$package" "$version" "$architecture")" ]
   record="$(printf 'package\t%s\t%s\t%s\tinstalled' "$package" "$version" "$architecture")"
@@ -96,8 +96,8 @@ done < "$state/requests"
 find "$cache" -mindepth 1 -maxdepth 1 ! -name lock ! -name partial -exec basename {} \; | sort > "$state/actual-names"
 sort "$state/names" -o "$state/names"
 cmp "$state/names" "$state/actual-names"
-[ -f "$cache/lock" ] && [ ! -L "$cache/lock" ] && [ "$(stat -c %h "$cache/lock")" = 1 ]
-[ ! -L "$cache/partial" ] && [ -d "$cache/partial" ]
+if [ ! -f "$cache/lock" ] || [ -L "$cache/lock" ] || [ "$(stat -c %h "$cache/lock")" != 1 ]; then exit 1; fi
+if [ -L "$cache/partial" ] || [ ! -d "$cache/partial" ]; then exit 1; fi
 find "$cache/partial" -mindepth 1 -print > "$state/partial"
 [ ! -s "$state/partial" ]
 # Upgrades replace the old tuple; every inherited/new tuple must explain the reviewed final set.
@@ -109,6 +109,11 @@ cmp "$state/before" "$state/unchanged"
 # No fallback or missing-package tolerance: the same cache/arguments must install offline.
 "$@" --no-download -o "$cache_option"
 printf 'transaction-complete\n' >> "$state/result"
-mkdir -p "$(dirname "$out")"
-cp "$state/result" "$out"
+out_parent="$(dirname "$out")"
+mkdir -p "$out_parent"
+if [ ! -d "$out_parent" ] || [ -L "$out_parent" ]; then exit 1; fi
+# Package maintainer scripts ran as root; recheck their destination before publishing evidence.
+if [ -e "$out" ] || [ -L "$out" ]; then exit 1; fi
+install -m 0644 "$state/result" "$out"
+if [ ! -f "$out" ] || [ -L "$out" ] || [ "$(stat -c %h "$out")" != 1 ]; then exit 1; fi
 printf 'TRUSTED_RUNTIME_TRANSACTION archives=%s plan-matched-before-install=true\n' "$count"

@@ -9,9 +9,10 @@ if ! grep -Fq '&& bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTO
 fi
 state="$(mktemp -d)"
 trap 'rm -rf "$state"' EXIT
-mkdir "$state/bin" "$state/work"
+mkdir "$state/bin" "$state/work" "$state/empty"
 export TRANSACTION_TEST_STATE="$state"
 printf 'good' > "$state/payload"
+printf 'safe' > "$state/sentinel"
 export TRANSACTION_TEST_HASH
 TRANSACTION_TEST_HASH="$(shasum -a 256 "$state/payload")"
 TRANSACTION_TEST_HASH=${TRANSACTION_TEST_HASH%% *}
@@ -53,6 +54,8 @@ elif [[ "$*" = *--download-only* ]]; then
     linked) rm "$cache/foo.deb"; ln -s "$TRANSACTION_TEST_STATE/payload" "$cache/foo.deb";;
     hardlinked) ln "$cache/foo.deb" "$cache/other-link";;
     partial-cache) printf leftover > "$cache/partial/unfinished";;
+    missing-lock) rm "$cache/lock";;
+    linked-partial) rmdir "$cache/partial"; ln -s "$TRANSACTION_TEST_STATE/empty" "$cache/partial";;
   esac
   touch "$TRANSACTION_TEST_STATE/downloaded"
   [ "$mode" != failed-download ]
@@ -62,6 +65,9 @@ else
     [[ "$*" = *--no-download* ]]
     rm "$cache/foo.deb"
     exit 42
+  fi
+  if [ "$mode" = output-link ]; then
+    ln -s "$TRANSACTION_TEST_STATE/sentinel" "$TRANSACTION_TEST_STATE/report"
   fi
   touch "$TRANSACTION_TEST_STATE/installed"
 fi
@@ -108,13 +114,17 @@ TMPDIR="$state/work" bash "$state/observe.sh" 1 apt-get install -y --no-install-
 grep -qx transaction-complete "$state/report"
 # No private archive/cache state may survive the helper's successful exit.
 [ -z "$(find "$state/work" -mindepth 1 -print)" ]
-for refusal in empty-plan malformed-plan oversized-plan storage-budget unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline missing-offline; do
+for refusal in empty-plan malformed-plan oversized-plan storage-budget unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline missing-offline output-link; do
   rm -f "$state/installed" "$state/install-attempted" "$state/trace" "$state/downloaded" "$state/report"
   if TMPDIR="$state/work" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
     echo "accepted $refusal transaction" >&2; exit 1
   fi
-  [ ! -f "$state/installed" ] && [ ! -f "$state/report" ]
-  if [ "$refusal" != missing-offline ]; then [ ! -f "$state/install-attempted" ]; fi
+  if [ "$refusal" = output-link ]; then
+    [ -f "$state/installed" ] && [ -L "$state/report" ] && [ "$(cat "$state/sentinel")" = safe ]
+  else
+    [ ! -f "$state/installed" ] && [ ! -f "$state/report" ]
+  fi
+  if [ "$refusal" != missing-offline ] && [ "$refusal" != output-link ]; then [ ! -f "$state/install-attempted" ]; fi
   [ -z "$(find "$state/work" -mindepth 1 -print)" ]
 done
-printf '%s\n' 'runtime transaction: original install, private-cache/no-download path and 21 refusal controls passed'
+printf '%s\n' 'runtime transaction: original install, private-cache/no-download path and 24 refusal controls passed'
