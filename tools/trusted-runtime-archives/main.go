@@ -21,6 +21,9 @@ import (
 
 const maximumInputBytes = 2 * 1024 * 1024
 
+const runtimeObserver = `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
+const runtimeInstallCommand = "apt-get install -y --no-install-recommends"
+
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var manifestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var packagePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
@@ -323,26 +326,19 @@ func unquotedShellOccurrences(value, needle string) ([]int, error) {
 	return positions, nil
 }
 
-func validateShellFlow(value string) error {
-	positions, err := unquotedShellPositions(value)
-	if err != nil {
-		return err
-	}
-	skipBefore := 0
-	for _, position := range positions {
-		if position < skipBefore {
-			continue
-		}
-		character := value[position]
-		if strings.HasPrefix(value[position:], "&&") || strings.HasPrefix(value[position:], ";;") {
-			skipBefore = position + 2
-			continue
-		}
-		if strings.HasPrefix(value[position:], "||") || strings.HasPrefix(value[position:], "$(") || strings.ContainsRune("|&;`", rune(character)) {
-			return errors.New("runtime transaction uses alternate shell control flow")
-		}
-	}
-	return nil
+func expectedRuntimeTransaction(snapshot string, arguments []string) string {
+	return "sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources" +
+		" && printf '%s\\n'" +
+		` 'APT::Snapshot "` + snapshot + `";'` +
+		` 'Acquire::Retries "6";'` +
+		` 'Acquire::http::Timeout "20";'` +
+		` 'Acquire::https::Timeout "20";'` +
+		` 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/50snapshot` +
+		" && apt-get update" +
+		" && " + runtimeObserver + " " + runtimeInstallCommand + " " + strings.Join(arguments, " ") +
+		` && case "$WAR_RUNTIME_INVENTORY" in 0) ;; 1) bash /tmp/capture-trusted-runtime-inventory.sh;; *) exit 1;; esac` +
+		" && rm /tmp/capture-trusted-runtime-inventory.sh /tmp/observe-runtime-transaction.sh /tmp/trusted-runtime-origin /tmp/trusted-runtime-archives /tmp/expected-archives.json" +
+		" && rm -rf /var/lib/apt/lists/*"
 }
 
 func parseRecipe(raw []byte) (string, string, []string, error) {
@@ -350,12 +346,10 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 	if err != nil {
 		return "", "", nil, err
 	}
-	const observer = `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
-	const command = "apt-get install -y --no-install-recommends"
-	wrapped := "&& " + observer + " " + command
+	wrapped := "&& " + runtimeObserver + " " + runtimeInstallCommand
 	installCount, observerCount, transaction, transactionOffset := 0, 0, "", -1
 	for _, run := range runs {
-		installs, scanErr := unquotedShellOccurrences(run, command)
+		installs, scanErr := unquotedShellOccurrences(run, runtimeInstallCommand)
 		if scanErr != nil {
 			return "", "", nil, scanErr
 		}
@@ -366,9 +360,6 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 		}
 		observerCount += len(observers)
 		if len(observers) == 1 {
-			if scanErr = validateShellFlow(run); scanErr != nil {
-				return "", "", nil, scanErr
-			}
 			transaction = run
 			transactionOffset = observers[0]
 		}
@@ -401,6 +392,9 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 	}
 	if len(arguments) == 0 {
 		return "", "", nil, errors.New("runtime install arguments missing")
+	}
+	if transaction != expectedRuntimeTransaction(string(snapshots[0][1]), arguments) {
+		return "", "", nil, errors.New("runtime transaction differs from the reviewed executable sequence")
 	}
 	sort.Strings(arguments)
 	return string(bases[0][1]), string(snapshots[0][1]), arguments, nil

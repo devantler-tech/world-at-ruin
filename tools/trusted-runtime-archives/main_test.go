@@ -77,9 +77,13 @@ func fixtureRecipe(t *testing.T) (string, map[string]any) {
 	baseRaw := []byte(`{"schema":1,"proofs":[]}`)
 	recipe := "FROM golang:1.27.1@sha256:" + strings.Repeat("e", 64) + " AS certificates\n" +
 		"FROM ubuntu:24.04@" + fixtureManifest + "\n" +
-		"RUN printf 'APT::Snapshot \"20261003T000000Z\";' > /etc/apt/apt.conf.d/50snapshot \\\n" +
+		"RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \\\n" +
+		" && printf '%s\\n' 'APT::Snapshot \"20261003T000000Z\";' 'Acquire::Retries \"6\";' 'Acquire::http::Timeout \"20\";' 'Acquire::https::Timeout \"20\";' 'APT::Update::Error-Mode \"any\";' > /etc/apt/apt.conf.d/50snapshot \\\n" +
+		" && apt-get update \\\n" +
 		" && bash /tmp/observe-runtime-transaction.sh \"$WAR_RUNTIME_INVENTORY\" \"$WAR_RUNTIME_ARCHIVE_POLICY\" apt-get install -y --no-install-recommends foo=1.0 \\\n" +
-		" && true\n"
+		" && case \"$WAR_RUNTIME_INVENTORY\" in 0) ;; 1) bash /tmp/capture-trusted-runtime-inventory.sh;; *) exit 1;; esac \\\n" +
+		" && rm /tmp/capture-trusted-runtime-inventory.sh /tmp/observe-runtime-transaction.sh /tmp/trusted-runtime-origin /tmp/trusted-runtime-archives /tmp/expected-archives.json \\\n" +
+		" && rm -rf /var/lib/apt/lists/*\n"
 	for name, raw := range map[string][]byte{
 		"trusted-runtime-packages.lock.json": packageRaw,
 		"trusted-runtime-bases.lock.json":    baseRaw,
@@ -214,6 +218,7 @@ func TestParseRecipeRequiresExecutableObserverBeforeInstall(t *testing.T) {
 		"after install":          prefix + "RUN apt-get install -y --no-install-recommends foo=1.0 && " + observer + " true\n",
 		"quoted observer":        prefix + "RUN printf '%s\\n' '&& " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true' && \"apt-get\" install -y --no-install-recommends foo=1.0 && true\n",
 		"short circuit fallback": prefix + "RUN false && " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true || \"apt-get\" install -y --no-install-recommends foo=1.0\n",
+		"case fallback":          prefix + "RUN case x in y) true && " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true ;; *) \"apt-get\" install -y --no-install-recommends foo=1.0 ;; esac\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, _, err := parseRecipe([]byte(recipe)); err == nil {
