@@ -114,12 +114,13 @@ func aptArchiveURI(repositoryURI, filename string) string {
 	return repositoryURI + encoded.String()
 }
 
-func archiveRepositoryURI(baseURI, release string) (string, error) {
-	suffix := "dists/" + release + "/"
-	if !packagePattern.MatchString(release) || !strings.HasSuffix(baseURI, suffix) {
-		return "", errors.New("archive repository base refused")
+func archiveRepositoryURI(indexURI, release string) (string, error) {
+	marker := "/dists/" + release + "/"
+	position := strings.LastIndex(indexURI, marker)
+	if !packagePattern.MatchString(release) || position <= 0 || strings.Contains(indexURI[:position], marker) {
+		return "", errors.New("archive index namespace refused")
 	}
-	repositoryURI := strings.TrimSuffix(baseURI, suffix)
+	repositoryURI := indexURI[:position+1]
 	if !safeURL(repositoryURI, true) {
 		return "", errors.New("archive repository URI refused")
 	}
@@ -211,7 +212,7 @@ func parseTargetManifest(reader io.Reader) ([]targetRecord, error) {
 			IndexPath: fields[0], IndexURI: fields[1], RepoURI: fields[2], BaseURI: fields[3], Release: fields[4], Component: fields[5], Architecture: fields[6],
 			Trusted: fields[7], Codename: fields[8], Suite: fields[9], Origin: fields[10], Label: fields[11], InReleasePath: releasePath,
 		}
-		if _, err = archiveRepositoryURI(item.BaseURI, item.Release); err != nil {
+		if _, err = archiveRepositoryURI(item.IndexURI, item.Release); err != nil {
 			return err
 		}
 		identity := strings.Join(fields, "\t")
@@ -408,7 +409,7 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 		if target.Trusted != "yes" {
 			return nil, nil, errors.New("untrusted package target")
 		}
-		archiveRepository, err := archiveRepositoryURI(target.BaseURI, target.Release)
+		archiveRepository, err := archiveRepositoryURI(target.IndexURI, target.Release)
 		if err != nil {
 			return nil, nil, err
 		}

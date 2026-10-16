@@ -46,17 +46,18 @@ if [ "${1:-}" = indextargets ]; then
   trusted=yes
   repo=https://snapshot.ubuntu.com/
 	base=https://snapshot.ubuntu.com/dists/noble/
+	index_uri=https://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages
   case "$mode" in
     untrusted-target) trusted=no;;
     missing-inrelease) rm "$release";;
     linked-index) rm "$index"; ln -s "$TRANSACTION_ORIGIN_INDEX_BASE" "$index";;
     partial-stanza) sed '/^SHA256:/d' "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
     duplicate-field) sed "s/^SHA256:.*/&\nSHA256: $TRANSACTION_TEST_HASH/" "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
-		effective-origin-mismatch) base=https://snapshot.ubuntu.com/other/dists/noble/;;
+		effective-origin-mismatch) index_uri=https://snapshot.ubuntu.com/other/dists/noble/main/binary-amd64/Packages;;
     origin-tuple-mismatch) sed 's/^Version: 1.0$/Version: 2.0/' "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
     origin-digest-substitution) sed "s/^SHA256:.*/SHA256: $(printf '%064d' 2)/" "$TRANSACTION_ORIGIN_INDEX_BASE" > "$index";;
   esac
-	row=$(printf '%s\thttps://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages\t%s\t%s\tnoble\tmain\tamd64\t%s\tnoble\tnoble\tUbuntu\tUbuntu' "$index" "$repo" "$base" "$trusted")
+	row=$(printf '%s\t%s\t%s\t%s\tnoble\tmain\tamd64\t%s\tnoble\tnoble\tUbuntu\tUbuntu' "$index" "$index_uri" "$repo" "$base" "$trusted")
   printf '%s\n' "$row"
   if [ "$mode" = ambiguous-source ]; then printf '%s\n' "$row"; fi
   if [ "$mode" = conflicting-source ]; then

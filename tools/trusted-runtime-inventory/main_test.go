@@ -124,13 +124,13 @@ func TestObservedInventory(t *testing.T) {
 
 func TestArchiveOriginAcceptsAPTsEncodedRepositoryFilename(t *testing.T) {
 	request := "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/f/foo_1.0%2bds%7ebeta%251_amd64.deb"
-	base := "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/"
+	index := "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages"
 	filename := "pool/f/foo_1.0+ds~beta%1_amd64.deb"
-	if !requestMatchesOrigin(request, base, "noble", filename) {
+	if !requestMatchesOrigin(request, index, "noble", filename) {
 		t.Fatal("APT-encoded archive URI did not match its package filename")
 	}
-	if requestMatchesOrigin(request, base, "other", filename) || requestMatchesOrigin("http://archive.ubuntu.com/ubuntu/"+filename, base, "noble", filename) {
-		t.Fatal("accepted an archive outside the selected snapshot release base")
+	if requestMatchesOrigin(request, index, "other", filename) || requestMatchesOrigin("http://archive.ubuntu.com/ubuntu/"+filename, index, "noble", filename) {
+		t.Fatal("accepted an archive outside the selected snapshot index namespace")
 	}
 }
 
