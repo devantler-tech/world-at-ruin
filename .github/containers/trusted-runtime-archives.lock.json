@@ -1,0 +1,2190 @@
+{
+  "schema": 1,
+  "architecture": "amd64",
+  "runtime_manifest": "sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+  "snapshot": "20261003T000000Z",
+  "apt_version": "2.8.3",
+  "direct_arguments": [
+    "libdbus-1-3=1.14.10-4ubuntu4.1",
+    "libfontconfig1=2.15.0-1.1ubuntu2",
+    "libgl1=1.7.0-1build1",
+    "libwayland-client0=1.22.0-2.1build1",
+    "libx11-6=2:1.8.7-1build1",
+    "libxcursor1=1:1.2.1-1build1",
+    "libxi6=2:1.8.1-1build1",
+    "libxinerama1=2:1.1.4-3build1",
+    "libxkbcommon0=1.6.0-1build1",
+    "libxrandr2=2:1.5.2-2build1"
+  ],
+  "package_lock_sha256": "ca6858c880a53612efc394d7ff4e603442ab107707d7b5ec70692572ba6bf99d",
+  "base_lock_sha256": "d5b2ca6956786fe9135c2bd7d451829d31acbd6bde76b462a28b8820589ac57f",
+  "source_report_sha256": "76fa8ee8a6a7490d895567e9690a1f79e1b48df39265b538fae5e6bda122a4cc",
+  "source_image_id": "sha256:0e7b08dd2c9c12ae9e37698dba7c4b2d7bb3341c3f6519ac67cfba24007d6c23",
+  "archives": [
+    {
+      "name": "fontconfig-config",
+      "version": "2.15.0-1.1ubuntu2",
+      "architecture": "amd64",
+      "basename": "fontconfig-config_2.15.0-1.1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/fontconfig/fontconfig-config_2.15.0-1.1ubuntu2_amd64.deb",
+      "bytes": 37298,
+      "sha256": "9df0579cd298a1f2b7a40efd519c849745aecd193a09733cf4d1032284a62bbf",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/f/fontconfig/fontconfig-config_2.15.0-1.1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "fonts-dejavu-core",
+      "version": "2.37-8",
+      "architecture": "all",
+      "basename": "fonts-dejavu-core_2.37-8_all.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+      "bytes": 835172,
+      "sha256": "40049660c194f3b8a2541fc7369efebb10e9f94bdac836a2f38fafedd10fa73a",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-8_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "fonts-dejavu-mono",
+      "version": "2.37-8",
+      "architecture": "all",
+      "basename": "fonts-dejavu-mono_2.37-8_all.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/fonts-dejavu/fonts-dejavu-mono_2.37-8_all.deb",
+      "bytes": 502232,
+      "sha256": "8a599d6553307db7ecb795d2f0e5a301e03234afc75c7358b0ba43466454c89a",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/f/fonts-dejavu/fonts-dejavu-mono_2.37-8_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libbrotli1",
+      "version": "1.1.0-2build2",
+      "architecture": "amd64",
+      "basename": "libbrotli1_1.1.0-2build2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/b/brotli/libbrotli1_1.1.0-2build2_amd64.deb",
+      "bytes": 330730,
+      "sha256": "74492419b8fda803774b8c9acef6afc5d2f9ff31782635aae212906adae7b277",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/b/brotli/libbrotli1_1.1.0-2build2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libbsd0",
+      "version": "0.12.1-1build1.1",
+      "architecture": "amd64",
+      "basename": "libbsd0_0.12.1-1build1.1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libb/libbsd/libbsd0_0.12.1-1build1.1_amd64.deb",
+      "bytes": 41238,
+      "sha256": "f3857b0863ac5cfd4263e9bf6cfb1d4be88d5321e4070d5bc2b62b0949e6c86f",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libb/libbsd/libbsd0_0.12.1-1build1.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libdbus-1-3",
+      "version": "1.14.10-4ubuntu4.1",
+      "architecture": "amd64",
+      "basename": "libdbus-1-3_1.14.10-4ubuntu4.1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/d/dbus/libdbus-1-3_1.14.10-4ubuntu4.1_amd64.deb",
+      "bytes": 209734,
+      "sha256": "5d630480f04b4b442300ce847a3fa705ea4d14d80ba6de91f99b51a4e4953b08",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/d/dbus/libdbus-1-3_1.14.10-4ubuntu4.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libdrm-amdgpu1",
+      "version": "2.4.125-1ubuntu0.1~24.04.2",
+      "architecture": "amd64",
+      "basename": "libdrm-amdgpu1_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libd/libdrm/libdrm-amdgpu1_2.4.125-1ubuntu0.1%7e24.04.2_amd64.deb",
+      "bytes": 21374,
+      "sha256": "aa29b7898bae596bf07e55ba178cf8d5ea698fe83688e1b34520d86010251a7a",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm-amdgpu1_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm-amdgpu1_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libdrm-common",
+      "version": "2.4.125-1ubuntu0.1~24.04.2",
+      "architecture": "all",
+      "basename": "libdrm-common_2.4.125-1ubuntu0.1~24.04.2_all.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libd/libdrm/libdrm-common_2.4.125-1ubuntu0.1%7e24.04.2_all.deb",
+      "bytes": 9250,
+      "sha256": "0b60996bc18fa1545e60a47bb0fe1a7f360ec06fe62ba35fb8d8ba2a54e62166",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm-common_2.4.125-1ubuntu0.1~24.04.2_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm-common_2.4.125-1ubuntu0.1~24.04.2_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libdrm-intel1",
+      "version": "2.4.125-1ubuntu0.1~24.04.2",
+      "architecture": "amd64",
+      "basename": "libdrm-intel1_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libd/libdrm/libdrm-intel1_2.4.125-1ubuntu0.1%7e24.04.2_amd64.deb",
+      "bytes": 63868,
+      "sha256": "847195765b9ef7e7886677aeae9987aa54e496758b4e6e5a4ed2cb580b252244",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm-intel1_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm-intel1_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libdrm2",
+      "version": "2.4.125-1ubuntu0.1~24.04.2",
+      "architecture": "amd64",
+      "basename": "libdrm2_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libd/libdrm/libdrm2_2.4.125-1ubuntu0.1%7e24.04.2_amd64.deb",
+      "bytes": 41388,
+      "sha256": "4d3e858dd57be617c49d87c5ddcdb35df744a4f0a559981256ae2ba174718584",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm2_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/libd/libdrm/libdrm2_2.4.125-1ubuntu0.1~24.04.2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libedit2",
+      "version": "3.1-20230828-1build1",
+      "architecture": "amd64",
+      "basename": "libedit2_3.1-20230828-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libe/libedit/libedit2_3.1-20230828-1build1_amd64.deb",
+      "bytes": 97586,
+      "sha256": "3afbc8ddf835049dd4d88275b9d13680e4c4cdd59e191cbd63424152cc08e00e",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libe/libedit/libedit2_3.1-20230828-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libelf1t64",
+      "version": "0.190-1.1ubuntu0.1",
+      "architecture": "amd64",
+      "basename": "libelf1t64_0.190-1.1ubuntu0.1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/e/elfutils/libelf1t64_0.190-1.1ubuntu0.1_amd64.deb",
+      "bytes": 57810,
+      "sha256": "b4aee123a37472d213647594b4f7d4a0d13615b0ca2a6fd33926b768d6b232c2",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/e/elfutils/libelf1t64_0.190-1.1ubuntu0.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/e/elfutils/libelf1t64_0.190-1.1ubuntu0.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libexpat1",
+      "version": "2.6.1-2ubuntu0.6",
+      "architecture": "amd64",
+      "basename": "libexpat1_2.6.1-2ubuntu0.6_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.6_amd64.deb",
+      "bytes": 98940,
+      "sha256": "494b8e672f722130c6bca6a7bc4cc31a43ca891a31d60d868bfdd699a3c20b13",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.6_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/e/expat/libexpat1_2.6.1-2ubuntu0.6_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libfontconfig1",
+      "version": "2.15.0-1.1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libfontconfig1_2.15.0-1.1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/fontconfig/libfontconfig1_2.15.0-1.1ubuntu2_amd64.deb",
+      "bytes": 138572,
+      "sha256": "a2bc05cfef021fdb84285036f98eda5ebec3c4b7a378f5aa2bdba5c4d3d8d586",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/f/fontconfig/libfontconfig1_2.15.0-1.1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libfreetype6",
+      "version": "2.13.2+dfsg-1ubuntu0.1",
+      "architecture": "amd64",
+      "basename": "libfreetype6_2.13.2+dfsg-1ubuntu0.1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/f/freetype/libfreetype6_2.13.2%2bdfsg-1ubuntu0.1_amd64.deb",
+      "bytes": 402072,
+      "sha256": "f6937fd8a77e83001dcfd3857d5a5cfbd4caaeb297c7fdb71ec50514843e48af",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1ubuntu0.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/f/freetype/libfreetype6_2.13.2+dfsg-1ubuntu0.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libgbm1",
+      "version": "25.2.8-0ubuntu0.24.04.4",
+      "architecture": "amd64",
+      "basename": "libgbm1_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/m/mesa/libgbm1_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "bytes": 34172,
+      "sha256": "4bfe348b456db5b445a80e0a3ffb9e9a01b91499bb86e0e568ca3634b134da7e",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/m/mesa/libgbm1_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libgl1",
+      "version": "1.7.0-1build1",
+      "architecture": "amd64",
+      "basename": "libgl1_1.7.0-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libg/libglvnd/libgl1_1.7.0-1build1_amd64.deb",
+      "bytes": 101990,
+      "sha256": "e2b2fadeb883f073b566ad1d7874f6702397514d258473e96152a89d4d502a09",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libg/libglvnd/libgl1_1.7.0-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libgl1-mesa-dri",
+      "version": "25.2.8-0ubuntu0.24.04.4",
+      "architecture": "amd64",
+      "basename": "libgl1-mesa-dri_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/m/mesa/libgl1-mesa-dri_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "bytes": 37950,
+      "sha256": "2dabbe4292b201ca07b38c0672352f68dbfc55b5850f96f89ef54d3b4b6c8a59",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/m/mesa/libgl1-mesa-dri_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libglvnd0",
+      "version": "1.7.0-1build1",
+      "architecture": "amd64",
+      "basename": "libglvnd0_1.7.0-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libg/libglvnd/libglvnd0_1.7.0-1build1_amd64.deb",
+      "bytes": 69594,
+      "sha256": "33f5e07c74f73c2bfb44086ae0f9e6da52acd6c104d30ffe8fd768d8253d5e82",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libg/libglvnd/libglvnd0_1.7.0-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libglx-mesa0",
+      "version": "25.2.8-0ubuntu0.24.04.4",
+      "architecture": "amd64",
+      "basename": "libglx-mesa0_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/m/mesa/libglx-mesa0_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "bytes": 110128,
+      "sha256": "5aa6164059989d476b15caa8ade892b1dec37593934dc4f617ece7ea0d639bc0",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/m/mesa/libglx-mesa0_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libglx0",
+      "version": "1.7.0-1build1",
+      "architecture": "amd64",
+      "basename": "libglx0_1.7.0-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libg/libglvnd/libglx0_1.7.0-1build1_amd64.deb",
+      "bytes": 38558,
+      "sha256": "aa4953182f30abde90cb5b072e83d7286b557b325769b8686196a7bd396d8795",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libg/libglvnd/libglx0_1.7.0-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libicu74",
+      "version": "74.2-1ubuntu3.1",
+      "architecture": "amd64",
+      "basename": "libicu74_74.2-1ubuntu3.1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb",
+      "bytes": 10860078,
+      "sha256": "c9a70989678660eed9a1e904c74fa043da8bec8e2036856fc16e31ced79b04f8",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/i/icu/libicu74_74.2-1ubuntu3.1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libllvm20",
+      "version": "1:20.1.2-0ubuntu1~24.04.3",
+      "architecture": "amd64",
+      "basename": "libllvm20_1%3a20.1.2-0ubuntu1~24.04.3_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/l/llvm-toolchain-20/libllvm20_20.1.2-0ubuntu1%7e24.04.3_amd64.deb",
+      "bytes": 30574382,
+      "sha256": "f018e71c72c7a4742fb1aff9dc98b45586f42e6ea464d4918af7e3772b7f0658",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/l/llvm-toolchain-20/libllvm20_20.1.2-0ubuntu1~24.04.3_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/l/llvm-toolchain-20/libllvm20_20.1.2-0ubuntu1~24.04.3_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libpciaccess0",
+      "version": "0.17-3ubuntu0.24.04.3",
+      "architecture": "amd64",
+      "basename": "libpciaccess0_0.17-3ubuntu0.24.04.3_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libp/libpciaccess/libpciaccess0_0.17-3ubuntu0.24.04.3_amd64.deb",
+      "bytes": 19220,
+      "sha256": "87a3b1c2a09f54d229e5e1f5424adc806e8f99bbb8aa8c8dea114b727f7a5a96",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libp/libpciaccess/libpciaccess0_0.17-3ubuntu0.24.04.3_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libpng16-16t64",
+      "version": "1.6.43-5ubuntu0.6",
+      "architecture": "amd64",
+      "basename": "libpng16-16t64_1.6.43-5ubuntu0.6_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libp/libpng1.6/libpng16-16t64_1.6.43-5ubuntu0.6_amd64.deb",
+      "bytes": 188776,
+      "sha256": "ac0163f58b8aa52dfdd17cdc10a83f3db084cb91a62686023f5c983d6ff89f8b",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libp/libpng1.6/libpng16-16t64_1.6.43-5ubuntu0.6_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/libp/libpng1.6/libpng16-16t64_1.6.43-5ubuntu0.6_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libsensors-config",
+      "version": "1:3.6.0-9build1",
+      "architecture": "all",
+      "basename": "libsensors-config_1%3a3.6.0-9build1_all.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/l/lm-sensors/libsensors-config_3.6.0-9build1_all.deb",
+      "bytes": 5546,
+      "sha256": "148103a436fd273dabfe0fe41dc54873df46227b59b2c7ac7339d7e2ddfd033b",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/l/lm-sensors/libsensors-config_3.6.0-9build1_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libsensors5",
+      "version": "1:3.6.0-9build1",
+      "architecture": "amd64",
+      "basename": "libsensors5_1%3a3.6.0-9build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/l/lm-sensors/libsensors5_3.6.0-9build1_amd64.deb",
+      "bytes": 26600,
+      "sha256": "515ed1fbe2bc99926c44fe10b1beb9c3510068c344adda334303098d669ba1e5",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/l/lm-sensors/libsensors5_3.6.0-9build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libvulkan1",
+      "version": "1.3.275.0-1build1",
+      "architecture": "amd64",
+      "basename": "libvulkan1_1.3.275.0-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/v/vulkan-loader/libvulkan1_1.3.275.0-1build1_amd64.deb",
+      "bytes": 142010,
+      "sha256": "ccf4fe8f4461442f27ea2494c7ae650b60bd396fec2688b0c44a27d66a222f74",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/v/vulkan-loader/libvulkan1_1.3.275.0-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libwayland-client0",
+      "version": "1.22.0-2.1build1",
+      "architecture": "amd64",
+      "basename": "libwayland-client0_1.22.0-2.1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/w/wayland/libwayland-client0_1.22.0-2.1build1_amd64.deb",
+      "bytes": 26406,
+      "sha256": "6af0aed41d75149bea22fa468f01eb058ffe3e35ef07ff2f13fb88a90387881d",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/w/wayland/libwayland-client0_1.22.0-2.1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libx11-6",
+      "version": "2:1.8.7-1build1",
+      "architecture": "amd64",
+      "basename": "libx11-6_2%3a1.8.7-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libx11/libx11-6_1.8.7-1build1_amd64.deb",
+      "bytes": 649780,
+      "sha256": "397f84347476a3c5786b39f3ff6f0f82866eb3d8be6d2ad3efeadf019efe5b80",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libx11/libx11-6_1.8.7-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libx11-data",
+      "version": "2:1.8.7-1build1",
+      "architecture": "all",
+      "basename": "libx11-data_2%3a1.8.7-1build1_all.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libx11/libx11-data_1.8.7-1build1_all.deb",
+      "bytes": 115446,
+      "sha256": "9ae01f7747e7f479394c697c55acf11d3baf139e8e54b7c4adfb55ef9c50de08",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libx11/libx11-data_1.8.7-1build1_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libx11-xcb1",
+      "version": "2:1.8.7-1build1",
+      "architecture": "amd64",
+      "basename": "libx11-xcb1_2%3a1.8.7-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libx11/libx11-xcb1_1.8.7-1build1_amd64.deb",
+      "bytes": 7800,
+      "sha256": "7d0d357e47cd6e1042be34da1d37cea313420b000035e71e855087c8268ab127",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libx11/libx11-xcb1_1.8.7-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxau6",
+      "version": "1:1.0.9-1build6",
+      "architecture": "amd64",
+      "basename": "libxau6_1%3a1.0.9-1build6_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxau/libxau6_1.0.9-1build6_amd64.deb",
+      "bytes": 7160,
+      "sha256": "e40d29f1d1a62393bacaedebe0da3d9006084152a9f7e5e029293f08ce1c5c80",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxau/libxau6_1.0.9-1build6_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-dri3-0",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-dri3-0_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-dri3-0_1.15-1ubuntu2_amd64.deb",
+      "bytes": 7142,
+      "sha256": "3d3d0e95e56ae16010a84883196b8153cba62d6831f9aaee2a68c46f20c7c004",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-dri3-0_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-glx0",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-glx0_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-glx0_1.15-1ubuntu2_amd64.deb",
+      "bytes": 24774,
+      "sha256": "d07cde26c70fe92df7c327928371e495cc4570fed2d6518758a5db5715cb34c1",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-glx0_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-present0",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-present0_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-present0_1.15-1ubuntu2_amd64.deb",
+      "bytes": 5676,
+      "sha256": "2e36e6557e87dbfd64df3143cbf81a4f75c3447501a545b4730511d228b0dd17",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-present0_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-randr0",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-randr0_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-randr0_1.15-1ubuntu2_amd64.deb",
+      "bytes": 17862,
+      "sha256": "b5cb519823a05a617b543dc9b6a9289b7648b20048244abe021caa706309835a",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-randr0_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-shm0",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-shm0_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-shm0_1.15-1ubuntu2_amd64.deb",
+      "bytes": 5756,
+      "sha256": "229d1280d459f1ba44c22939d3f9b61d9d20932d9a646b3fe4ce50be4cdf2325",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-shm0_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-sync1",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-sync1_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-sync1_1.15-1ubuntu2_amd64.deb",
+      "bytes": 9312,
+      "sha256": "14286795a258593259923619073e50c15345673befae2733f7b0577b07359aa8",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-sync1_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb-xfixes0",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb-xfixes0_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb-xfixes0_1.15-1ubuntu2_amd64.deb",
+      "bytes": 10190,
+      "sha256": "0b2ab64af92a71e3d1a35e3c819880ee28d04bfac81360df68ae8d8e9663ebd2",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb-xfixes0_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcb1",
+      "version": "1.15-1ubuntu2",
+      "architecture": "amd64",
+      "basename": "libxcb1_1.15-1ubuntu2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcb/libxcb1_1.15-1ubuntu2_amd64.deb",
+      "bytes": 47730,
+      "sha256": "e1c6611d11ad7398326f1bf028afc34c3b14c51d917a3426b966ed4b9687fa58",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcb/libxcb1_1.15-1ubuntu2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxcursor1",
+      "version": "1:1.2.1-1build1",
+      "architecture": "amd64",
+      "basename": "libxcursor1_1%3a1.2.1-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxcursor/libxcursor1_1.2.1-1build1_amd64.deb",
+      "bytes": 20748,
+      "sha256": "1a4beee621454e42fe0d2f4e1633611126e43d891f0aec28e4a06744f6e9f04d",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxcursor/libxcursor1_1.2.1-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxdmcp6",
+      "version": "1:1.1.3-0ubuntu6",
+      "architecture": "amd64",
+      "basename": "libxdmcp6_1%3a1.1.3-0ubuntu6_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxdmcp/libxdmcp6_1.1.3-0ubuntu6_amd64.deb",
+      "bytes": 10254,
+      "sha256": "bcd336fce11ce2a45f34d0f95e6980af22529f22147e8f98c156e5cee8ee42bb",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxdmcp/libxdmcp6_1.1.3-0ubuntu6_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxext6",
+      "version": "2:1.3.4-1build2",
+      "architecture": "amd64",
+      "basename": "libxext6_2%3a1.3.4-1build2_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxext/libxext6_1.3.4-1build2_amd64.deb",
+      "bytes": 30406,
+      "sha256": "45783969a9ece9d7b7b733b8c60981584c53c6bc5ee3b42d295d2f80d1285679",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxext/libxext6_1.3.4-1build2_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxfixes3",
+      "version": "1:6.0.0-2build1",
+      "architecture": "amd64",
+      "basename": "libxfixes3_1%3a6.0.0-2build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxfixes/libxfixes3_6.0.0-2build1_amd64.deb",
+      "bytes": 10764,
+      "sha256": "0ee1015cccd063249e01c0cd0bf45f513c8ac9a1e5e485070c12e69192455e4a",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxfixes/libxfixes3_6.0.0-2build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxi6",
+      "version": "2:1.8.1-1build1",
+      "architecture": "amd64",
+      "basename": "libxi6_2%3a1.8.1-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxi/libxi6_1.8.1-1build1_amd64.deb",
+      "bytes": 32404,
+      "sha256": "0ea7acb5e8a8ce4d6653b30e03a319bfe136db7bfb5ee7cad34c2aa1272ea8d9",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxi/libxi6_1.8.1-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxinerama1",
+      "version": "2:1.1.4-3build1",
+      "architecture": "amd64",
+      "basename": "libxinerama1_2%3a1.1.4-3build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxinerama/libxinerama1_1.1.4-3build1_amd64.deb",
+      "bytes": 6396,
+      "sha256": "c8c93a3efdbb06e314f41bf48af4ca3652e4a3826bab5b9e00887660e619f239",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxinerama/libxinerama1_1.1.4-3build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxkbcommon0",
+      "version": "1.6.0-1build1",
+      "architecture": "amd64",
+      "basename": "libxkbcommon0_1.6.0-1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxkbcommon/libxkbcommon0_1.6.0-1build1_amd64.deb",
+      "bytes": 121944,
+      "sha256": "2b9caeb423efb540296a1cb20b872cc630c23908407ecb5c1c787a617622d664",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxkbcommon/libxkbcommon0_1.6.0-1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxml2",
+      "version": "2.9.14+dfsg-1.3ubuntu3.9",
+      "architecture": "amd64",
+      "basename": "libxml2_2.9.14+dfsg-1.3ubuntu3.9_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxml2/libxml2_2.9.14%2bdfsg-1.3ubuntu3.9_amd64.deb",
+      "bytes": 764598,
+      "sha256": "6e578bc383096718c9eea8a76a3edfacfea06e525e1aa7a187ee41906436d94e",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3ubuntu3.9_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/",
+          "release": "noble-security",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-security",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-security/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_main_binary-amd64_Packages.lz4",
+            "sha256": "85dfecd3535a92e307ffaf49dbaf253fb111599984ed29ad89ca64bd714f4de7",
+            "bytes": 2205411
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-security_InRelease",
+            "sha256": "3b358f744efb789bab437ac77209ac20be2c8665197ce274f65c5f812bd4d519",
+            "bytes": 126127
+          }
+        },
+        {
+          "package_filename": "pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3ubuntu3.9_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxrandr2",
+      "version": "2:1.5.2-2build1",
+      "architecture": "amd64",
+      "basename": "libxrandr2_2%3a1.5.2-2build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxrandr/libxrandr2_1.5.2-2build1_amd64.deb",
+      "bytes": 19670,
+      "sha256": "f2955a5e594f5724b58ad241d9231ea191cb36574a0d5e5ca6b661cd41d6256d",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxrandr/libxrandr2_1.5.2-2build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxrender1",
+      "version": "1:0.9.10-1.1build1",
+      "architecture": "amd64",
+      "basename": "libxrender1_1%3a0.9.10-1.1build1_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxrender/libxrender1_0.9.10-1.1build1_amd64.deb",
+      "bytes": 19016,
+      "sha256": "d70bd831aebe8d4834b5dd2ed98df26dd6bd27f1042c47543bd7f66df1ae22ea",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxrender/libxrender1_0.9.10-1.1build1_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxshmfence1",
+      "version": "1.3-1build5",
+      "architecture": "amd64",
+      "basename": "libxshmfence1_1.3-1build5_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxshmfence/libxshmfence1_1.3-1build5_amd64.deb",
+      "bytes": 4764,
+      "sha256": "bc6de4bfaf9050a8ba83d4bcfb114131b081084a7972c03417f8523d52b5c742",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxshmfence/libxshmfence1_1.3-1build5_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "libxxf86vm1",
+      "version": "1:1.1.4-1build4",
+      "architecture": "amd64",
+      "basename": "libxxf86vm1_1%3a1.1.4-1build4_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/libx/libxxf86vm/libxxf86vm1_1.1.4-1build4_amd64.deb",
+      "bytes": 9282,
+      "sha256": "48b2799f52b86505d2bc91dcb1bfa6536545635b9849cb693d274d934116a8da",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/libx/libxxf86vm/libxxf86vm1_1.1.4-1build4_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/",
+          "release": "noble",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_main_binary-amd64_Packages.lz4",
+            "sha256": "5440959b1be383eee0871228f9a97a15f50e5ecf8ac726f3aa53b2c6903bcdf2",
+            "bytes": 2950155
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble_InRelease",
+            "sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "bytes": 255850
+          }
+        }
+      ]
+    },
+    {
+      "name": "mesa-libgallium",
+      "version": "25.2.8-0ubuntu0.24.04.4",
+      "architecture": "amd64",
+      "basename": "mesa-libgallium_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/m/mesa/mesa-libgallium_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+      "bytes": 10783312,
+      "sha256": "0c50c3c18c1b3f3ac4243bbf1533c9202f9d7b4f646807e9ef0df4c801414256",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/m/mesa/mesa-libgallium_25.2.8-0ubuntu0.24.04.4_amd64.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    },
+    {
+      "name": "xkb-data",
+      "version": "2.41-2ubuntu1.1",
+      "architecture": "all",
+      "basename": "xkb-data_2.41-2ubuntu1.1_all.deb",
+      "requested_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/pool/main/x/xkeyboard-config/xkb-data_2.41-2ubuntu1.1_all.deb",
+      "bytes": 397328,
+      "sha256": "e99f2a0b4c56cdf35dec489e56b6a8418826cab8ce6306ec6d0bd98e2cd0014a",
+      "apt_origins": [
+        {
+          "package_filename": "pool/main/x/xkeyboard-config/xkb-data_2.41-2ubuntu1.1_all.deb",
+          "repository_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/",
+          "base_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/",
+          "release": "noble-updates",
+          "component": "main",
+          "target_architecture": "amd64",
+          "trusted": true,
+          "origin": "Ubuntu",
+          "label": "Ubuntu",
+          "codename": "noble",
+          "suite": "noble-updates",
+          "index_uri": "https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/dists/noble-updates/main/binary-amd64/Packages",
+          "index": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_main_binary-amd64_Packages.lz4",
+            "sha256": "85c0253022f1f4990e7a243840dee3d41461eed61de5cd8f7e8862c28c58a608",
+            "bytes": 2828599
+          },
+          "inrelease": {
+            "path": "/var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261003T000000Z_dists_noble-updates_InRelease",
+            "sha256": "73e9ce9b343db391c104da5f3574adaccd0cd672c450801afa5e6a53de0f2b2c",
+            "bytes": 126125
+          }
+        }
+      ]
+    }
+  ]
+}

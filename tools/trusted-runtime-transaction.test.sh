@@ -22,12 +22,25 @@ export TRANSACTION_ORIGIN_INDEX_BASE="$state/origin_Packages.base"
 printf 'Package: foo\nVersion: 1.0\nArchitecture: amd64\nFilename: test/foo.deb\nSize: 4\nSHA256: %s\n\n' "$TRANSACTION_TEST_HASH" > "$TRANSACTION_ORIGIN_INDEX_BASE"
 cp "$TRANSACTION_ORIGIN_INDEX_BASE" "$TRANSACTION_ORIGIN_INDEX"
 printf 'signed release\n' > "$TRANSACTION_ORIGIN_RELEASE"
+TRANSACTION_ORIGIN_INDEX_HASH="$(shasum -a 256 "$TRANSACTION_ORIGIN_INDEX_BASE")"
+TRANSACTION_ORIGIN_INDEX_HASH=${TRANSACTION_ORIGIN_INDEX_HASH%% *}
+TRANSACTION_ORIGIN_RELEASE_HASH="$(shasum -a 256 "$TRANSACTION_ORIGIN_RELEASE")"
+TRANSACTION_ORIGIN_RELEASE_HASH=${TRANSACTION_ORIGIN_RELEASE_HASH%% *}
+TRANSACTION_ORIGIN_INDEX_BYTES="$(wc -c < "$TRANSACTION_ORIGIN_INDEX_BASE" | tr -d ' ')"
+TRANSACTION_ORIGIN_RELEASE_BYTES="$(wc -c < "$TRANSACTION_ORIGIN_RELEASE" | tr -d ' ')"
 GOTOOLCHAIN=local GOWORK=off go build -o "$state/origin-helper" "$root/tools/trusted-runtime-origin/main.go"
+GOTOOLCHAIN=local GOWORK=off go build -o "$state/archive-helper" "$root/tools/trusted-runtime-archives/main.go"
 printf 'package\tapt\t2.8.3\tamd64\tinstalled\n' > "$state/before"
 { cat "$state/before"; printf 'package\tfoo\t1.0\tamd64\tinstalled\n'; } > "$state/expected"
+cat > "$state/archive-expectation.base.json" <<EOF
+{"schema":1,"architecture":"amd64","runtime_manifest":"sha256:$(printf '%064d' 1)","snapshot":"20261003T000000Z","apt_version":"2.8.3","direct_arguments":["foo=1.0"],"package_lock_sha256":"$(printf '%064d' 2)","base_lock_sha256":"$(printf '%064d' 3)","source_report_sha256":"$(printf '%064d' 4)","source_image_id":"sha256:$(printf '%064d' 5)","archives":[{"name":"foo","version":"1.0","architecture":"amd64","basename":"foo.deb","requested_uri":"https://snapshot.ubuntu.com/test/foo.deb","bytes":4,"sha256":"$TRANSACTION_TEST_HASH","apt_origins":[{"package_filename":"test/foo.deb","repository_uri":"https://snapshot.ubuntu.com/","base_uri":"https://snapshot.ubuntu.com/dists/noble/","release":"noble","component":"main","target_architecture":"amd64","trusted":true,"origin":"Ubuntu","label":"Ubuntu","codename":"noble","suite":"noble","index_uri":"https://snapshot.ubuntu.com/dists/noble/main/binary-amd64/Packages","index":{"path":"$TRANSACTION_ORIGIN_INDEX","sha256":"$TRANSACTION_ORIGIN_INDEX_HASH","bytes":$TRANSACTION_ORIGIN_INDEX_BYTES},"inrelease":{"path":"$TRANSACTION_ORIGIN_RELEASE","sha256":"$TRANSACTION_ORIGIN_RELEASE_HASH","bytes":$TRANSACTION_ORIGIN_RELEASE_BYTES}}]}]}
+EOF
+cp "$state/archive-expectation.base.json" "$state/archive-expectation.json"
 sed -e "s|expected=/tmp/expected-packages.tsv|expected=$state/expected|" \
     -e "s|out=/usr/share/war-trusted-runtime/transaction.tsv|out=$state/report|" \
     -e "s|origin_helper=/tmp/trusted-runtime-origin|origin_helper=$state/origin-helper|" \
+    -e "s|archive_helper=/tmp/trusted-runtime-archives|archive_helper=$state/archive-helper|" \
+    -e "s|archive_expected=/tmp/expected-archives.json|archive_expected=$state/archive-expectation.json|" \
     "$root/tools/observe-runtime-transaction.sh" > "$state/observe.sh"
 cat > "$state/bin/apt-get" <<'APT'
 #!/usr/bin/env bash
@@ -141,10 +154,11 @@ shasum -a 256 "$@"
 HASH
 chmod +x "$state/bin/"*
 export PATH="$state/bin:$PATH"
-# Off selects exactly the original command and publishes no diagnostic.
-bash "$state/observe.sh" 0 apt-get install -y --no-install-recommends foo=1.0
+# Both selections enforce the reviewed archive set; off publishes no diagnostic.
+TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 0 apt-get install -y --no-install-recommends foo=1.0
 [ -f "$state/installed" ] && [ ! -f "$state/report" ]
-[ "$(wc -l < "$state/trace")" -eq 1 ]
+[ "$(grep -c foo=1.0 "$state/trace")" -eq 3 ]
+[ "$(grep -c -- --no-download "$state/trace")" -eq 1 ]
 # The selected path must finish its observation before the no-download install.
 rm "$state/installed" "$state/install-attempted" "$state/trace"
 TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0
@@ -155,8 +169,14 @@ TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state
 grep -qx transaction-complete "$state/report"
 # No private archive/cache state may survive the helper's successful exit.
 [ -z "$(find "$state/work" -mindepth 1 -print)" ]
-for refusal in empty-plan malformed-plan oversized-plan storage-budget credential-uri unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline failed-target-reader untrusted-target missing-inrelease linked-index partial-stanza duplicate-field ambiguous-source conflicting-source effective-origin-mismatch origin-tuple-mismatch origin-digest-substitution missing-offline output-link; do
+for refusal in archive-expectation linked-expectation empty-plan malformed-plan oversized-plan storage-budget credential-uri unterminated-plan duplicate-plan failed-plan failed-download corrupt truncated missing extra linked hardlinked partial-cache missing-lock linked-partial failed-baseline failed-metadata failed-hash wrong-tuple changed-baseline failed-target-reader untrusted-target missing-inrelease linked-index partial-stanza duplicate-field ambiguous-source conflicting-source effective-origin-mismatch origin-tuple-mismatch origin-digest-substitution missing-offline output-link; do
   rm -f "$state/installed" "$state/install-attempted" "$state/trace" "$state/downloaded" "$state/report"
+  rm -f "$state/archive-expectation.json"
+  cp "$state/archive-expectation.base.json" "$state/archive-expectation.json"
+  case "$refusal" in
+    archive-expectation) jq '.archives[0].sha256="'"$(printf '%064d' 8)"'"' "$state/archive-expectation.json" > "$state/changed"; mv "$state/changed" "$state/archive-expectation.json";;
+    linked-expectation) rm "$state/archive-expectation.json"; ln -s "$state/archive-expectation.base.json" "$state/archive-expectation.json";;
+  esac
   if TMPDIR="$state/work" WAR_TRUSTED_RUNTIME_ORIGIN_TEST=1 WAR_APT_LISTS_DIR="$state" TRANSACTION_TEST_CASE="$refusal" bash "$state/observe.sh" 1 apt-get install -y --no-install-recommends foo=1.0 > "$state/out" 2> "$state/error"; then
     echo "accepted $refusal transaction" >&2; exit 1
   fi
@@ -168,8 +188,9 @@ for refusal in empty-plan malformed-plan oversized-plan storage-budget credentia
   if [ "$refusal" = conflicting-source ]; then grep -q 'conflict=true' "$state/error"; fi
   if [ "$refusal" != missing-offline ] && [ "$refusal" != output-link ]; then [ ! -f "$state/install-attempted" ]; fi
   case "$refusal" in
+    linked-expectation) [ ! -f "$state/downloaded" ];;
     empty-plan|malformed-plan|oversized-plan|storage-budget|credential-uri|unterminated-plan|duplicate-plan|failed-plan) [ ! -f "$state/downloaded" ];;
   esac
   [ -z "$(find "$state/work" -mindepth 1 -print)" ]
 done
-printf '%s\n' 'runtime transaction: original install, authenticated origin join and 36 refusal controls passed'
+printf '%s\n' 'runtime transaction: reviewed archives, authenticated origin join and 38 refusal controls passed'

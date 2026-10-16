@@ -25,6 +25,7 @@ cp "$(command -v godot)" "$context/godot"
 cp "$root/tools/capture-trusted-runtime-inventory.sh" "$context/capture-trusted-runtime-inventory.sh"
 cp "$root/tools/observe-runtime-transaction.sh" "$context/observe-runtime-transaction.sh"
 cp "$root/tools/trusted-runtime-origin/main.go" "$context/trusted-runtime-origin.go"
+cp "$root/tools/trusted-runtime-archives/main.go" "$context/trusted-runtime-archives.go"
 trusted_wait bash "$root/tools/trusted-regression-phase.sh" "runtime build/pull" \
   bash "$root/tools/build-locked-trusted-runtime.sh" "$root" "$context" "$mode" "world-trusted-regressions:build-$$" >&2
 if [ "$mode" = 1 ]; then

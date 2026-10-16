@@ -11,7 +11,7 @@ Go, jq, Docker and GNU timeout must be available.
 The report records every installed package, including base and transitive
 packages; the package architecture and installed state; SHA-256 identities and
 sizes of APT indexes, source/configuration files, archive keyring and copied CA
-bundle; the installed engine checksum; nineteen builder/helper, base-proof and package-lock source identities;
+bundle; the installed engine checksum; twenty-one builder/helper, base-proof, package-lock and archive-lock source identities;
 and the resulting image's Linux/amd64, non-root, working-directory and
 entrypoint contract. APT performs its ordinary signature and HTTPS checks.
 Its index observations are captured before the package lists are removed.
@@ -40,9 +40,10 @@ partial, linked, duplicate or conflicting target refuses before package scripts 
 
 The same arguments and cache then run with `--no-download`, without missing-file
 tolerance or a download fallback. The existing final installed-set verifier still
-runs from freshly copied expected bytes. The default mode directly executes the
-original install command. A selected build publishes no complete transaction after
-a failed acquisition, verification or no-download installation.
+runs from freshly copied expected bytes. Every mode enforces the reviewed archive
+expectation; the default omits transaction publication. A selected build publishes
+no complete transaction after a failed acquisition, verification or no-download
+installation.
 
 `inventory.transaction` carries `apt_version`, `direct_arguments`,
 `preinstall_packages`, `apt_targets` and `downloaded_archives`. Each target retains
@@ -82,11 +83,12 @@ before APT's archive authentication and is not itself an authentication receipt;
 the origin helper therefore joins the acquired bytes to APT's trusted target and
 the exact Packages/InRelease inputs retained after the authenticated update. The
 helper does not replace APT's signature verifier or let its own report authorize a
-future executor. This diagnostic does not create a reviewed archive expectation,
-producer authorization, artifact provenance or future cache admission. It
-publishes no executor archive, enables no reuse and proves no warm saving.
-Those decisions and whether to retain this diagnostic after adoption belong
-to [#1397](https://github.com/devantler-tech/world-at-ruin/issues/1397).
+future executor. The separately reviewed
+[archive expectation](trusted-runtime-archives.md) now admits an exact cold-build
+closure before package scripts execute. This diagnostic can propose that lock;
+it cannot approve it. It publishes no executor archive, enables no reuse and
+proves no warm saving. Producer, custody and reuse decisions belong to
+[#1397](https://github.com/devantler-tech/world-at-ruin/issues/1397).
 Caller engine version/ZIP checksum fields describe the selected installer;
 the separate executable checksum joins the host engine to the observed image.
 
@@ -95,15 +97,15 @@ verify its exact source/job/recipe identities independently before reviewing any
 proposed expectation. A report cannot authorize its own executor. An unavailable
 snapshot/package or a mismatched tuple stops the build: collect a proposed change
 in a disposable maintenance build, review it, and prove the final locked path.
-Never disable authentication or validity checks to recover. A reviewed archive-byte
-expectation and its enforcement/adoption remain
-[#1428](https://github.com/devantler-tech/world-at-ruin/issues/1428).
+Never disable authentication or validity checks to recover. Generate and review
+the expectation with the [archive maintenance procedure](trusted-runtime-archives.md).
 
 Validate with:
 
 ```sh
 go test -race tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go
 go test -race tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go
+go test -race tools/trusted-runtime-archives/main.go tools/trusted-runtime-archives/main_test.go
 bash tools/trusted-runtime-inventory.test.sh
 bash tools/trusted-runtime-transaction.test.sh
 bash tools/client-proof-workflow-guard.test.sh
