@@ -273,6 +273,43 @@ func dockerRunInstructions(raw []byte) ([]string, error) {
 	return runs, nil
 }
 
+func unquotedShellOccurrences(value, needle string) ([]int, error) {
+	var positions []int
+	singleQuoted, doubleQuoted, escaped := false, false, false
+	for i := 0; i < len(value); i++ {
+		character := value[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if character == '\\' && !singleQuoted {
+			escaped = true
+			continue
+		}
+		if character == '\'' && !doubleQuoted {
+			singleQuoted = !singleQuoted
+			continue
+		}
+		if character == '"' && !singleQuoted {
+			doubleQuoted = !doubleQuoted
+			continue
+		}
+		if singleQuoted || doubleQuoted {
+			continue
+		}
+		if character == '#' && (i == 0 || strings.ContainsRune(" \t\r\n", rune(value[i-1]))) {
+			break
+		}
+		if strings.HasPrefix(value[i:], needle) {
+			positions = append(positions, i)
+		}
+	}
+	if singleQuoted || doubleQuoted || escaped {
+		return nil, errors.New("runtime recipe has incomplete shell quoting")
+	}
+	return positions, nil
+}
+
 func parseRecipe(raw []byte) (string, string, []string, error) {
 	runs, err := dockerRunInstructions(raw)
 	if err != nil {
@@ -281,13 +318,21 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 	const observer = `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
 	const command = "apt-get install -y --no-install-recommends"
 	wrapped := "&& " + observer + " " + command
-	installCount, observerCount, transaction := 0, 0, ""
+	installCount, observerCount, transaction, transactionOffset := 0, 0, "", -1
 	for _, run := range runs {
-		installCount += strings.Count(run, command)
-		count := strings.Count(run, wrapped)
-		observerCount += count
-		if count == 1 {
+		installs, scanErr := unquotedShellOccurrences(run, command)
+		if scanErr != nil {
+			return "", "", nil, scanErr
+		}
+		installCount += len(installs)
+		observers, scanErr := unquotedShellOccurrences(run, wrapped)
+		if scanErr != nil {
+			return "", "", nil, scanErr
+		}
+		observerCount += len(observers)
+		if len(observers) == 1 {
 			transaction = run
+			transactionOffset = observers[0]
 		}
 	}
 	if observerCount != 1 {
@@ -301,7 +346,7 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 	if installCount != 1 {
 		return "", "", nil, errors.New("runtime install declaration missing or repeated")
 	}
-	_, tail, _ := strings.Cut(transaction, wrapped)
+	tail := transaction[transactionOffset+len(wrapped):]
 	tail, _, found := strings.Cut(tail, "&&")
 	if !found {
 		return "", "", nil, errors.New("runtime install boundary missing")

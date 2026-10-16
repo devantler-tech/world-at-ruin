@@ -210,8 +210,9 @@ func TestParseRecipeRequiresExecutableObserverBeforeInstall(t *testing.T) {
 		"RUN printf 'APT::Snapshot \"20261003T000000Z\";' > /etc/apt/apt.conf.d/50snapshot\n"
 	observer := `bash /tmp/observe-runtime-transaction.sh "$WAR_RUNTIME_INVENTORY" "$WAR_RUNTIME_ARCHIVE_POLICY"`
 	for name, recipe := range map[string]string{
-		"comment only":  prefix + "# " + observer + "\nRUN apt-get install -y --no-install-recommends foo=1.0 && true\n",
-		"after install": prefix + "RUN apt-get install -y --no-install-recommends foo=1.0 && " + observer + " true\n",
+		"comment only":    prefix + "# " + observer + "\nRUN apt-get install -y --no-install-recommends foo=1.0 && true\n",
+		"after install":   prefix + "RUN apt-get install -y --no-install-recommends foo=1.0 && " + observer + " true\n",
+		"quoted observer": prefix + "RUN printf '%s\\n' '&& " + observer + " apt-get install -y --no-install-recommends foo=1.0 && true' && \"apt-get\" install -y --no-install-recommends foo=1.0 && true\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, _, err := parseRecipe([]byte(recipe)); err == nil {
