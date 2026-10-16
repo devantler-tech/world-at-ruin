@@ -122,11 +122,9 @@ func TestObservedInventory(t *testing.T) {
 	}
 }
 
-func TestArchiveOriginUsesAPTsEncodedRepositoryFilename(t *testing.T) {
-	got := aptArchiveURI("https://snapshot.ubuntu.com/ubuntu/", "pool/f/foo_1.0+ds~beta%1_amd64.deb")
-	want := "https://snapshot.ubuntu.com/ubuntu/pool/f/foo_1.0%2bds%7ebeta%251_amd64.deb"
-	if got != want {
-		t.Fatalf("APT archive URI = %q, want %q", got, want)
+func TestArchiveOriginAcceptsAPTsEncodedRepositoryFilename(t *testing.T) {
+	if !requestMatchesOrigin("https://snapshot.ubuntu.com/ubuntu/pool/f/foo_1.0%2bds%7ebeta%251_amd64.deb", "https://snapshot.ubuntu.com/ubuntu/", "pool/f/foo_1.0+ds~beta%1_amd64.deb") {
+		t.Fatal("APT-encoded archive URI did not match its package filename")
 	}
 }
 

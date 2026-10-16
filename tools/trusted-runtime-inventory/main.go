@@ -109,24 +109,14 @@ func evidenceURL(raw string, slash bool) bool {
 	return !slash || strings.HasSuffix(raw, "/")
 }
 
-// aptArchiveURI mirrors APT 2.8's pkgAcquire::URIEncode default for a
-// repository Filename. The accepted filename alphabet excludes every other
-// byte that QuoteString would escape.
-func aptArchiveURI(repositoryURI, filename string) string {
-	var encoded strings.Builder
-	encoded.Grow(len(filename))
-	const hexadecimal = "0123456789abcdef"
-	for i := 0; i < len(filename); i++ {
-		value := filename[i]
-		if value == '+' || value == '~' || value == '%' {
-			encoded.WriteByte('%')
-			encoded.WriteByte(hexadecimal[value>>4])
-			encoded.WriteByte(hexadecimal[value&15])
-		} else {
-			encoded.WriteByte(value)
-		}
+// requestMatchesOrigin compares APT's escaped request suffix with the raw
+// Filename carried by the selected Packages record.
+func requestMatchesOrigin(requestURI, repositoryURI, filename string) bool {
+	if !strings.HasPrefix(requestURI, repositoryURI) {
+		return false
 	}
-	return repositoryURI + encoded.String()
+	decoded, err := url.PathUnescape(strings.TrimPrefix(requestURI, repositoryURI))
+	return err == nil && decoded == filename
 }
 
 func evidenceFile(path, sizeText, digest string, maximum int64) (ingredientFile, error) {
@@ -321,7 +311,7 @@ func parseTransaction(lines []string, final []installedPackage) (transaction, er
 		plan := plans[name]
 		origin := origins[name]
 		target := targets[origin.Index.Path]
-		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || plan.URI != aptArchiveURI(origin.RepositoryURI, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
+		if plan.Basename == "" || plan.Bytes != item.Bytes || plan.SHA256 != item.SHA256 || base[item.Name] == item.installedPackage || originIdentities[name] != item.installedPackage || !requestMatchesOrigin(plan.URI, origin.RepositoryURI, origin.PackageFilename) || target.Index.Path == "" || !originMatchesTarget(origin, target) {
 			return refuse()
 		}
 		item.URI = plan.URI

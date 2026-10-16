@@ -38,6 +38,16 @@ func fixture(t *testing.T) (planRequest, targetRecord) {
 
 func TestResolveOriginsJoinsTheCompleteAuthenticatedTarget(t *testing.T) {
 	request, target := fixture(t)
+	file, err := os.OpenFile(target.IndexPath, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.WriteString("Optional-Empty-Field:\n\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	got, err := resolveOrigins([]planRequest{request}, []targetRecord{target})
 	if err != nil {
 		t.Fatal(err)

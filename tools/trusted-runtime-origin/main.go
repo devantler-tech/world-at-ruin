@@ -32,6 +32,7 @@ var (
 	versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 	archivePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~%_-]*\.deb$`)
 	pathPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._~%/-]*$`)
+	fieldPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 )
 
 type planRequest struct {
@@ -253,8 +254,10 @@ func parsePackageIndex(path string, visit func(packageRecord) error) (string, in
 	scanner.Buffer(make([]byte, 4096), maximumLineBytes)
 	fields := map[string]string{}
 	stanzas := 0
+	continuationAllowed := false
 	finish := func() error {
 		if len(fields) == 0 {
+			continuationAllowed = false
 			return nil
 		}
 		stanzas++
@@ -276,6 +279,7 @@ func parsePackageIndex(path string, visit func(packageRecord) error) (string, in
 			return err
 		}
 		fields = map[string]string{}
+		continuationAllowed = false
 		return nil
 	}
 	for scanner.Scan() {
@@ -287,12 +291,17 @@ func parsePackageIndex(path string, visit func(packageRecord) error) (string, in
 			continue
 		}
 		if line[0] == ' ' || line[0] == '\t' {
+			if !continuationAllowed {
+				return "", 0, errors.New("orphaned package continuation")
+			}
 			continue
 		}
-		key, value, ok := strings.Cut(line, ": ")
-		if !ok {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !fieldPattern.MatchString(key) {
 			return "", 0, errors.New("malformed package field")
 		}
+		continuationAllowed = true
+		value = strings.TrimLeft(value, " \t")
 		switch key {
 		case "Package", "Version", "Architecture", "Filename", "Size", "SHA256":
 			if fields[key] != "" || !safeText(value, maximumLineBytes) {
