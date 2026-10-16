@@ -408,7 +408,7 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 	seenTargetPaths, seenTargetURIs := map[string]bool{}, map[string]bool{}
 	for _, target := range targets {
 		if target.Trusted != "yes" || seenTargetPaths[target.IndexPath] || seenTargetURIs[target.IndexURI] {
-			return nil, nil, errors.New("untrusted package target")
+			return nil, nil, errors.New("invalid or repeated package target")
 		}
 		seenTargetPaths[target.IndexPath], seenTargetURIs[target.IndexURI] = true, true
 		archiveRepository, err := archiveRepositoryURI(target.IndexURI, target.Release)
@@ -461,7 +461,7 @@ func resolveEvidence(requests []planRequest, targets []targetRecord) ([]originRe
 			first := targets[0]
 			fmt.Fprintf(os.Stderr, "archive origin join refused: request=%q package=%q version=%q architecture=%q matches=%d conflict=%t first_index=%q first_repository=%q first_base=%q\n",
 				requests[i].URI, requests[i].Package, requests[i].Version, requests[i].Architecture, len(matches[i]), conflicts[i], first.IndexURI, first.RepoURI, first.BaseURI)
-			return nil, nil, errors.New("archive origin missing, conflicting or ambiguous")
+			return nil, nil, errors.New("archive origin missing or conflicting")
 		}
 		out = append(out, matches[i]...)
 	}
