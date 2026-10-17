@@ -28,6 +28,25 @@ keeps moving under the zone's acknowledgements: 11.613 m in 3.0 s, or about
 frame, and no refusal latches. The shrine, the HUD, the hints and the
 trial status line render as they do in a single-player boot.
 
+## Reference
+
+Judged against the character-motion anchor in
+[`docs/art-direction/`](../../art-direction/README.md):
+[Kingmakers — Official Announcement Trailer](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s),
+**1:06–1:10**. The cue judged is **camera tracking of a continuous third-person sprint**. Across
+the sprint, the follow camera keeps the runner readable and moves with it, without hiding the
+body. This change moves who places the body, not how it animates, so stride and pose are not
+judged here.
+
+- **Matches the reference at 0–2 s.** The follow camera tracks the sprint, and the
+  wanderer stays readable in the frame centre (`held-1s.png`, `held-2s.png`).
+- **Falls short at 3 s.** The predicted body walks into a pillar, so the camera ends up behind
+  the stone and the body is hidden (`held-3s.png`). This is gap 1 below.
+
+**Originality:** the trailer is a view-only reference. No frame or clip of it is in this
+repository, and only the locomotion and camera relationship is taken from it, per
+[`docs/design/originality-boundary.md`](../../design/originality-boundary.md).
+
 ## Remaining gaps
 
 These frames also show where predicted movement still falls short. The switch
