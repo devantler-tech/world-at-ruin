@@ -1,0 +1,46 @@
+name: Propose trusted runtime archives
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PROPOSE to build disposable archive evidence
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.1
+  GODOT_SHA512: 4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9
+
+jobs:
+  propose:
+    name: Disposable archive proposal
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require an explicit maintenance selection
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = PROPOSE
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Build disposable evidence and generate the proposal
+        run: bash tools/propose-trusted-runtime-archives.sh "$RUNNER_TEMP/trusted-runtime-archive-proposal"
+      - name: Upload review evidence only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trusted-runtime-archive-proposal-${{ github.sha }}
+          path: ${{ runner.temp }}/trusted-runtime-archive-proposal
+          if-no-files-found: error
+          retention-days: 7
