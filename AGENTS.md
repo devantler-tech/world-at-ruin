@@ -679,8 +679,16 @@ the permanent blocking policy.
   ADR 0026 — explicit immutable isolated-flat configuration, exact integer
   ground arithmetic and bounded speculative tick replay independent of sent
   sequence ownership; shared actual Go position goldens plus the native TLS
-  prediction scenario; no boot, connection or player-controller caller,
-  collision parity, rendered correction or production configuration discovery),
+  prediction scenario; no collision parity or production configuration discovery),
+  the **default-off predicted player body** (`WAR_PREDICTED_MOVEMENT=1`, which
+  also requires `WAR_ZONE_MOVEMENT=1`; `PredictedBody` steps the prediction at
+  30 Hz from the player's controls, interpolates it to the display rate, shows a
+  correction as an offset that decays over 100 ms and snaps once a correction or
+  the drawn error is wider than the 0.4 m capsule radius, holds still rather than
+  refusing when the zone is silent for the whole 120-tick replay window, keeps the
+  jump a render-only hop per #814, and hands the
+  body back to local physics on any refusal or lost connection; the demo zone's
+  settings are its fixture configuration; `predicted_body_test`, #812),
   the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
