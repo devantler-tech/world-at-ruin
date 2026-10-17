@@ -59,5 +59,5 @@ https://infocuria\.curia\.europa\.eu/
 # proves the corresponding archive downloads. Keep the exception limited to those identities;
 # concrete `pool/.../*.deb` archive URLs remain link-checked.
 https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/$
-https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/dists/(noble|noble-updates|noble-security)/$
-https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/dists/(noble|noble-updates|noble-security)/main/binary-amd64/Packages$
+https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/dists/(noble|noble-updates|noble-security|noble-backports)/$
+https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/dists/(noble|noble-updates|noble-security|noble-backports)/main/binary-amd64/Packages$

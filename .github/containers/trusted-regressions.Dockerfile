@@ -13,12 +13,16 @@ COPY observe-runtime-transaction.sh expected-packages.tsv expected-archives.json
 COPY --from=certificates /trusted-runtime-origin /trusted-runtime-archives /tmp/
 # Minimal Ubuntu has no CA store: preserve HTTPS and package signature checks.
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-# Every locked runtime dependency resolves from main. Restrict index acquisition
-# to that component while retaining the immutable snapshot and all package checks.
+# Every locked runtime dependency resolves from main. Rewrite both default Ubuntu
+# source stanzas to the dated snapshot and restrict index acquisition to that
+# component, so the complete authenticated target census is immutable too.
 # The snapshot service can fail intermittently: extend APT's default three
 # retries to six, bound each connection/data stall and reject incomplete indexes.
 # The reviewed runtime build/pull phase still owns the 900-second overall bound.
-RUN sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i \
+    -e 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/#' \
+    -e 's/^Components:.*/Components: main/' \
+    /etc/apt/sources.list.d/ubuntu.sources \
     && printf '%s\n' \
     'APT::Snapshot "20261003T000000Z";' \
     'Acquire::Retries "6";' \

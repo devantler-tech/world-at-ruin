@@ -327,7 +327,8 @@ func unquotedShellOccurrences(value, needle string) ([]int, error) {
 }
 
 func expectedRuntimeTransaction(snapshot string, arguments []string) string {
-	return "sed -i 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources" +
+	return "sed -i -e 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/" + snapshot + "/#'" +
+		" -e 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources" +
 		" && printf '%s\\n'" +
 		` 'APT::Snapshot "` + snapshot + `";'` +
 		` 'Acquire::Retries "6";'` +
