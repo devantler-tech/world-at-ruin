@@ -401,10 +401,6 @@ func start_hop() -> void:
 		_hop_velocity = JUMP_VELOCITY
 
 
-func hop_height() -> float:
-	return _hop_height
-
-
 ## Draw the body where the prediction says this frame: planar from the
 ## prediction, height from the ground under it plus the hop.
 func apply_predicted() -> void:
