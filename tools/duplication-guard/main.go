@@ -26,6 +26,12 @@ const adoptionRevision = "afd354c2987d92b89156d7bd96ddc34f7172bb8a"
 const scannerVersion = "cpd 5.0.16"
 const cleanupOwner = 276
 
+// A frozen reference is a historical copy kept byte-for-byte as a compatibility
+// oracle. Its text can never be shared, so editing the live file it was copied
+// from splits clones into new fragments without adding any duplicated text.
+const frozenReferencePrefix = "client/tests/historical/"
+const frozenReferenceReason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+
 // Hash of the generated catalog from the independently measured adoption tree.
 // Neither an absent base file nor the adoption SHA permits an invented baseline.
 const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e32ccb6d4889d7"
@@ -34,9 +40,16 @@ const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e3
 var formatData []byte
 
 type location struct {
-	Name  string `json:"name"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
+	Name     string    `json:"name"`
+	Start    int       `json:"start"`
+	End      int       `json:"end"`
+	StartLoc *position `json:"startLoc"`
+	EndLoc   *position `json:"endLoc"`
+}
+
+// position is the scanner's offset in UTF-16 code units, as JavaScript counts.
+type position struct {
+	Position *int `json:"position"`
 }
 
 type clone struct {
@@ -244,13 +257,18 @@ func generate(reportPath, configPath, catalogPath string) error {
 	entries := make(map[string]entry)
 	for _, copy := range *r.Duplicates {
 		e := identity(copy)
+		if _, known := previous[e.Key]; !known && len(previous) > 0 && frozenPair(e.Files) {
+			// A split of an existing frozen-reference clone is accepted by
+			// check's base proof, never by a new catalog entry.
+			continue
+		}
 		if existing, ok := entries[e.Key]; ok {
 			e.Occurrences = existing.Occurrences + 1
 		}
 		e.CleanupIssue = cleanupOwner
-		if strings.HasPrefix(e.Files[0], "client/tests/historical/") || strings.HasPrefix(e.Files[1], "client/tests/historical/") {
+		if frozenPair(e.Files) {
 			e.CleanupIssue = 0
-			e.Reason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+			e.Reason = frozenReferenceReason
 		} else if e.Format == "csv" && strings.HasPrefix(e.Files[0], "docs/evidence/") && strings.HasPrefix(e.Files[1], "docs/evidence/") {
 			e.CleanupIssue = 0
 			e.Reason = "Before/after measurement records preserve the original observations, including unchanged rows."
@@ -359,7 +377,17 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 		e := identity(copy)
 		observed[e.Key]++
 		if observed[e.Key] > accepted[e.Key].Occurrences {
-			return fmt.Errorf("unaccepted clone: %s:%d and %s:%d; share the code and regenerate the shrinking catalog", copy.First.Name, copy.First.Start, copy.Second.Name, copy.Second.Start)
+			shared := false
+			if basePath != "" {
+				if shared, err = sharedAtBase(copy, revision); err != nil {
+					return err
+				}
+			}
+			if !shared {
+				return fmt.Errorf("unaccepted clone: %s:%d and %s:%d; share the code and regenerate the shrinking catalog", copy.First.Name, copy.First.Start, copy.Second.Name, copy.Second.Start)
+			}
+			// Accepted by the base proof, not by this identity's catalog entry.
+			observed[e.Key]--
 		}
 	}
 	for key, e := range accepted {
@@ -369,6 +397,91 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 	}
 	fmt.Printf("DUPLICATION PASS: %d clones, %d duplicated lines; every identity and occurrence accepted, catalog only shrinks\n", len(*r.Duplicates), *r.Statistics.Total.DuplicatedLines)
 	return nil
+}
+
+// frozenPair reports whether either file of a clone pair is a frozen reference.
+func frozenPair(files [2]string) bool {
+	return strings.HasPrefix(files[0], frozenReferencePrefix) || strings.HasPrefix(files[1], frozenReferencePrefix)
+}
+
+// sharedAtBase proves that a clone between one live file and one frozen
+// reference repeats text both files already held at the base revision: the
+// reference is byte-identical to its base, and the exact duplicated span of the
+// live file occurs verbatim in that file's base. An edit inside such a clone
+// only splits it. Every other clone, and any proof that cannot be completed, is
+// not shared.
+func sharedAtBase(copy clone, revision string) (bool, error) {
+	first := strings.HasPrefix(copy.First.Name, frozenReferencePrefix)
+	second := strings.HasPrefix(copy.Second.Name, frozenReferencePrefix)
+	if first == second {
+		return false, nil
+	}
+	frozen, live, span := copy.First.Name, copy.Second.Name, copy.Second
+	if second {
+		frozen, live, span = live, frozen, copy.First
+	}
+	if span.StartLoc == nil || span.EndLoc == nil || span.StartLoc.Position == nil || span.EndLoc.Position == nil {
+		return false, nil
+	}
+	for _, name := range []string{frozen, live} {
+		if filepath.IsAbs(name) || filepath.ToSlash(filepath.Clean(name)) != name || strings.HasPrefix(name, "../") || strings.Contains(name, ":") {
+			return false, nil
+		}
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
+		return false, fmt.Errorf("invalid base revision for the frozen-reference proof")
+	}
+	baseFrozen, ok := atRevision(revision, frozen)
+	if !ok {
+		return false, nil
+	}
+	current, err := os.ReadFile(frozen)
+	if err != nil || !bytes.Equal(current, baseFrozen) {
+		return false, nil
+	}
+	baseLive, ok := atRevision(revision, live)
+	if !ok {
+		return false, nil
+	}
+	headLive, err := os.ReadFile(live)
+	if err != nil {
+		return false, nil
+	}
+	duplicated, ok := byteSpan(headLive, span)
+	if !ok {
+		return false, nil
+	}
+	return bytes.Contains(baseLive, duplicated), nil
+}
+
+// byteSpan returns the exact duplicated bytes of one clone side. The pinned
+// scanner reports positions as byte offsets; the offsets must land on the
+// reported start and end lines, so a misread offset refuses rather than
+// proving the wrong text.
+func byteSpan(data []byte, span location) ([]byte, bool) {
+	start, end := *span.StartLoc.Position, *span.EndLoc.Position
+	if start < 0 || end <= start || end > len(data) {
+		return nil, false
+	}
+	if bytes.Count(data[:start], []byte("\n"))+1 != span.Start || bytes.Count(data[:end], []byte("\n"))+1 != span.End {
+		return nil, false
+	}
+	out := data[start:end]
+	if !utf8.Valid(out) || len(bytes.TrimSpace(out)) == 0 {
+		return nil, false
+	}
+	return out, true
+}
+
+// atRevision reads one tracked file's bytes at a commit; absence is not an error.
+func atRevision(revision, name string) ([]byte, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, "git", "show", revision+":"+name).Output()
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // scan requires a fresh pinned report consistent with the independently staged sources.

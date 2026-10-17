@@ -17,33 +17,14 @@ import (
 func fixture(t *testing.T) (string, string, string, string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	config, err := os.ReadFile("../../.jscpd.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	put := func(name string, value any) string {
-		data, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, config, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	put := func(name string, value any) string { return putJSON(t, dir, name, value) }
+	configPath := copyConfig(t, dir)
 	location := func(name string, start int) map[string]any {
 		return map[string]any{"name": name, "start": start, "end": start + 6}
 	}
 	clone := map[string]any{"format": "go", "fragment": "func repeated() { return 123456 }", "lines": 7, "tokens": 55,
 		"firstFile": location("a.go", 1), "secondFile": location("b.go", 20)}
-	stats := map[string]any{"clones": 1, "sources": 2, "lines": 40, "tokens": 100, "duplicatedLines": 7, "duplicatedTokens": 55}
-	reportPath := put("report.json", map[string]any{"duplicates": []any{clone}, "statistics": map[string]any{
-		"detectionDate": "2026-10-11T00:00:00Z", "total": stats, "formats": map[string]any{"go": stats}}})
+	reportPath := putReport(t, dir, "report.json", []any{clone}, 40, 100, 7, 55)
 	catalogPath := filepath.Join(dir, "catalog.json")
 	if err := generate(reportPath, configPath, catalogPath); err != nil {
 		t.Fatal(err)
@@ -59,6 +40,52 @@ func fixture(t *testing.T) (string, string, string, string, string) {
 	ownerPath := put("owner.json", map[string]any{"number": 276, "state": "open"})
 	return reportPath, catalogPath, basePath, configPath, ownerPath
 }
+
+// putJSON writes one JSON fixture file into dir and returns its path.
+func putJSON(t *testing.T, dir, name string, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// copyConfig copies the repository's detection settings into dir.
+func copyConfig(t *testing.T, dir string) string {
+	t.Helper()
+	config, err := os.ReadFile(filepath.Join(guardDir, "../../.jscpd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// putReport writes a Go-only scanner report whose statistics agree with its clones.
+func putReport(t *testing.T, dir, name string, clones []any, lines, tokens, duplicatedLines, duplicatedTokens int) string {
+	t.Helper()
+	stats := map[string]any{"clones": len(clones), "sources": 2, "lines": lines, "tokens": tokens,
+		"duplicatedLines": duplicatedLines, "duplicatedTokens": duplicatedTokens}
+	return putJSON(t, dir, name, map[string]any{"duplicates": clones, "statistics": map[string]any{
+		"detectionDate": "2026-10-11T00:00:00Z", "total": stats, "formats": map[string]any{"go": stats}}})
+}
+
+// guardDir is this test's own directory, captured before any test changes directory.
+var guardDir = func() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	return dir
+}()
 
 // alter changes one fixture's JSON without duplicating the checker implementation.
 func alter(t *testing.T, path string, change func(map[string]any)) {
@@ -352,6 +379,113 @@ func TestIndependentSourceInventory(t *testing.T) {
 			if test.want == "" && counts["go"] != 2 {
 				t.Fatalf("incomplete inventory: %v", counts)
 			}
+		})
+	}
+}
+
+// frozenSide is one side of a reported clone: the file, its head bytes and the duplicated text.
+type frozenSide struct {
+	name string
+	data string
+	text string
+}
+
+// frozenRepo commits base files in a throwaway repository and returns its revision.
+func frozenRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	for name, data := range files {
+		if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "--quiet"}, {"add", "."},
+		{"-c", "commit.gpgsign=false", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "base"}} {
+		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("fixture Git: %v %s", err, output)
+		}
+	}
+	revision, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(revision))
+}
+
+// frozenReport writes head files and a one-clone report whose positions are the
+// scanner's byte offsets of each side's duplicated text, plus empty catalogs.
+func frozenReport(t *testing.T, first, second frozenSide, shift int) (string, string, string, string, string) {
+	t.Helper()
+	side := func(s frozenSide) map[string]any {
+		if err := os.WriteFile(s.name, []byte(s.data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		start := strings.Index(s.data, s.text)
+		if start < 0 {
+			t.Fatalf("fixture text missing from %s", s.name)
+		}
+		end := start + len(s.text)
+		return map[string]any{"name": s.name,
+			"start": strings.Count(s.data[:start], "\n") + 1, "end": strings.Count(s.data[:end], "\n") + 1,
+			"startLoc": map[string]any{"position": start + shift}, "endLoc": map[string]any{"position": end + shift}}
+	}
+	dir := t.TempDir()
+	configPath := copyConfig(t, dir)
+	// Both catalogs are empty, so only the base proof can accept the clone.
+	empty := putReport(t, dir, "empty.json", []any{}, 6, 12, 0, 0)
+	catalogPath, basePath := filepath.Join(dir, "catalog.json"), filepath.Join(dir, "base.json")
+	for _, path := range []string{catalogPath, basePath} {
+		if err := generate(empty, configPath, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clone := map[string]any{"format": "go", "fragment": first.text, "lines": 2, "tokens": 6, "firstFile": side(first), "secondFile": side(second)}
+	reportPath := putReport(t, dir, "report.json", []any{clone}, 6, 12, 2, 6)
+	return reportPath, catalogPath, basePath, configPath, putJSON(t, dir, "owner.json", map[string]any{"number": 276, "state": "open"})
+}
+
+// TestFrozenReferenceSplitNeedsABaseProof accepts an uncatalogued clone between a
+// live file and a frozen reference only when both already held its text at the base.
+func TestFrozenReferenceSplitNeedsABaseProof(t *testing.T) {
+	const live, frozen, other = "client/scripts/live.go", "client/tests/historical/frozen.go", "client/scripts/other.go"
+	const body = "alpha := 1\nbeta := 2\ngamma := 3\n"
+	const pair = "alpha := 1\nbeta := 2"
+	cases := []struct {
+		name, want    string
+		base          map[string]string
+		first, second frozenSide
+		shift         int
+	}{
+		{name: "unchanged text is proven",
+			base:  map[string]string{live: body, frozen: body},
+			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body, pair}},
+		{name: "an edit elsewhere in the live file only moves the proven text",
+			base:  map[string]string{live: body, frozen: body},
+			first: frozenSide{live, "inserted := 0\n" + body, pair}, second: frozenSide{frozen, body, pair}},
+		{name: "the frozen side may be reported first",
+			base:  map[string]string{live: body, frozen: body},
+			first: frozenSide{frozen, body, pair}, second: frozenSide{live, "inserted := 0\n" + body, pair}},
+		{name: "text newly copied from the reference is refused", want: "unaccepted clone",
+			base:  map[string]string{live: "alpha := 1\n", frozen: body},
+			first: frozenSide{live, "alpha := 1\nbeta := 2\n", pair}, second: frozenSide{frozen, body, pair}},
+		{name: "an edited reference is refused", want: "unaccepted clone",
+			base:  map[string]string{live: body, frozen: body},
+			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body + "delta := 4\n", pair}},
+		{name: "two ordinary files are refused", want: "unaccepted clone",
+			base:  map[string]string{live: body, other: body},
+			first: frozenSide{live, body, pair}, second: frozenSide{other, body, pair}},
+		{name: "offsets that miss their reported lines are refused", want: "unaccepted clone", shift: 11,
+			base:  map[string]string{live: body, frozen: body},
+			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body, pair}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			revision := frozenRepo(t, test.base)
+			r, c, b, s, o := frozenReport(t, test.first, test.second, test.shift)
+			expectResult(t, test.want, check(r, c, b, s, o, revision))
 		})
 	}
 }
