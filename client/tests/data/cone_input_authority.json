@@ -1,0 +1,71 @@
+{
+  "_comment": "Shared cone input authority vectors (ADR 0059, #1447). For each raw cone input, wire_valid says whether BOTH wire codecs accept it and the client cast factory builds it; canonical_* is what the server's ConeTelegraph stores for it, which both codecs and the client factory must accept. Lengths are millimetres; the client divides by 1000 to get metres.",
+  "cos_scale": 1000000,
+  "range_mm": 3000,
+  "cases": [
+    {
+      "name": "forward_wedge",
+      "facing_mm": { "x": 0, "y": 0, "z": -1000 },
+      "cos_half_scaled": 707107,
+      "wire_valid": true,
+      "canonical_facing_mm": { "x": 0, "y": 0, "z": -1000 },
+      "canonical_cos_half_scaled": 707107
+    },
+    {
+      "name": "threshold_at_upper_bound",
+      "facing_mm": { "x": 4, "y": 0, "z": -3 },
+      "cos_half_scaled": 1000000,
+      "wire_valid": true,
+      "canonical_facing_mm": { "x": 4, "y": 0, "z": -3 },
+      "canonical_cos_half_scaled": 1000000
+    },
+    {
+      "name": "threshold_at_lower_bound",
+      "facing_mm": { "x": 4, "y": 0, "z": -3 },
+      "cos_half_scaled": -1000000,
+      "wire_valid": true,
+      "canonical_facing_mm": { "x": 4, "y": 0, "z": -3 },
+      "canonical_cos_half_scaled": -1000000
+    },
+    {
+      "name": "smallest_planar_facing",
+      "facing_mm": { "x": 1, "y": 0, "z": 0 },
+      "cos_half_scaled": 500000,
+      "wire_valid": true,
+      "canonical_facing_mm": { "x": 1, "y": 0, "z": 0 },
+      "canonical_cos_half_scaled": 500000
+    },
+    {
+      "name": "threshold_above_scale",
+      "facing_mm": { "x": 0, "y": 0, "z": -1000 },
+      "cos_half_scaled": 1000001,
+      "wire_valid": false,
+      "canonical_facing_mm": { "x": 0, "y": 0, "z": -1000 },
+      "canonical_cos_half_scaled": 1000000
+    },
+    {
+      "name": "threshold_below_scale",
+      "facing_mm": { "x": 0, "y": 0, "z": -1000 },
+      "cos_half_scaled": -1000001,
+      "wire_valid": false,
+      "canonical_facing_mm": { "x": 0, "y": 0, "z": -1000 },
+      "canonical_cos_half_scaled": -1000000
+    },
+    {
+      "name": "zero_facing",
+      "facing_mm": { "x": 0, "y": 0, "z": 0 },
+      "cos_half_scaled": 707107,
+      "wire_valid": false,
+      "canonical_facing_mm": { "x": 0, "y": 0, "z": -1 },
+      "canonical_cos_half_scaled": 707107
+    },
+    {
+      "name": "vertical_only_facing",
+      "facing_mm": { "x": 0, "y": 500, "z": 0 },
+      "cos_half_scaled": 707107,
+      "wire_valid": false,
+      "canonical_facing_mm": { "x": 0, "y": 0, "z": -1 },
+      "canonical_cos_half_scaled": 707107
+    }
+  ]
+}

@@ -300,7 +300,9 @@ static func _validate_cast_shape(cast: Dictionary) -> Dictionary:
 			if not facing_zero or not outer_valid or inner < 0 or inner > MAX_TELEGRAPH_EXTENT_MM or inverted_positive_ring or noncanonical_degenerate_ring or half_width != 0 or cos_half != 0:
 				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical ring"}
 		SHAPE_CONE:
-			if not outer_valid or inner != 0 or half_width != 0 or not _within_symmetric_limit(cos_half, COS_SCALE):
+			# A cone carries a real planar heading; the server stores its
+			# world-forward fallback before sending (ADR 0059).
+			if facing_zero or not outer_valid or inner != 0 or half_width != 0 or not _within_symmetric_limit(cos_half, COS_SCALE):
 				return {"error": ERR_CAST_SHAPE, "detail": "non-canonical cone"}
 		SHAPE_RECT:
 			if not outer_valid or inner != 0 or not _within_symmetric_limit(half_width, MAX_TELEGRAPH_EXTENT_MM) or cos_half != 0:
