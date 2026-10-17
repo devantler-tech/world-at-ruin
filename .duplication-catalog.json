@@ -533,17 +533,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "3262eec0d4926b28df11427ea41acb01602739d8c90721149d503b8894be6ade",
-      "format": "gdscript",
-      "files": [
-        "client/scripts/character_factory.gd",
-        "client/tests/historical/character_factory_v4.gd"
-      ],
-      "fragmentSHA256": "8d882304dda61e523fe26f428c281854244e8e514480bcc3bb44467ecf09579b",
-      "occurrences": 1,
-      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
-    },
-    {
       "identitySHA256": "355f34995dd5355208489249af0da3ded9e872129b3a9a772f486fee924feaf9",
       "format": "gdscript",
       "files": [
@@ -731,17 +720,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "5663047283bf3434c49f53f779b08c7b9056011d357a32ba05764b75c16833c8",
-      "format": "gdscript",
-      "files": [
-        "client/scripts/character_factory.gd",
-        "client/tests/historical/character_factory_v4.gd"
-      ],
-      "fragmentSHA256": "526a129f68d6f1980b1c6aa97067de9779e207b8e58547315316a0e5fb19b6f2",
-      "occurrences": 1,
-      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
-    },
-    {
       "identitySHA256": "5801dcf2ee63abbf2ec1acb96edae3d7316207a1ad2fd27dcb5027f062162f23",
       "format": "go",
       "files": [
@@ -773,17 +751,6 @@
       "fragmentSHA256": "8055a5bde12593d4b7984d7f685ff049a41270c89dcb508a47bb9cab6a36dde9",
       "occurrences": 2,
       "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "5fab64cc3eca381d5614d83b2d63eed9ac1ba031e705eee1ef90a707f9451233",
-      "format": "gdscript",
-      "files": [
-        "client/scripts/character_factory.gd",
-        "client/tests/historical/character_factory_v4.gd"
-      ],
-      "fragmentSHA256": "8d89417a0faca113327d700a1a70e2a6b3ce0bbd26f7415f43a8d8c0011da52a",
-      "occurrences": 1,
-      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
     },
     {
       "identitySHA256": "6180e568cd94394b49f0dbcbf97ce181c919015af5729c04b57dfb69b752df50",
@@ -1059,17 +1026,6 @@
       "fragmentSHA256": "b3d65fea021563e26dca02191e9666e022c2446a9efdfd4474495f8e9f99ce41",
       "occurrences": 1,
       "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "87d6a4e565ea455b04f897589bfda4d722b2614fcabfbae9c5976414c9803372",
-      "format": "gdscript",
-      "files": [
-        "client/scripts/character_factory.gd",
-        "client/tests/historical/character_factory_v4.gd"
-      ],
-      "fragmentSHA256": "7fafba608fb84117805571280a22c12712234bb6c53f0c46606cda09d55a58ed",
-      "occurrences": 1,
-      "reason": "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
     },
     {
       "identitySHA256": "87feadea0baf11156eb278f724196bc1d646ddee35e9eeaf93477fc06958855c",
