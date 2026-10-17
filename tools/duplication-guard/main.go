@@ -257,10 +257,12 @@ func generate(reportPath, configPath, catalogPath string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("existing catalog annotations: %w", err)
 	}
+	// A catalog that loaded, even with no entries, makes this an update.
+	update := err == nil
 	entries := make(map[string]entry)
 	for _, copy := range *r.Duplicates {
 		e := identity(copy)
-		if _, known := previous[e.Key]; !known && len(previous) > 0 && frozenPair(e.Files) {
+		if _, known := previous[e.Key]; !known && update && frozenPair(e.Files) {
 			// A split of an existing frozen-reference clone is accepted by
 			// check's base proof, never by a new catalog entry.
 			continue

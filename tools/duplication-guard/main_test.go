@@ -495,3 +495,24 @@ func TestFrozenReferenceSplitNeedsABaseProof(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerationKeepsAnEmptyCatalogAnUpdate refuses to catalog a frozen-reference
+// split when the prior catalog exists but holds no entries: an empty catalog is
+// still an update, so only check's base proof may accept the split.
+func TestGenerationKeepsAnEmptyCatalogAnUpdate(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const live, frozen = "client/scripts/live.go", "client/tests/historical/frozen.go"
+	const body = "alpha := 1\nbeta := 2\ngamma := 3\n"
+	const pair = "alpha := 1\nbeta := 2"
+	r, c, _, s, _ := frozenReport(t, frozenSide{live, body, pair}, frozenSide{frozen, body, pair}, 0)
+	if err := generate(r, s, c); err != nil {
+		t.Fatal(err)
+	}
+	value, _, err := readCatalog(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Entries) != 0 {
+		t.Fatalf("an empty prior catalog was treated as a first generation: %d new entries", len(value.Entries))
+	}
+}
