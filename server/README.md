@@ -571,8 +571,9 @@ the allocator-generation fence supervisor of
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 production composition of the private zone claim endpoint and fenced session-end recovery,
 the client entry point that enables Google account
-provisioning, the party and chat half of the Nakama social surface, client
-prediction and reconciliation in the player controller, real navmesh geometry, and Postgres/CNPG
+provisioning, the party and chat half of the Nakama social surface, default-on
+client prediction (running ahead by the round trip, collision parity and the
+zone's movement settings on the wire), real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope, and the concrete resource adapter validates, unwraps and recovers it;
 the fence, private claim listener composition and platform deployment of the

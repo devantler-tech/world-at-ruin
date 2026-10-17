@@ -107,6 +107,9 @@ var _predicted_was_moving := false
 ## Whether a refused prediction has been reported; the body falls back to local
 ## physics either way.
 var _predicted_fault_reported := false
+## One acceptance marker per session once the prediction first drives the body,
+## like the zone trial's own markers: an open socket alone proves nothing here.
+var _predicted_active_reported := false
 ## Draws the replicated entity table (#248), or null when no zone was named.
 ## Parented under THIS node and never under WorldGen: that subtree is
 ## fingerprinted by `world_gen_determinism_test` and additionally scanned for
@@ -762,6 +765,9 @@ func _advance_predicted(delta: float) -> void:
 			_predicted.reset()
 		return
 	_predicted.advance(_zone.movement_state(), _zone.take_sent_movement(), delta)
+	if _predicted.is_active() and not _predicted_active_reported:
+		_predicted_active_reported = true
+		print("PREDICTED_MOVEMENT_ACTIVE — the zone's own acknowledgement now places the wanderer")
 	if not _predicted.fault().is_empty() and not _predicted_fault_reported:
 		_predicted_fault_reported = true
 		push_warning("predicted movement refused (%s); local movement resumes" % _predicted.fault())
