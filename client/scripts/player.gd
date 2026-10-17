@@ -79,6 +79,16 @@ var _jumped := false
 var _step_stride_speed := 0.0
 var _step_stride_direction := Vector3.ZERO
 
+## Set by main.gd under WAR_PREDICTED_MOVEMENT (#812). While it is active the
+## zone's integer step owns the planar position and this body only follows it;
+## null, or a prediction that refused, keeps the local physics below.
+var predicted: PredictedBody = null
+## The render-only hop (#814): height and vertical speed above the ground the
+## prediction is drawn on. It never feeds the prediction, so a jump cannot move
+## the reconciled planar position.
+var _hop_height := 0.0
+var _hop_velocity := 0.0
+
 var _cam_yaw: Node3D
 var _spring: SpringArm3D
 var _camera: Camera3D
@@ -287,6 +297,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _physics_process(delta: float) -> void:
+	if is_predicted():
+		_predicted_physics(delta)
+		return
 	if is_on_floor() and velocity.y <= 0.0:
 		_jumped = false
 	if not is_on_floor():
@@ -358,6 +371,71 @@ func _physics_process(delta: float) -> void:
 
 	if global_position.y < FALL_LIMIT_Y:
 		respawn()
+
+## Whether the zone prediction drives this body this frame (#812).
+func is_predicted() -> bool:
+	return predicted != null and predicted.is_active()
+
+
+## The planar direction the controls ask for, camera-relative in world X/Z and
+## at most unit length — what the zone receives as a movement intent.
+func planar_intent() -> Vector2:
+	if not control_enabled or _cam_yaw == null:
+		return Vector2.ZERO
+	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var basis := _cam_yaw.global_transform.basis
+	var wish := basis.x * input_dir.x + basis.z * input_dir.y
+	var planar := Vector2(wish.x, wish.z)
+	if planar.length_squared() < 0.000001:
+		return Vector2.ZERO
+	return planar.normalized() * minf(input_dir.length(), 1.0)
+
+
+func sprint_intent() -> bool:
+	return control_enabled and Input.is_action_pressed("sprint")
+
+
+## Start the render-only hop when standing; a hop in the air is ignored.
+func start_hop() -> void:
+	if _hop_height <= 0.0 and _hop_velocity <= 0.0:
+		_hop_velocity = JUMP_VELOCITY
+
+
+func hop_height() -> float:
+	return _hop_height
+
+
+## Draw the body where the prediction says this frame: planar from the
+## prediction, height from the ground under it plus the hop.
+func apply_predicted() -> void:
+	if not is_predicted():
+		return
+	var at := predicted.display_position()
+	var ground := at.y
+	if ground_height_provider.is_valid():
+		ground = float(ground_height_provider.call(at.x, at.z))
+	global_position = Vector3(at.x, ground + _hop_height, at.z)
+
+
+## The predicted-mode tick: no slide, no gravity on the body, only the hop and
+## the presentation that follows the predicted travel.
+func _predicted_physics(delta: float) -> void:
+	velocity = Vector3.ZERO
+	if control_enabled and Input.is_action_just_pressed("jump"):
+		start_hop()
+	if _hop_height > 0.0 or _hop_velocity > 0.0:
+		_hop_velocity = maxf(_hop_velocity - GRAVITY * delta, -MAX_FALL_SPEED)
+		_hop_height = maxf(_hop_height + _hop_velocity * delta, 0.0)
+		if _hop_height <= 0.0:
+			_hop_velocity = 0.0
+	var travel := predicted.planar_velocity()
+	var sprinting := sprint_intent() and travel.length() > 0.1
+	if _walk_locomotion != null:
+		_walk_locomotion.advance_motion(travel.length(), _hop_height <= 0.0, sprinting, delta, _hop_velocity)
+	if travel.length() > 0.5:
+		_visual.rotation.y = lerp_angle(_visual.rotation.y, atan2(-travel.x, -travel.y), 10.0 * delta)
+	_camera.fov = lerpf(_camera.fov, 78.0 if sprinting else 70.0, 6.0 * delta)
+
 
 ## Climb ledges up to `height` metres in stride; 0 turns stepping off.
 func enable_step(height: float) -> void:

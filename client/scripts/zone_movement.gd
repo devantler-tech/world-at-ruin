@@ -15,6 +15,8 @@ var _last_send := -INTERVAL_USEC
 var _last_clock := -1
 var _blocked_since := -1
 var _own: Dictionary = {}
+## Successfully written samples, oldest first, until a predictor takes them.
+var _sent: Array[Dictionary] = []
 
 
 func queue(direction: Vector2, sprint: bool) -> bool:
@@ -60,6 +62,11 @@ func pump(transport: Object, now_usec: int) -> Dictionary:
 		return _refuse("movement_write", "binary movement write failed")
 	_sequence = next
 	_pending.append({"sequence": next, "sent_at": now_usec})
+	# Bounded like pending ownership. An untaken overflow drops the oldest, so a
+	# predictor that takes the log later sees a sequence gap and refuses.
+	if _sent.size() >= MAX_PENDING:
+		_sent.pop_front()
+	_sent.append({"sequence": next, "sample": _sample.duplicate(true)})
 	_last_send = now_usec
 	_blocked_since = -1
 	_sample = {}
@@ -87,6 +94,14 @@ func own_state() -> Dictionary:
 
 func pending_count() -> int:
 	return _pending.size()
+
+
+## Every sample written since the last call, in sequence order. Only written
+## samples appear, so a caller may record each as sent (ADR 0026).
+func take_sent() -> Array[Dictionary]:
+	var taken := _sent.duplicate(true)
+	_sent.clear()
+	return taken
 
 
 func _blocked(now_usec: int) -> Dictionary:

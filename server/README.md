@@ -163,7 +163,9 @@ zone/dungeon server:
   replay. Explicit speed, bounds and hold settings are required; v3 does not
   distribute them or attest when a sample reached its mailbox. Shared Go/Godot
   position vectors and the required native TLS prediction scenario exercise
-  this boundary. Player controls, collision prediction, rendering and live
+  this boundary. With `WAR_PREDICTED_MOVEMENT=1` as well, the player's controls
+  produce the intents and the body follows the prediction, using the demo
+  zone's settings as fixture configuration. Collision prediction and live
   configuration remain separate work. See [ADR 0026](../docs/adr/0026-keep-client-ground-prediction-explicit.md).
 - **Zone shutdown** — after the simulation loop stops, the command closes HTTP
   ingress, calls `Hub.Shutdown` with a five-second budget, then notifies Agones.

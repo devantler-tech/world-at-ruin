@@ -98,6 +98,15 @@ var _zone_was_live := false
 var _zone_trial_live_reported := false
 var _zone_trial_visible_reported := false
 var _zone_trial_first_tick := -1
+## The player's predicted planar motion (#812), or null unless both
+## WAR_ZONE_MOVEMENT and WAR_PREDICTED_MOVEMENT are on and a zone was named.
+var _predicted: PredictedBody = null
+## Whether the last intent the controls queued asked for movement, so releasing
+## the controls queues exactly one stop instead of an idle stream.
+var _predicted_was_moving := false
+## Whether a refused prediction has been reported; the body falls back to local
+## physics either way.
+var _predicted_fault_reported := false
 ## Draws the replicated entity table (#248), or null when no zone was named.
 ## Parented under THIS node and never under WorldGen: that subtree is
 ## fingerprinted by `world_gen_determinism_test` and additionally scanned for
@@ -619,6 +628,13 @@ func _connect_zone() -> void:
 	if _zone != null or not ZoneConnection.is_enabled():
 		return
 	_zone = ZoneConnection.new()
+	if PredictedBody.is_enabled():
+		_predicted = PredictedBody.new()
+		if _predicted.configure():
+			_player.predicted = _predicted
+		else:
+			push_warning("predicted movement refused its configuration (%s)" % _predicted.fault())
+			_predicted = null
 	_zone_trial_live_reported = false
 	_zone_trial_visible_reported = false
 	_zone_trial_first_tick = -1
@@ -694,7 +710,9 @@ func _process(delta: float) -> void:
 		_mastery_persistence.tick(delta)
 	if _zone == null:
 		return
+	_queue_predicted_intent()
 	_zone.poll()
+	_advance_predicted(delta)
 	# Draw whatever the poll just folded. Done before the failure reporting
 	# below so a stream that dies mid-frame still shows the last consistent
 	# table it delivered — the fold is atomic, so that table is never a
@@ -717,6 +735,37 @@ func _process(delta: float) -> void:
 		# with nothing anywhere to say why.
 		_zone_failure_reported = true
 		push_warning("zone connection closed by the zone — replication has stopped for this session")
+
+
+## Hand the controls' intent to the zone while prediction drives the body
+## (#812). Nothing is queued before the first own ACK anchors the prediction,
+## so every sequence the zone acknowledges is one the predictor recorded.
+func _queue_predicted_intent() -> void:
+	if _predicted == null or not _predicted.is_active():
+		_predicted_was_moving = false
+		return
+	var intent := _player.planar_intent()
+	var moving := intent != Vector2.ZERO
+	if moving or _predicted_was_moving:
+		if _zone.queue_movement(intent, _player.sprint_intent()):
+			_predicted_was_moving = moving
+
+
+## Fold the poll's ACK and writes into the prediction and place the body. A
+## connection that stopped carrying the world, or a refused prediction, hands
+## the body back to local physics where it stands.
+func _advance_predicted(delta: float) -> void:
+	if _predicted == null:
+		return
+	if not _zone.is_live():
+		if _predicted.is_active():
+			_predicted.reset()
+		return
+	_predicted.advance(_zone.movement_state(), _zone.take_sent_movement(), delta)
+	if not _predicted.fault().is_empty() and not _predicted_fault_reported:
+		_predicted_fault_reported = true
+		push_warning("predicted movement refused (%s); local movement resumes" % _predicted.fault())
+	_player.apply_predicted()
 
 
 ## Fold this frame's player position into the append-only discovery and reward
