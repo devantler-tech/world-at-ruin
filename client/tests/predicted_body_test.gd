@@ -26,6 +26,7 @@ func _ready() -> void:
 	_test_sent_log()
 	_test_corrections()
 	_test_refusals()
+	_test_silence_hitch_and_drawn_error()
 	_test_hop_leaves_planar_prediction()
 	_test_inactive_prediction_keeps_local_physics()
 	TestEnvironment.restore(env)
@@ -48,14 +49,22 @@ func _test_switch() -> void:
 
 
 func _test_sent_log() -> void:
+	# The bare sender, not the connection: a failed write also fails the
+	# connection, which discards its sender, so only this proves the log itself
+	# records nothing the transport refused (ADR 0026).
+	var refusing: Movement.Transport = Movement.Transport.new()
+	refusing.write_result = FAILED
+	var sender := ZoneMovement.new()
+	sender.queue(Vector2.RIGHT, true)
+	var refused := sender.pump(refusing, 0)
+	_check(refused.get("error") == "movement_write" and sender.take_sent().is_empty(), "a failed write was logged as sent")
+	var accepting: Movement.Transport = Movement.Transport.new()
+	var written := ZoneMovement.new()
+	written.queue(Vector2.RIGHT, true)
+	written.pump(accepting, 0)
+	_check(written.take_sent().size() == 1, "a successful write was not logged")
 	var transport: Movement.Transport = Movement.Transport.new()
 	var connection := _live(transport)
-	transport.write_result = FAILED
-	connection.queue_movement(Vector2.RIGHT, true)
-	connection.poll(0)
-	_check(connection.take_sent_movement().is_empty(), "a failed write was logged as sent")
-	transport = Movement.Transport.new()
-	connection = _live(transport)
 	connection.queue_movement(Vector2.RIGHT, true)
 	connection.poll(0)
 	var sent := connection.take_sent_movement()
@@ -150,6 +159,41 @@ func _test_refusals() -> void:
 	_check(not reset.is_active(), "reset kept the anchor")
 	reset.advance({"applied_sequence": 0, "tick": 7, "x": 5, "y": 0, "z": 0}, [], 0.0)
 	_check(reset.is_active() and _mm(reset.predicted_position().x) == 5, "reset could not re-anchor")
+
+
+## Long ACK silence holds the prediction instead of latching a refusal; a hitch
+## steps a bounded number of ticks; small corrections that pile up past the
+## capsule radius snap like one large correction.
+func _test_silence_hitch_and_drawn_error() -> void:
+	var quiet := PredictedBody.new()
+	quiet.configure()
+	quiet.advance(_own(0, 1, 0), [], 0.0)
+	var predictor: PredictedMovement = quiet.get("_predictor")
+	quiet.advance(_own(0, 1, 0), [], 1.0)
+	_check(predictor.state()["tick"] == 1 + PredictedBody.MAX_STEPS_PER_FRAME, "a hitch stepped an unbounded backlog")
+	for _frame: int in range(80):
+		quiet.advance(_own(0, 1, 0), [], 0.1)
+	_check(quiet.is_active() and quiet.fault().is_empty() and predictor.history_count() == PredictedMovement.MAX_HISTORY,
+		"eight silent seconds latched a refusal: '%s'" % quiet.fault())
+	quiet.advance(_own(0, 400, 500), [], 0.0)
+	_check(quiet.is_active() and _mm(quiet.predicted_position().x) == 500 and predictor.state()["tick"] >= 400,
+		"the first ACK after silence did not catch the prediction up: %s %s" % [quiet.fault(), predictor.state()])
+
+	var drifting := PredictedBody.new()
+	drifting.configure()
+	drifting.advance(_own(0, 1, 0), [], 0.0)
+	drifting.advance(_own(0, 1, 0), [{"sequence": 1, "sample": {"x": 1000, "z": 0, "sprint": true}}], STEP * 4)
+	var at := _mm(drifting.predicted_position().x)
+	drifting.advance(_own(1, 5, at - 150), [], 0.0)
+	drifting.advance(_own(1, 6, at - 300), [], 0.0)
+	_check(drifting.snap_count() == 0 and is_equal_approx(drifting.correction_offset().x, 0.3), "two small corrections did not add up")
+	drifting.advance(_own(1, 7, at - 450), [], 0.0)
+	_check(drifting.snap_count() == 1 and drifting.correction_offset() == Vector3.ZERO,
+		"a drawn error wider than the body did not snap")
+
+
+static func _own(sequence: int, tick: int, x: int) -> Dictionary:
+	return {"applied_sequence": sequence, "tick": tick, "x": x, "y": 0, "z": 0}
 
 
 ## A hop in the middle of a correction leaves the planar result identical (#814).

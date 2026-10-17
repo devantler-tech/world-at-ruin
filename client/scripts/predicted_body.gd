@@ -90,6 +90,12 @@ func advance(ack: Dictionary, sent: Array[Dictionary], delta: float) -> void:
 		if steps == MAX_STEPS_PER_FRAME:
 			_accumulator = fmod(_accumulator, STEP_SEC)
 			break
+		if _predictor.history_count() >= PredictedMovement.MAX_HISTORY:
+			# The zone has been silent for the whole replay window. Hold the
+			# prediction where it is; the next ACK catches it up, while stepping
+			# on would latch a history refusal for the rest of the connection.
+			_accumulator = minf(_accumulator, STEP_SEC)
+			break
 		var stepped := _predictor.step_tick()
 		if not stepped["ok"]:
 			_refuse(stepped)
@@ -166,14 +172,16 @@ func _fold(ack: Dictionary) -> bool:
 	# two predicted ticks of the same history.
 	_previous += shift
 	_current = _metres(reconciled["state"])
+	# Keep the body where it was drawn and let the difference decay — unless
+	# this correction, or the drawn error it adds to, is wider than the body.
+	var drawn_error := correction_offset() - shift
 	var planar_mm := Vector2(correction["x"], correction["z"]).length()
-	if planar_mm > SNAP_MM:
+	if planar_mm > SNAP_MM or Vector2(drawn_error.x, drawn_error.z).length() * MM_PER_M > SNAP_MM:
 		_snaps += 1
 		_offset_start = Vector3.ZERO
 		_offset_age = CORRECTION_DECAY_SEC
 	elif shift != Vector3.ZERO:
-		# Keep the body where it was drawn and let the difference decay.
-		_offset_start = correction_offset() - shift
+		_offset_start = drawn_error
 		_offset_age = 0.0
 	return true
 
