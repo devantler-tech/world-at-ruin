@@ -47,7 +47,10 @@ type location struct {
 	EndLoc   *position `json:"endLoc"`
 }
 
-// position is the scanner's offset in UTF-16 code units, as JavaScript counts.
+// revisionPattern is a full commit name, the only base the frozen-reference proof reads.
+var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// position is the scanner's byte offset of one end of a clone side.
 type position struct {
 	Position *int `json:"position"`
 }
@@ -428,7 +431,7 @@ func sharedAtBase(copy clone, revision string) (bool, error) {
 			return false, nil
 		}
 	}
-	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
+	if !revisionPattern.MatchString(revision) {
 		return false, fmt.Errorf("invalid base revision for the frozen-reference proof")
 	}
 	baseFrozen, ok := atRevision(revision, frozen)
