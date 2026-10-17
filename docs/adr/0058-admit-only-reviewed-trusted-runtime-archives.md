@@ -19,6 +19,12 @@ authenticated target census, including targets that supplied no archive, and
 requires every archive origin to join that reviewed census. The source report
 digest and resulting image ID remain review evidence in the lock.
 
+Both Ubuntu source stanzas resolve directly through the dated snapshot URL, so
+the target census contains only immutable snapshot indexes. The recipe derives
+the snapshot identity from that source rewrite rather than also enabling APT's
+separate snapshot selector, whose combination with an already dated URL makes
+the fetched indexes unavailable to package resolution.
+
 Every cold build now downloads into its invocation-private cache, validates the
 archives and authenticated origins, and compares the complete observation with
 the reviewed lock before package scripts can run. The same arguments and cache

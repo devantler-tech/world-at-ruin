@@ -5,15 +5,16 @@ Every Linux cold build enforces
 package scripts. The lock fixes all 55 archives selected by the current Ubuntu
 snapshot: package/version/architecture, basename, requested URI, byte count,
 SHA-256 and every matching trusted Packages/InRelease origin. It also binds the
-complete eight-target authenticated APT census, including targets that supplied
+complete four-target authenticated APT census, including targets that supplied
 no selected archive, plus the runtime manifest, snapshot, ten direct arguments
 and exact base/package lock bytes. Normal and diagnostic builds enforce this
 lock. A separately selected, disposable maintenance build can produce evidence
 for a replacement after an intentional snapshot or pin change; it cannot admit
 a runtime or update the repository.
 
-The first lock was derived from the complete report emitted by successful CI run
-[38911091987, job 117006833815](https://github.com/devantler-tech/world-at-ruin/actions/runs/38911091987/job/117006833815).
+The current lock was derived from the complete snapshot-only report emitted by
+successful CI run
+[39072863047, job 117513902055](https://github.com/devantler-tech/world-at-ruin/actions/runs/39072863047/job/117513902055).
 The committed source-report digest and image ID let a reviewer match the proposed
 lock to those retained job logs. They do not make the report an authority.
 

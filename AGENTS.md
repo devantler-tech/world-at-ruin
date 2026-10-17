@@ -408,7 +408,10 @@ Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
 selection. Keep the exact base, snapshot and direct-pin joins, full successful
 dpkg observation, phase bounds and native changed-expectation refusal. Update
-both through their generators, never by hand; run the package and archive Go
+both Ubuntu source stanzas through the dated snapshot URL and derive the
+snapshot identity from that rewrite; do not combine it with APT's separate
+snapshot selector. Regenerate both locks through their generators, never by
+hand; run the package and archive Go
 tests plus `bash tools/trusted-runtime-packages.test.sh` and
 `bash tools/trusted-runtime-transaction.test.sh`. The archive lock fixes the
 complete package tuple/basename/URI/size/SHA-256/trusted-origin set before
