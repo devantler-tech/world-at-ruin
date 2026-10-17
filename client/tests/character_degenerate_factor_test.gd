@@ -55,6 +55,16 @@ func _ready() -> void:
 		_fail("an authored girth of 1.2 did not change the rests, so the test cannot tell degenerate from absent")
 		return
 
+	# Boundary: the smallest factor applied as written is the epsilon itself. It
+	# must build finite and must NOT be replaced by the neutral value.
+	var boundary: Variant = _rests(_recipe({"bone_girth": {"upperarm": CharacterFactory.DEGENERATE_FACTOR_EPSILON}}))
+	if boundary == null or not _all_finite(boundary):
+		_fail("a girth exactly at the degenerate epsilon must build with finite rests")
+		return
+	if _max_diff(boundary, baseline) <= TOLERANCE:
+		_fail("a girth exactly at the degenerate epsilon was replaced by the neutral value")
+		return
+
 	print("TEST PASS — degenerate bone factors build as absent and stay finite")
 	get_tree().quit(0)
 

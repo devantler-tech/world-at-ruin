@@ -807,12 +807,12 @@ static func _bones_for(skeleton: Skeleton3D, key: String) -> PackedInt32Array:
 
 
 ## The factor the build applies for one bone key: the stored value when it is a
-## usable finite number above [constant DEGENERATE_FACTOR_EPSILON], otherwise the
+## finite number at or above [constant DEGENERATE_FACTOR_EPSILON], otherwise the
 ## neutral 1.0. A degenerate factor is what a hand-edited or corrupted document can
 ## hold, never what the writer can produce, so it is built as absent and logged.
 static func _applied_factor(field: String, key: String, stored: Variant) -> float:
 	var factor := float(stored)
-	if is_finite(factor) and factor > DEGENERATE_FACTOR_EPSILON:
+	if is_finite(factor) and factor >= DEGENERATE_FACTOR_EPSILON:
 		return factor
 	push_warning("CharacterFactory: %s '%s' is degenerate (%s); building it as 1.0" % [field, key, str(stored)])
 	return 1.0
