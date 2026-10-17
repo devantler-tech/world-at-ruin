@@ -420,6 +420,9 @@ func frozenRepo(t *testing.T, files map[string]string) string {
 func frozenReport(t *testing.T, first, second frozenSide, shift int) (string, string, string, string, string) {
 	t.Helper()
 	side := func(s frozenSide) map[string]any {
+		if err := os.MkdirAll(filepath.Dir(s.name), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(s.name, []byte(s.data), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -474,6 +477,9 @@ func TestFrozenReferenceSplitNeedsABaseProof(t *testing.T) {
 		{name: "an edited reference is refused", want: "unaccepted clone",
 			base:  map[string]string{live: body, frozen: body},
 			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body + "delta := 4\n", pair}},
+		{name: "a live file absent at the base is refused", want: "unaccepted clone",
+			base:  map[string]string{frozen: body},
+			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body, pair}},
 		{name: "two ordinary files are refused", want: "unaccepted clone",
 			base:  map[string]string{live: body, other: body},
 			first: frozenSide{live, body, pair}, second: frozenSide{other, body, pair}},
