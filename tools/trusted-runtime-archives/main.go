@@ -31,7 +31,7 @@ var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 var archivePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~%_-]*[.]deb$`)
 var snapshotPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z$`)
 var runtimeFrom = regexp.MustCompile(`(?m)^FROM ubuntu:24[.]04@(sha256:[0-9a-f]{64})\s*$`)
-var snapshotSetting = regexp.MustCompile(`APT::Snapshot "([0-9]{8}T[0-9]{6}Z)";`)
+var snapshotSourceRewrite = regexp.MustCompile(`s#\^URIs: \.\*#URIs: https://snapshot[.]ubuntu[.]com/ubuntu/([0-9]{8}T[0-9]{6}Z)/#`)
 var installPin = regexp.MustCompile(`^([a-z0-9][a-z0-9+.-]*)=([A-Za-z0-9][A-Za-z0-9+.:~_-]*)$`)
 
 var requiredRecipeFiles = []string{
@@ -330,7 +330,6 @@ func expectedRuntimeTransaction(snapshot string, arguments []string) string {
 	return "sed -i -e 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/" + snapshot + "/#'" +
 		" -e 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources" +
 		" && printf '%s\\n'" +
-		` 'APT::Snapshot "` + snapshot + `";'` +
 		` 'Acquire::Retries "6";'` +
 		` 'Acquire::http::Timeout "20";'` +
 		` 'Acquire::https::Timeout "20";'` +
@@ -369,7 +368,7 @@ func parseRecipe(raw []byte) (string, string, []string, error) {
 		return "", "", nil, errors.New("runtime transaction verifier invocation missing or repeated")
 	}
 	bases := runtimeFrom.FindAllSubmatch(raw, -1)
-	snapshots := snapshotSetting.FindAllStringSubmatch(strings.Join(runs, "\n"), -1)
+	snapshots := snapshotSourceRewrite.FindAllStringSubmatch(strings.Join(runs, "\n"), -1)
 	if len(bases) != 1 || len(snapshots) != 1 {
 		return "", "", nil, errors.New("runtime base or snapshot identity missing")
 	}

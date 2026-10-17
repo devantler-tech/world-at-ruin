@@ -24,7 +24,6 @@ RUN sed -i \
     -e 's/^Components:.*/Components: main/' \
     /etc/apt/sources.list.d/ubuntu.sources \
     && printf '%s\n' \
-    'APT::Snapshot "20261003T000000Z";' \
     'Acquire::Retries "6";' \
     'Acquire::http::Timeout "20";' \
     'Acquire::https::Timeout "20";' \

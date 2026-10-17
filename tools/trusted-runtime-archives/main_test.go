@@ -78,7 +78,7 @@ func fixtureRecipe(t *testing.T) (string, map[string]any) {
 	recipe := "FROM golang:1.27.1@sha256:" + strings.Repeat("e", 64) + " AS certificates\n" +
 		"FROM ubuntu:24.04@" + fixtureManifest + "\n" +
 		"RUN sed -i -e 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/#' -e 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \\\n" +
-		" && printf '%s\\n' 'APT::Snapshot \"20261003T000000Z\";' 'Acquire::Retries \"6\";' 'Acquire::http::Timeout \"20\";' 'Acquire::https::Timeout \"20\";' 'APT::Update::Error-Mode \"any\";' > /etc/apt/apt.conf.d/50snapshot \\\n" +
+		" && printf '%s\\n' 'Acquire::Retries \"6\";' 'Acquire::http::Timeout \"20\";' 'Acquire::https::Timeout \"20\";' 'APT::Update::Error-Mode \"any\";' > /etc/apt/apt.conf.d/50snapshot \\\n" +
 		" && apt-get update \\\n" +
 		" && bash /tmp/observe-runtime-transaction.sh \"$WAR_RUNTIME_INVENTORY\" \"$WAR_RUNTIME_ARCHIVE_POLICY\" apt-get install -y --no-install-recommends foo=1.0 \\\n" +
 		" && case \"$WAR_RUNTIME_INVENTORY\" in 0) ;; 1) bash /tmp/capture-trusted-runtime-inventory.sh;; *) exit 1;; esac \\\n" +
@@ -239,6 +239,20 @@ func TestParseRecipeRequiresSnapshotOnlySources(t *testing.T) {
 		" && rm -rf /var/lib/apt/lists/*\n"
 	if _, _, _, err := parseRecipe([]byte(recipe)); err == nil {
 		t.Fatal("mutable live APT sources satisfied the reviewed transaction")
+	}
+}
+
+func TestParseRecipeAcceptsDirectSnapshotWithoutSnapshotSelection(t *testing.T) {
+	recipe := "FROM ubuntu:24.04@" + fixtureManifest + "\n" +
+		"RUN sed -i -e 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/20261003T000000Z/#' -e 's/^Components:.*/Components: main/' /etc/apt/sources.list.d/ubuntu.sources \\\n" +
+		" && printf '%s\\n' 'Acquire::Retries \"6\";' 'Acquire::http::Timeout \"20\";' 'Acquire::https::Timeout \"20\";' 'APT::Update::Error-Mode \"any\";' > /etc/apt/apt.conf.d/50snapshot \\\n" +
+		" && apt-get update \\\n" +
+		" && bash /tmp/observe-runtime-transaction.sh \"$WAR_RUNTIME_INVENTORY\" \"$WAR_RUNTIME_ARCHIVE_POLICY\" apt-get install -y --no-install-recommends foo=1.0 \\\n" +
+		" && case \"$WAR_RUNTIME_INVENTORY\" in 0) ;; 1) bash /tmp/capture-trusted-runtime-inventory.sh;; *) exit 1;; esac \\\n" +
+		" && rm /tmp/capture-trusted-runtime-inventory.sh /tmp/observe-runtime-transaction.sh /tmp/trusted-runtime-origin /tmp/trusted-runtime-archives /tmp/expected-archives.json \\\n" +
+		" && rm -rf /var/lib/apt/lists/*\n"
+	if _, _, _, err := parseRecipe([]byte(recipe)); err != nil {
+		t.Fatalf("direct immutable snapshot recipe was rejected: %v", err)
 	}
 }
 
