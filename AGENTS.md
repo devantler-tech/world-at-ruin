@@ -405,21 +405,31 @@ everything shipped afterwards is held to.
 ## Maintenance
 
 Every trusted cold runtime enforces the generated complete installed-package
-identity lock, independently of diagnostic selection. Keep the exact base,
-snapshot and direct-pin joins, full successful dpkg observation, phase bounds
-and native changed-expectation refusal. Update through the generator, never by
-hand; run `go test -race tools/trusted-runtime-packages/main.go tools/trusted-runtime-packages/main_test.go`
-and `bash tools/trusted-runtime-packages.test.sh`. This is an installed identity
-expectation, not archive provenance or reusable-executor authority. See
-[the maintenance procedure](docs/ci/trusted-runtime-packages.md) and ADR 0057.
+identity lock and reviewed archive expectation, independently of diagnostic
+selection. Keep the exact base, snapshot and direct-pin joins, full successful
+dpkg observation, phase bounds and native changed-expectation refusal. Update
+both through their generators, never by hand; run the package and archive Go
+tests plus `bash tools/trusted-runtime-packages.test.sh` and
+`bash tools/trusted-runtime-transaction.test.sh`. The archive lock fixes the
+complete package tuple/basename/URI/size/SHA-256/trusted-origin set before
+package scripts execute. It grants no archive publication or reusable-executor
+authority. See the [package](docs/ci/trusted-runtime-packages.md) and
+[archive](docs/ci/trusted-runtime-archives.md) procedures and ADRs 0057-0058.
 
 The opt-in cold-runtime diagnostic joins every acquired archive to the complete
 nonempty set of byte-identical APT 2.8 trusted Packages targets before package
 scripts run. Preserve the complete target census, regular single-link
 Packages/InRelease reads, URI + tuple + byte + SHA-256 join, duplicate/conflict
-refusals, same-cache offline install and final installed-set equality. The report is evidence for reviewing a later archive
-expectation; it cannot create that expectation or authorize reuse. Run
+refusals, reviewed archive-expectation equality, same-cache offline install and
+final installed-set equality. Normal and diagnostic builds always use the
+reviewed archive lock. Only the manually dispatched proposal workflow may pair
+complete inventory publication with the evidence-only proposal selector; that
+path bypasses only the stale expectation comparison, deletes its disposable
+image and grants no repository update or runtime-admission authority. The report
+is evidence for proposing an archive expectation; only the reviewed repository
+lock authorizes the cold build. Run
 `go test -race tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go`,
+`go test -race tools/trusted-runtime-archives/main.go tools/trusted-runtime-archives/main_test.go`,
 `go test -race tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go`
 and `bash tools/trusted-runtime-transaction.test.sh`. See
 [the inventory procedure](docs/ci/trusted-runtime-inventory.md).
@@ -1160,14 +1170,15 @@ the permanent blocking policy.
   Run `tools/trusted-runtime-inventory.test.sh` and the standalone Go parser tests;
   real cold-build evidence and limits are in
   [the inventory guide](docs/ci/trusted-runtime-inventory.md). This is diagnostic
-  data, never an expected dependency lock or executor admission authority (#1397).
+  data; only separately reviewed package/archive locks admit a cold build.
   Selected collection also records the complete pre-install APT transaction,
   inherited identities and private-cache archive tuples/bytes. Plan/digest/set
-  checks precede a same-argument no-download install; the independent final
-  installed-set verifier remains required. Run
+  checks and the reviewed archive lock precede a same-argument no-download
+  install; the independent final installed-set verifier remains required. Run
   `tools/trusted-runtime-transaction.test.sh` for cache, partial-read and corruption
-  refusals. Requested URLs are observations, not selected authenticated metadata
-  provenance or an independently reviewed archive lock (#1428).
+  refusals. See [the archive procedure](docs/ci/trusted-runtime-archives.md).
+  The expectation does not authorize publication, an archive producer or reuse
+  (#1397).
 - **Trusted setup is bounded:** runtime builds, image inspection, editor import and sandbox probes
   use reviewed host deadlines; cancellation forwards to the active child and cleanup verifies
   absence of invocation-owned containers. The scene verdict watchdog remains 180 seconds. Run

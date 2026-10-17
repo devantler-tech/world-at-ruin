@@ -3,14 +3,21 @@
 set -euo pipefail
 export LC_ALL=C
 mode="${1:?inventory selection required}"
-shift
-case "$mode" in 0) exec "$@";; 1) ;; *) exit 2;; esac
+policy="${2:?archive policy required}"
+shift 2
+case "$mode" in 0|1) ;; *) exit 2;; esac
+case "$policy" in locked|proposal) ;; *) exit 2;; esac
+if [ "$policy" = proposal ] && [ "$mode" != 1 ]; then exit 2; fi
 if [ "$#" -lt 5 ] || [ "$1 $2 $3 $4" != 'apt-get install -y --no-install-recommends' ]; then exit 2; fi
 expected=/tmp/expected-packages.tsv
 out=/usr/share/war-trusted-runtime/transaction.tsv
 origin_helper=/tmp/trusted-runtime-origin
+archive_helper=/tmp/trusted-runtime-archives
+archive_expected=/tmp/expected-archives.json
 if [ ! -f "$expected" ] || [ -L "$expected" ]; then exit 1; fi
 if [ ! -x "$origin_helper" ] || [ -L "$origin_helper" ]; then exit 1; fi
+if [ ! -x "$archive_helper" ] || [ -L "$archive_helper" ]; then exit 1; fi
+if [ "$policy" = locked ] && { [ ! -f "$archive_expected" ] || [ -L "$archive_expected" ]; }; then exit 1; fi
 if [ -e "$out" ] || [ -L "$out" ]; then exit 1; fi
 state="$(mktemp -d)"
 cleanup() {
@@ -112,6 +119,13 @@ target_format='$(FILENAME)'$'\t''$(URI)'$'\t''$(REPO_URI)'$'\t''$(BASE_URI)'$'\t
 if ! bounded_capture "$state/targets" apt-get indextargets 'Identifier: Packages' --format "$target_format"; then exit 1; fi
 if [ ! -s "$state/targets" ]; then exit 1; fi
 if ! "$origin_helper" "$state/archive-identities" "$state/targets" >> "$state/result"; then exit 1; fi
+# The prior hosted observation has no authority here: only its separately
+# reviewed, repository-bound expectation may admit this exact archive/origin set.
+if [ "$policy" = locked ]; then
+  if ! "$archive_helper" --verify "$archive_expected" "$state/result"; then exit 1; fi
+else
+  echo 'archive proposal bypasses only the reviewed expectation comparison; evidence cannot admit a runtime' >&2
+fi
 # Upgrades replace the old tuple; every inherited/new tuple must explain the reviewed final set.
 awk -F '\t' 'NR==FNR {replacement[$2]=$0; next} !($2 in replacement) {print} END {for (name in replacement) print replacement[name]}' "$state/acquired" "$state/before" | sort > "$state/expected-final"
 if ! cmp "$expected" "$state/expected-final"; then exit 1; fi
@@ -121,11 +135,13 @@ if [ "$(wc -c < "$state/result")" -gt 1048000 ]; then exit 1; fi
 # No fallback or missing-package tolerance: the same cache/arguments must install offline.
 if ! "$@" --no-download -o "$cache_option"; then exit 1; fi
 printf 'transaction-complete\n' >> "$state/result"
-out_parent="$(dirname "$out")"
-if ! mkdir -p "$out_parent"; then exit 1; fi
-if [ ! -d "$out_parent" ] || [ -L "$out_parent" ]; then exit 1; fi
-# Package maintainer scripts ran as root; recheck their destination before publishing evidence.
-if [ -e "$out" ] || [ -L "$out" ]; then exit 1; fi
-if ! install -m 0644 "$state/result" "$out"; then exit 1; fi
-if [ ! -f "$out" ] || [ -L "$out" ] || [ "$(stat -c %h "$out")" != 1 ]; then exit 1; fi
+if [ "$mode" = 1 ]; then
+  out_parent="$(dirname "$out")"
+  if ! mkdir -p "$out_parent"; then exit 1; fi
+  if [ ! -d "$out_parent" ] || [ -L "$out_parent" ]; then exit 1; fi
+  # Package maintainer scripts ran as root; recheck their destination before publishing evidence.
+  if [ -e "$out" ] || [ -L "$out" ]; then exit 1; fi
+  if ! install -m 0644 "$state/result" "$out"; then exit 1; fi
+  if [ ! -f "$out" ] || [ -L "$out" ] || [ "$(stat -c %h "$out")" != 1 ]; then exit 1; fi
+fi
 printf 'TRUSTED_RUNTIME_TRANSACTION archives=%s plan-matched-before-install=true\n' "$count"
