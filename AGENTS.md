@@ -752,6 +752,13 @@ the permanent blocking policy.
   protected production custody nor exclusive child launch. Normal artifacts have
   no probe/writer dependency. ADR 0045/#1342 and ADR 0050/#1371
   preserve #1340/#1341/#1336/#1318/#567 authority gates; #1192 owns retirement.
+  `server/internal/custodywitness/` holds only the #1341 witness record contract:
+  one schema-1 record per ADR 0044 lifetime key whose stage moves
+  enrolled → custody → tombstone, carrying exactly the pins of reached stages.
+  Its strict reader and `Follows` refuse any skipped, repeated or backward step
+  or rewritten pin. It performs no I/O and grants no authority; the client,
+  DynamoDB adapter and native trial are #1442/#1443. Keep its import control
+  and the server durability guard for the `custody_witness` family.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
