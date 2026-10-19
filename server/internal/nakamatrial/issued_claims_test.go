@@ -18,8 +18,8 @@ import (
 
 	"github.com/devantler-tech/world-at-ruin/server/agones"
 	"github.com/devantler-tech/world-at-ruin/server/claimrpc"
-	"github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime/testfixture"
 	"github.com/devantler-tech/world-at-ruin/server/nakamalease"
+	"github.com/devantler-tech/world-at-ruin/server/testfixture"
 	"github.com/devantler-tech/world-at-ruin/server/zoneclaim"
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
 	"google.golang.org/grpc/codes"

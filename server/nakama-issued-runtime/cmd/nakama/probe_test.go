@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime/testfixture"
+	"github.com/devantler-tech/world-at-ruin/server/testfixture"
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

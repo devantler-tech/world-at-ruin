@@ -1,5 +1,6 @@
-// Package testfixture owns synthetic WorkloadAPI transport for source and native
-// issued-runtime tests. It is not imported by a plugin or a serving command.
+// Package testfixture shares synthetic WorkloadAPI transport between the server
+// and issued-runtime tests without a dependency on the nested runtime module.
+// It is not imported by a plugin or a serving command.
 package testfixture
 
 import (
