@@ -208,7 +208,7 @@ func TestCatalogBehavior(t *testing.T) {
 			if test.change != nil {
 				test.change(t, r, c, b, s, o)
 			}
-			err := check(r, c, b, s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+			err := check(r, c, b, s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "")
 			expectResult(t, test.want, err)
 			if test.name == "new clone" && (!strings.Contains(err.Error(), "a.go:1") || !strings.Contains(err.Error(), "b.go:20")) {
 				t.Fatalf("missing both locations: %v", err)
@@ -220,10 +220,10 @@ func TestCatalogBehavior(t *testing.T) {
 // TestBootstrapIsExactRevisionOnly rejects invented catalogs and unknown adoption bases.
 func TestBootstrapIsExactRevisionOnly(t *testing.T) {
 	r, c, _, s, o := fixture(t)
-	if err := check(r, c, "", s, o, adoptionRevision); err == nil {
+	if err := check(r, c, "", s, o, adoptionRevision, ""); err == nil {
 		t.Fatal("an invented catalog bootstrapped against the adoption revision")
 	}
-	if err := check(r, c, "", s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err == nil {
+	if err := check(r, c, "", s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ""); err == nil {
 		t.Fatal("unknown base was allowed to bootstrap")
 	}
 }
@@ -242,7 +242,7 @@ func TestGenerationPreservesReviewedJustification(t *testing.T) {
 	if err := generate(r, s, c); err != nil {
 		t.Fatal(err)
 	}
-	if err := check(r, c, b, s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
+	if err := check(r, c, b, s, o, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ""); err != nil {
 		t.Fatalf("regeneration erased the reviewed justification: %v", err)
 	}
 }
@@ -383,13 +383,6 @@ func TestIndependentSourceInventory(t *testing.T) {
 	}
 }
 
-// frozenSide is one side of a reported clone: the file, its head bytes and the duplicated text.
-type frozenSide struct {
-	name string
-	data string
-	text string
-}
-
 // frozenRepo commits base files in a throwaway repository and returns its revision.
 func frozenRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -415,100 +408,121 @@ func frozenRepo(t *testing.T, files map[string]string) string {
 	return strings.TrimSpace(string(revision))
 }
 
-// frozenReport writes head files and a one-clone report whose positions are the
-// scanner's byte offsets of each side's duplicated text, plus empty catalogs.
-func frozenReport(t *testing.T, first, second frozenSide, shift int) (string, string, string, string, string) {
-	t.Helper()
-	side := func(s frozenSide) map[string]any {
-		if err := os.MkdirAll(filepath.Dir(s.name), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(s.name, []byte(s.data), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		start := strings.Index(s.data, s.text)
-		if start < 0 {
-			t.Fatalf("fixture text missing from %s", s.name)
-		}
-		end := start + len(s.text)
-		return map[string]any{"name": s.name,
-			"start": strings.Count(s.data[:start], "\n") + 1, "end": strings.Count(s.data[:end], "\n") + 1,
-			"startLoc": map[string]any{"position": start + shift}, "endLoc": map[string]any{"position": end + shift}}
-	}
-	dir := t.TempDir()
-	configPath := copyConfig(t, dir)
-	// Both catalogs are empty, so only the base proof can accept the clone.
-	empty := putReport(t, dir, "empty.json", []any{}, 6, 12, 0, 0)
-	catalogPath, basePath := filepath.Join(dir, "catalog.json"), filepath.Join(dir, "base.json")
-	for _, path := range []string{catalogPath, basePath} {
-		if err := generate(empty, configPath, path); err != nil {
-			t.Fatal(err)
-		}
-	}
-	clone := map[string]any{"format": "go", "fragment": first.text, "lines": 2, "tokens": 6, "firstFile": side(first), "secondFile": side(second)}
-	reportPath := putReport(t, dir, "report.json", []any{clone}, 6, 12, 2, 6)
-	return reportPath, catalogPath, basePath, configPath, putJSON(t, dir, "owner.json", map[string]any{"number": 276, "state": "open"})
+// frozenClone is one reported Go clone between two files.
+func frozenClone(first, second, text string, lines int) map[string]any {
+	side := func(name string) map[string]any { return map[string]any{"name": name, "start": 1, "end": lines} }
+	return map[string]any{"format": "go", "fragment": text, "lines": lines, "tokens": 6, "firstFile": side(first), "secondFile": side(second)}
 }
 
-// TestFrozenReferenceSplitNeedsABaseProof accepts an uncatalogued clone between a
-// live file and a frozen reference only when both already held its text at the base.
-func TestFrozenReferenceSplitNeedsABaseProof(t *testing.T) {
-	const live, frozen, other = "client/scripts/live.go", "client/tests/historical/frozen.go", "client/scripts/other.go"
+// cloneReport writes a scanner report whose statistics agree with its clones.
+func cloneReport(t *testing.T, dir, name string, clones []any) string {
+	t.Helper()
+	lines := 0
+	for _, copy := range clones {
+		lines += copy.(map[string]any)["lines"].(int)
+	}
+	return putReport(t, dir, name, clones, 100, 1000, lines, 6*len(clones))
+}
+
+// TestFrozenReferenceSplitNeedsTheBaseScan accepts an uncatalogued clone between
+// a live file and a frozen reference only as a split of what the pinned scanner
+// reported for the same pair at the base, within the base's duplicated lines.
+func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
+	const live, frozen, other, older = "client/scripts/live.go", "client/tests/historical/frozen.go", "client/scripts/other.go", "client/tests/historical/older.go"
 	const body = "alpha := 1\nbeta := 2\ngamma := 3\n"
-	const pair = "alpha := 1\nbeta := 2"
+	whole := frozenClone(live, frozen, "whole", 10)
 	cases := []struct {
-		name, want    string
-		base          map[string]string
-		first, second frozenSide
-		shift         int
+		name, want  string
+		base, head  []any
+		unheld      bool // the base catalog never held the pair
+		handDeleted bool // the head catalog holds none of the head clones, as if deleted by hand
+		noBaseScan  bool
+		editFrozen  bool
 	}{
-		{name: "unchanged text is proven",
-			base:  map[string]string{live: body, frozen: body},
-			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body, pair}},
-		{name: "an edit elsewhere in the live file only moves the proven text",
-			base:  map[string]string{live: body, frozen: body},
-			first: frozenSide{live, "inserted := 0\n" + body, pair}, second: frozenSide{frozen, body, pair}},
+		{name: "a split of a reported clone is accepted",
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), frozenClone(live, frozen, "back", 4)}},
 		{name: "the frozen side may be reported first",
-			base:  map[string]string{live: body, frozen: body},
-			first: frozenSide{frozen, body, pair}, second: frozenSide{live, "inserted := 0\n" + body, pair}},
-		{name: "text newly copied from the reference is refused", want: "unaccepted clone",
-			base:  map[string]string{live: "alpha := 1\n", frozen: body},
-			first: frozenSide{live, "alpha := 1\nbeta := 2\n", pair}, second: frozenSide{frozen, body, pair}},
-		{name: "an edited reference is refused", want: "unaccepted clone",
-			base:  map[string]string{live: body, frozen: body},
-			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body + "delta := 4\n", pair}},
-		{name: "a live file absent at the base is refused", want: "unaccepted clone",
-			base:  map[string]string{frozen: body},
-			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body, pair}},
-		{name: "two ordinary files are refused", want: "unaccepted clone",
-			base:  map[string]string{live: body, other: body},
-			first: frozenSide{live, body, pair}, second: frozenSide{other, body, pair}},
-		{name: "offsets that miss their reported lines are refused", want: "unaccepted clone", shift: 11,
-			base:  map[string]string{live: body, frozen: body},
-			first: frozenSide{live, body, pair}, second: frozenSide{frozen, body, pair}},
+			base: []any{whole}, head: []any{frozenClone(frozen, live, "front", 5), frozenClone(frozen, live, "back", 4)}},
+		{name: "a split may use exactly the base's duplicated lines",
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), frozenClone(live, frozen, "back", 5)}},
+		{name: "a hand-deleted catalog entry is refused", want: "unaccepted clone", handDeleted: true,
+			base: []any{whole}, head: []any{whole}},
+		{name: "a split that grows duplicated lines is refused", want: "grows duplication",
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 6), frozenClone(live, frozen, "back", 5)}},
+		{name: "a pair the base catalog never held is refused", want: "unaccepted clone", unheld: true,
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5)}},
+		{name: "a pair the base never reported is refused", want: "unaccepted clone",
+			base: []any{whole}, head: []any{frozenClone(other, frozen, "front", 5)}},
+		{name: "an edited reference is refused", want: "unaccepted clone", editFrozen: true,
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5)}},
+		{name: "a missing base scan is refused", want: "unaccepted clone", noBaseScan: true,
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5)}},
+		{name: "two ordinary files are refused", want: "unaccepted clone", handDeleted: true,
+			base: []any{frozenClone(live, other, "whole", 10)}, head: []any{frozenClone(live, other, "front", 5)}},
+		{name: "two frozen references are refused", want: "unaccepted clone",
+			base: []any{frozenClone(older, frozen, "whole", 10)}, head: []any{frozenClone(older, frozen, "front", 5)}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			revision := frozenRepo(t, test.base)
-			r, c, b, s, o := frozenReport(t, test.first, test.second, test.shift)
-			expectResult(t, test.want, check(r, c, b, s, o, revision))
+			revision := frozenRepo(t, map[string]string{live: body, frozen: body, other: body, older: body})
+			if test.editFrozen {
+				if err := os.WriteFile(frozen, []byte(body+"delta := 4\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dir := t.TempDir()
+			configPath := copyConfig(t, dir)
+			empty := cloneReport(t, dir, "empty.json", []any{})
+			baseReport := cloneReport(t, dir, "base-report.json", test.base)
+			headReport := cloneReport(t, dir, "report.json", test.head)
+			basePath, catalogPath := filepath.Join(dir, "base.json"), filepath.Join(dir, "catalog.json")
+			held := baseReport
+			if test.unheld {
+				held = empty
+			}
+			if err := generate(held, configPath, basePath); err != nil {
+				t.Fatal(err)
+			}
+			// The head catalog is regenerated from the base one, as a contributor would.
+			data, err := os.ReadFile(basePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(catalogPath, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			regenerated := headReport
+			if test.handDeleted {
+				regenerated = empty
+			}
+			if err := generate(regenerated, configPath, catalogPath); err != nil {
+				t.Fatal(err)
+			}
+			scanned := baseReport
+			if test.noBaseScan {
+				scanned = ""
+			}
+			owner := putJSON(t, dir, "owner.json", map[string]any{"number": 276, "state": "open"})
+			expectResult(t, test.want, check(headReport, catalogPath, basePath, configPath, owner, revision, scanned))
 		})
 	}
 }
 
 // TestGenerationKeepsAnEmptyCatalogAnUpdate refuses to catalog a frozen-reference
 // split when the prior catalog exists but holds no entries: an empty catalog is
-// still an update, so only check's base proof may accept the split.
+// still an update, so only check's base scan may accept the split.
 func TestGenerationKeepsAnEmptyCatalogAnUpdate(t *testing.T) {
-	t.Chdir(t.TempDir())
-	const live, frozen = "client/scripts/live.go", "client/tests/historical/frozen.go"
-	const body = "alpha := 1\nbeta := 2\ngamma := 3\n"
-	const pair = "alpha := 1\nbeta := 2"
-	r, c, _, s, _ := frozenReport(t, frozenSide{live, body, pair}, frozenSide{frozen, body, pair}, 0)
-	if err := generate(r, s, c); err != nil {
+	dir := t.TempDir()
+	configPath := copyConfig(t, dir)
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := generate(cloneReport(t, dir, "empty.json", []any{}), configPath, catalogPath); err != nil {
 		t.Fatal(err)
 	}
-	value, _, err := readCatalog(c)
+	split := cloneReport(t, dir, "report.json", []any{frozenClone("client/scripts/live.go", "client/tests/historical/frozen.go", "front", 5)})
+	if err := generate(split, configPath, catalogPath); err != nil {
+		t.Fatal(err)
+	}
+	value, _, err := readCatalog(catalogPath)
 	if err != nil {
 		t.Fatal(err)
 	}

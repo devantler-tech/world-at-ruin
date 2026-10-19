@@ -35,7 +35,7 @@ cp "$tmp_dir/catalog.json" "$tmp_dir/base.json"
 run_check() {
   "$tmp_dir/guard" check "$1/jscpd-report.json" "$tmp_dir/catalog.json" \
     "$tmp_dir/base.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
-    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ''
 }
 run_check "$tmp_dir/initial"
 printf 'b.go\n' > .gitignore
@@ -74,4 +74,51 @@ if "$tmp_dir/guard" scan "$scanner" "$tmp_dir/removed" "$tmp_dir/config.json" > 
   echo 'TEST FAIL — old producer report reused' >&2; exit 1
 fi
 grep -q 'fresh report directory' "$tmp_dir/stale.log"
-echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup passes'
+# A frozen-reference split through the real scanner: an edit inside the live
+# copy passes only against the base scan, and new copying still fails.
+frozen_body() {
+  for i in $(seq "$1" "$2"); do printf '  value%d := input*%d + %d\n' "$i" "$i" "$((i * 7))"; done
+}
+mkdir -p "$tmp_dir/frozen/client/scripts" "$tmp_dir/frozen/client/tests/historical"
+cd "$tmp_dir/frozen"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n'; } > client/scripts/live.go
+{ cat client/scripts/live.go; printf '\nfunc extra(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } > client/tests/historical/frozen.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+revision="$(git rev-parse HEAD)"
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/frozen-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+"$tmp_dir/guard" generate "$tmp_dir/frozen-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/frozen-base-catalog.json"
+frozen_check() {
+  "$tmp_dir/guard" check "$1/jscpd-report.json" "$tmp_dir/frozen-catalog.json" \
+    "$tmp_dir/frozen-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" "$revision" "$2"
+}
+frozen_scan() {
+  "$tmp_dir/guard" scan "$scanner" "$tmp_dir/$1" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+  cp "$tmp_dir/frozen-base-catalog.json" "$tmp_dir/frozen-catalog.json"
+  "$tmp_dir/guard" generate "$tmp_dir/$1/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/frozen-catalog.json"
+}
+base_scan="$tmp_dir/frozen-base/jscpd-report.json"
+perl -pi -e 's/^(  value15 := .*)\n/$1\n  inserted := input - 1\n/' client/scripts/live.go
+grep -q '^  inserted := input - 1$' client/scripts/live.go
+frozen_scan frozen-split
+[[ "$(jq '.duplicates | length' "$tmp_dir/frozen-split/jscpd-report.json")" -gt "$(jq '.duplicates | length' "$base_scan")" ]] || {
+  echo 'TEST FAIL — the fixture edit did not split the frozen-reference clone' >&2; exit 1
+}
+frozen_check "$tmp_dir/frozen-split" "$base_scan"
+if frozen_check "$tmp_dir/frozen-split" '' > "$tmp_dir/frozen-nobase.log" 2>&1; then
+  echo 'TEST FAIL — a frozen-reference split passed without the base scan' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-nobase.log"
+# The split's catalog has no entry for the base's unchanged clone.
+if frozen_check "$tmp_dir/frozen-base" "$base_scan" > "$tmp_dir/frozen-deleted.log" 2>&1; then
+  echo 'TEST FAIL — a hand-deleted frozen-reference entry passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-deleted.log"
+{ printf '\nfunc copied(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } >> client/scripts/live.go
+frozen_scan frozen-grown
+if frozen_check "$tmp_dir/frozen-grown" "$base_scan" > "$tmp_dir/frozen-grown.log" 2>&1; then
+  echo 'TEST FAIL — text newly copied from a frozen reference passed' >&2; exit 1
+fi
+grep -q 'grows duplication' "$tmp_dir/frozen-grown.log"
+echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'
