@@ -162,7 +162,7 @@ func TestRecordsOnlyMoveForwardOneStage(t *testing.T) {
 // client, so importing it cannot start or configure a witness.
 func TestRecordContractImportsNoClient(t *testing.T) {
 	allowed := map[string]bool{
-		"encoding/json": true, "errors": true, "unicode/utf8": true,
+		"context": true, "encoding/json": true, "errors": true, "reflect": true, "time": true, "unicode/utf8": true,
 		"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity": true,
 		"github.com/devantler-tech/world-at-ruin/server/nakamastorage":            true,
 	}
