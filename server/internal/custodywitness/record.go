@@ -90,16 +90,17 @@ func EncodeRecord(r Record) (string, error) {
 	if !r.Valid() {
 		return "", ErrUnknown
 	}
-	var raw []byte
-	var err error
-	switch r.Stage {
-	case StageEnrolled:
-		raw, err = json.Marshal(enrolledDocument{1, r.LifetimeKey, r.Stage, r.EnrollmentPin})
-	case StageCustody:
-		raw, err = json.Marshal(custodyDocument{enrolledDocument{1, r.LifetimeKey, r.Stage, r.EnrollmentPin}, r.CustodyPin})
-	default:
-		raw, err = json.Marshal(tombstoneDocument{custodyDocument{enrolledDocument{1, r.LifetimeKey, r.Stage, r.EnrollmentPin}, r.CustodyPin}, r.TombstonePin})
+	// Each later stage's document extends the previous one, so the members of
+	// a reached stage always appear in the same order.
+	enrolled := enrolledDocument{1, r.LifetimeKey, r.Stage, r.EnrollmentPin}
+	custody := custodyDocument{enrolled, r.CustodyPin}
+	var document any = enrolled
+	if rank := r.Stage.rank(); rank == 3 {
+		document = tombstoneDocument{custody, r.TombstonePin}
+	} else if rank == 2 {
+		document = custody
 	}
+	raw, err := json.Marshal(document)
 	if err != nil {
 		return "", ErrUnknown
 	}
