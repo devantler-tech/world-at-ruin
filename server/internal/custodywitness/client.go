@@ -205,10 +205,6 @@ func nilTable(value Table) bool {
 		return true
 	}
 	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	nilable := map[reflect.Kind]bool{reflect.Chan: true, reflect.Func: true, reflect.Interface: true, reflect.Map: true, reflect.Pointer: true, reflect.Slice: true}
+	return nilable[v.Kind()] && v.IsNil()
 }
