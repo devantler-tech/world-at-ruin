@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -459,7 +460,11 @@ func cloneReport(t *testing.T, dir, name string, clones []any) string {
 // reported for the same pair at the base, within the base's duplicated lines.
 func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 	const live, frozen, other, older = "client/scripts/live.go", "client/tests/historical/frozen.go", "client/scripts/other.go", "client/tests/historical/older.go"
-	const body = "alpha := 1\nbeta := 2\ngamma := 3\n"
+	// Thirty lines of 25 columns, so every reported line and column is real text.
+	var body strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&body, "value%02d := input*%02d + %03d\n", i, i, 7*i)
+	}
 	whole := frozenClone(live, frozen, "whole", 10)
 	cases := []struct {
 		name, want  string
@@ -497,6 +502,14 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 			base: []any{whole}, head: []any{with(place(frozenClone(live, frozen, "front", 5), 1, 0, 4), "tokens", 51), with(place(frozenClone(live, frozen, "back", 6), 5, 1, 20), "tokens", 50)}},
 		{name: "another clone of the pair without scanner columns fails closed", want: "more often",
 			base: []any{whole, shifted(frozenClone(live, frozen, "tail", 4), 20)}, head: []any{frozenClone(live, frozen, "front", 5), unplaced(shifted(frozenClone(live, frozen, "tail", 4), 20))}},
+		{name: "a removed clone cannot fund text shared twice inside one line", want: "more often",
+			base: []any{whole, shifted(frozenClone(live, frozen, "gone", 5), 20)}, head: []any{frozenClone(live, frozen, "front", 5), place(frozenClone(live, frozen, "back", 6), 5, 0, 20)}},
+		{name: "a cut sharing more than one word is refused", want: "more often",
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), place(frozenClone(live, frozen, "back", 6), 5, 0, 20)}},
+		{name: "two cuts may each share one word",
+			base: []any{whole}, head: []any{with(place(frozenClone(live, frozen, "front", 5), 1, 0, 4), "tokens", 51), with(place(frozenClone(live, frozen, "middle", 3), 5, 1, 4), "tokens", 25), with(place(frozenClone(live, frozen, "back", 4), 7, 1, 20), "tokens", 26)}},
+		{name: "shared words beyond the fragments added are refused", want: "more often",
+			base: []any{whole, shifted(frozenClone(live, frozen, "gone", 5), 20)}, head: []any{with(place(frozenClone(live, frozen, "front", 5), 1, 0, 4), "tokens", 51), with(place(frozenClone(live, frozen, "middle", 3), 5, 1, 4), "tokens", 25), with(place(frozenClone(live, frozen, "back", 4), 7, 1, 20), "tokens", 26)}},
 		{name: "fragments sharing text across a line break are refused", want: "more often",
 			base: []any{whole}, head: []any{place(frozenClone(live, frozen, "front", 5), 1, 0, 4), place(frozenClone(live, frozen, "back", 6), 4, 18, 20)}},
 		{name: "a split sharing reference text with a catalogued clone is refused", want: "more often",
@@ -534,9 +547,9 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			revision := frozenRepo(t, map[string]string{live: body, frozen: body, other: body, older: body})
+			revision := frozenRepo(t, map[string]string{live: body.String(), frozen: body.String(), other: body.String(), older: body.String()})
 			if test.editFrozen {
-				if err := os.WriteFile(frozen, []byte(body+"delta := 4\n"), 0o600); err != nil {
+				if err := os.WriteFile(frozen, []byte(body.String()+"delta := 4\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}

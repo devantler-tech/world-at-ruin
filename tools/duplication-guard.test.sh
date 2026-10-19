@@ -223,5 +223,5 @@ if "$tmp_dir/guard" check "$tmp_dir/sameline-head/jscpd-report.json" "$tmp_dir/s
   "$(git rev-parse HEAD)" "$tmp_dir/sameline-base/jscpd-report.json" > "$tmp_dir/sameline.log" 2>&1; then
   echo 'TEST FAIL — a reference line copied on both sides of a cut passed' >&2; exit 1
 fi
-grep -q 'grows duplication' "$tmp_dir/sameline.log"
+grep -q 'more often' "$tmp_dir/sameline.log"
 echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'

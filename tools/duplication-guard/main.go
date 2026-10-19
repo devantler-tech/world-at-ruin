@@ -32,6 +32,10 @@ const cleanupOwner = 276
 const frozenReferencePrefix = "client/tests/historical/"
 const frozenReferenceReason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
 
+// cutTokenLimit bounds the one word the scanner reports both fragments of a
+// cut sharing; a longer excess is copied text, not a cut.
+const cutTokenLimit = 64
+
 // Hash of the generated catalog from the independently measured adoption tree.
 // Neither an absent base file nor the adoption SHA permits an invented baseline.
 const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e32ccb6d4889d7"
@@ -428,14 +432,15 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 		if !strings.HasPrefix(frozen, frozenReferencePrefix) {
 			frozen = p.Files[1]
 		}
-		if coverageGrows(sidesIn(*r.Duplicates, p, frozen), sidesIn(*baseScan.Duplicates, p, frozen)) {
+		head, base := pairTotals(*r.Duplicates, p), pairTotals(*baseScan.Duplicates, p)
+		cuts := max(0, head[0]-base[0])
+		text, err := os.ReadFile(frozen)
+		if err != nil || coverageGrows(sidesIn(*r.Duplicates, p, frozen), sidesIn(*baseScan.Duplicates, p, frozen), text, cuts) {
 			return fmt.Errorf("frozen-reference split shares text of %s more often than the base scan did (pair %s and %s); share the code instead", frozen, p.Files[0], p.Files[1])
 		}
 		// The scanner reports both fragments of a cut sharing one token, on one
 		// line, so each fragment beyond the base's clone count may add one line
 		// and one token; more is duplication the cut did not need.
-		head, base := pairTotals(*r.Duplicates, p), pairTotals(*baseScan.Duplicates, p)
-		cuts := max(0, head[0]-base[0])
 		if head[1] > base[1]+cuts || head[2] > base[2]+cuts {
 			return fmt.Errorf("frozen-reference split grows duplication: %s and %s report %d duplicated lines and %d tokens in %d clones, %d and %d in %d at the base; share the code instead", p.Files[0], p.Files[1], head[1], head[2], head[0], base[1], base[2], base[0])
 		}
@@ -539,10 +544,11 @@ func sidesIn(clones []clone, p pair, frozen string) []location {
 // coverageGrows reports whether the head sides cover any piece of the
 // reference more often than the base sides do. Pieces run between consecutive
 // clone ends, by line and column; a side without coordinates fails closed.
-// The scanner reports both fragments of a split sharing the token at the cut,
-// so excess inside one line is left to check's token budget. Excess reaching
-// across a line break always includes a piece that spans it, so it is refused.
-func coverageGrows(head, base []location) bool {
+// The scanner reports both fragments of a cut sharing the token at the cut, so
+// up to cuts excess pieces are excused when each lies inside one line and is a
+// single word of at most cutTokenLimit characters in the reference text.
+// Anything wider, or reaching across a line break, is refused.
+func coverageGrows(head, base []location, text []byte, cuts int) bool {
 	var marks []point
 	for _, side := range append(append([]location{}, head...), base...) {
 		if !side.StartLoc.before(side.EndLoc) {
@@ -560,9 +566,23 @@ func coverageGrows(head, base []location) bool {
 		}
 		return n
 	}
+	lines := strings.Split(string(text), "\n")
+	excused := 0
 	for i := 0; i+1 < len(marks); i++ {
 		from, to := &marks[i], &marks[i+1]
-		if *from.Line != *to.Line && count(head, from, to) > count(base, from, to) {
+		if to.before(from) || count(head, from, to) <= count(base, from, to) {
+			continue
+		}
+		if *from.Line != *to.Line || *from.Line < 1 || *from.Line > len(lines) {
+			return true
+		}
+		line := []rune(lines[*from.Line-1])
+		if *from.Column < 0 || *to.Column > len(line) {
+			return true
+		}
+		word := string(line[*from.Column:*to.Column])
+		excused++
+		if excused > cuts || len(word) > cutTokenLimit || strings.TrimSpace(word) != word || strings.ContainsAny(word, " \t") {
 			return true
 		}
 	}
