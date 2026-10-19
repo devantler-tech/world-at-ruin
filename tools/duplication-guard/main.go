@@ -32,9 +32,10 @@ const cleanupOwner = 276
 const frozenReferencePrefix = "client/tests/historical/"
 const frozenReferenceReason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
 
-// cutTokenLimit bounds the one word the scanner reports both fragments of a
-// cut sharing; a longer excess is copied text, not a cut.
-const cutTokenLimit = 64
+// cutToken is the one lexical token the scanner reports both fragments of a
+// cut sharing: a word, a number or one punctuation character. Anything else in
+// a coverage excess is copied text, not a cut.
+var cutToken = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]{0,63}|[0-9]{1,64}|[^A-Za-z0-9_\s])$`)
 
 // Hash of the generated catalog from the independently measured adoption tree.
 // Neither an absent base file nor the adoption SHA permits an invented baseline.
@@ -433,7 +434,7 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 			frozen = p.Files[1]
 		}
 		head, base := pairTotals(*r.Duplicates, p), pairTotals(*baseScan.Duplicates, p)
-		cuts := max(0, head[0]-base[0])
+		cuts := cutsIn(*r.Duplicates, *baseScan.Duplicates, p, frozen)
 		text, err := os.ReadFile(frozen)
 		if err != nil || coverageGrows(sidesIn(*r.Duplicates, p, frozen), sidesIn(*baseScan.Duplicates, p, frozen), text, cuts) {
 			return fmt.Errorf("frozen-reference split shares text of %s more often than the base scan did (pair %s and %s); share the code instead", frozen, p.Files[0], p.Files[1])
@@ -465,10 +466,11 @@ func frozenPair(files [2]string) bool {
 // identity (a catalogued clone keeps its entry, so deleting one fails), the
 // reference is byte-identical to its base, and the clone's side in the
 // reference lies inside one clone the base scan reported for the pair, to the
-// line and column.
-// An unchanged reference tokenizes identically, so text
-// copied from any part of it that was not duplicated at the base, even part of
-// a boundary line, never qualifies. The base passed this gate, so each
+// line and column, and strictly smaller unless it is that same clone (an edit
+// that only reformats the live copy keeps the span and must keep its entry).
+// An unchanged reference tokenizes identically, so text copied from any part
+// of it that was not duplicated at the base, even part of a boundary line,
+// never qualifies. The base passed this gate, so each
 // reported clone there was catalogued or was itself such a split: a split of a
 // split is accepted, and regions only shrink. check then bounds how often
 // each piece of the reference is shared, and the pair's duplicated lines and
@@ -500,7 +502,7 @@ func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revisi
 	inside := false
 	for _, old := range *baseScan.Duplicates {
 		was := identity(old)
-		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) {
+		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) && (was.Key == e.Key || !same(region, span)) {
 			inside = true
 		}
 	}
@@ -529,6 +531,46 @@ func pairTotals(clones []clone, p pair) [3]int {
 	return totals
 }
 
+// same reports whether two sides span exactly the same reference text.
+func same(a, b location) bool {
+	return a.StartLoc.before(b.StartLoc) && b.StartLoc.before(a.StartLoc) && a.EndLoc.before(b.EndLoc) && b.EndLoc.before(a.EndLoc)
+}
+
+// cutsIn counts the cuts a head scan made in one pair's base clones: each
+// head clone belongs to the first base clone holding its reference side, and a
+// base clone with n such children was cut n-1 times. A base clone still in the
+// head unchanged was not cut at all. Removing an unrelated clone of the pair
+// changes no count.
+func cutsIn(head, base []clone, p pair, frozen string) int {
+	kept := make(map[string]bool)
+	for _, copy := range head {
+		kept[identity(copy).Key] = true
+	}
+	children := make([]int, len(base))
+	for _, copy := range head {
+		if e := identity(copy); e.Format != p.Format || e.Files != p.Files {
+			continue
+		}
+		span, _ := sideIn(copy, frozen)
+		for i, old := range base {
+			if was := identity(old); was.Format != p.Format || was.Files != p.Files {
+				continue
+			}
+			if region, ok := sideIn(old, frozen); ok && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) {
+				children[i]++
+				break
+			}
+		}
+	}
+	cuts := 0
+	for i, n := range children {
+		if !kept[identity(base[i]).Key] {
+			cuts += max(0, n-1)
+		}
+	}
+	return cuts
+}
+
 // sidesIn returns the reference side of every clone of one pair.
 func sidesIn(clones []clone, p pair, frozen string) []location {
 	var sides []location
@@ -545,8 +587,8 @@ func sidesIn(clones []clone, p pair, frozen string) []location {
 // reference more often than the base sides do. Pieces run between consecutive
 // clone ends, by line and column; a side without coordinates fails closed.
 // The scanner reports both fragments of a cut sharing the token at the cut, so
-// up to cuts excess pieces are excused when each lies inside one line and is a
-// single word of at most cutTokenLimit characters in the reference text.
+// up to cuts excess pieces are excused when each lies inside one line and its
+// reference text is a single cutToken.
 // Anything wider, or reaching across a line break, is refused.
 func coverageGrows(head, base []location, text []byte, cuts int) bool {
 	var marks []point
@@ -582,7 +624,7 @@ func coverageGrows(head, base []location, text []byte, cuts int) bool {
 		}
 		word := string(line[*from.Column:*to.Column])
 		excused++
-		if excused > cuts || len(word) > cutTokenLimit || strings.TrimSpace(word) != word || strings.ContainsAny(word, " \t") {
+		if excused > cuts || !cutToken.MatchString(word) {
 			return true
 		}
 	}
