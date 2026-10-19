@@ -443,7 +443,7 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 	cases := []struct {
 		name, want  string
 		base, head  []any
-		unheld      bool // the base catalog never held the pair
+		unheld      bool // the base catalog holds no entry for the pair, as after an accepted split
 		handDeleted bool // the head catalog holds none of the head clones, as if deleted by hand
 		noBaseScan  bool
 		editFrozen  bool
@@ -464,8 +464,12 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 			base: []any{whole}, head: []any{shifted(frozenClone(live, frozen, "edge", 4), 8)}},
 		{name: "a split that grows duplicated lines is refused", want: "grows duplication",
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 6), frozenClone(live, frozen, "back", 5)}},
-		{name: "a pair the base catalog never held is refused", want: "unaccepted clone", unheld: true,
-			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5)}},
+		{name: "a later split of an accepted split is accepted", unheld: true,
+			base: []any{frozenClone(live, frozen, "front", 5)}, head: []any{shifted(frozenClone(live, frozen, "inner", 3), 2)}},
+		{name: "an untouched fragment of an accepted split is accepted", unheld: true,
+			base: []any{frozenClone(live, frozen, "front", 5)}, head: []any{frozenClone(live, frozen, "front", 5)}},
+		{name: "a later split must stay inside the accepted split", want: "unaccepted clone", unheld: true,
+			base: []any{frozenClone(live, frozen, "front", 5)}, head: []any{shifted(frozenClone(live, frozen, "inner", 3), 4)}},
 		{name: "a pair the base never reported is refused", want: "unaccepted clone",
 			base: []any{whole}, head: []any{frozenClone(other, frozen, "front", 5)}},
 		{name: "an edited reference is refused", want: "unaccepted clone", editFrozen: true,

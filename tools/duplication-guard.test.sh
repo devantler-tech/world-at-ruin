@@ -106,6 +106,24 @@ frozen_scan frozen-split
   echo 'TEST FAIL — the fixture edit did not split the frozen-reference clone' >&2; exit 1
 }
 frozen_check "$tmp_dir/frozen-split" "$base_scan"
+# Once merged, the split leaves no catalog entry for the pair; a later edit
+# inside one fragment must still pass against the new base's scan.
+cp client/scripts/live.go "$tmp_dir/split-live.go"
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -am split
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/frozen-split-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/frozen-catalog.json" "$tmp_dir/frozen-split-catalog.json"
+perl -pi -e 's/^(  value8 := .*)\n/$1\n  again := input - 2\n/' client/scripts/live.go
+grep -q '^  again := input - 2$' client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/frozen-resplit" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/frozen-split-catalog.json" "$tmp_dir/frozen-resplit-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/frozen-resplit/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/frozen-resplit-catalog.json"
+if [[ "$(jq -c "[.duplicates[].fragment]" "$tmp_dir/frozen-split-base/jscpd-report.json")" == "$(jq -c "[.duplicates[].fragment]" "$tmp_dir/frozen-resplit/jscpd-report.json")" ]]; then
+  echo "TEST FAIL — the second edit did not change the reported fragments" >&2; exit 1
+fi
+"$tmp_dir/guard" check "$tmp_dir/frozen-resplit/jscpd-report.json" "$tmp_dir/frozen-resplit-catalog.json" \
+  "$tmp_dir/frozen-split-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/frozen-split-base/jscpd-report.json"
+cp "$tmp_dir/split-live.go" client/scripts/live.go
 if frozen_check "$tmp_dir/frozen-split" '' > "$tmp_dir/frozen-nobase.log" 2>&1; then
   echo 'TEST FAIL — a frozen-reference split passed without the base scan' >&2; exit 1
 fi

@@ -428,14 +428,16 @@ func frozenPair(files [2]string) bool {
 
 // splitAtBase accepts an uncatalogued clone between one live file and one
 // frozen reference only as a split of duplication the pinned scanner already
-// reported at the base revision: the base scan never reported this exact
-// identity (an existing clone needs its catalog entry), the base catalog held
-// this file pair, the reference is byte-identical to its base, and the clone's
-// lines in the reference lie inside one clone the base scan reported for the
-// pair. An unchanged reference keeps its line numbers, so text copied from a
-// part of it that was not duplicated at the base never qualifies. check then
-// budgets the pair's duplicated lines by the base scan. Every other clone, and
-// any proof that cannot be completed, is not a split.
+// reported at the base revision: the base catalog did not list this exact
+// identity (a catalogued clone keeps its entry, so deleting one fails), the
+// reference is byte-identical to its base, and the clone's lines in the
+// reference lie inside one clone the base scan reported for the pair. An unchanged reference keeps
+// its line numbers, so text copied from a part of it that was not duplicated
+// at the base never qualifies. The base passed this gate, so each reported
+// clone there was catalogued or was itself such a split: a split of a split is
+// accepted, and regions only shrink. check then budgets the pair's duplicated
+// lines by the base scan. Every other clone, and any proof that cannot be
+// completed, is not a split.
 func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revision string) (bool, error) {
 	e := identity(copy)
 	if baseScan == nil {
@@ -451,6 +453,9 @@ func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revisi
 			return false, nil
 		}
 	}
+	if _, catalogued := previous[e.Key]; catalogued {
+		return false, nil
+	}
 	frozen := e.Files[0]
 	if second {
 		frozen = e.Files[1]
@@ -459,24 +464,11 @@ func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revisi
 	inside := false
 	for _, old := range *baseScan.Duplicates {
 		was := identity(old)
-		if was.Key == e.Key {
-			return false, nil
-		}
 		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.Start <= span.Start && span.End <= region.End {
 			inside = true
 		}
 	}
 	if !inside {
-		return false, nil
-	}
-	held := false
-	for _, old := range previous {
-		if old.Format == e.Format && old.Files == e.Files {
-			held = true
-			break
-		}
-	}
-	if !held {
 		return false, nil
 	}
 	if !revisionPattern.MatchString(revision) {
