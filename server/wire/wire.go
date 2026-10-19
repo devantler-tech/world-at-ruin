@@ -354,7 +354,10 @@ func validateCastShape(shape sim.Telegraph) error {
 			return errors.New("non-canonical ring")
 		}
 	case sim.ShapeCone:
-		if !extent(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf < -sim.CosScale || shape.CosHalf > sim.CosScale {
+		// A cone must carry a real planar heading: sim.ConeTelegraph stores the
+		// world-forward fallback, so a zero facing here is not a shape the
+		// authority resolves, and the client refuses to paint one (ADR 0059).
+		if zeroFacing || !extent(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf < -sim.CosScale || shape.CosHalf > sim.CosScale {
 			return errors.New("non-canonical cone")
 		}
 	case sim.ShapeRect:

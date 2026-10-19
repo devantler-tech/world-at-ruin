@@ -59,8 +59,9 @@ verified owned-container absence under the existing inspection deadline.
 A comparison error exits separately from a completed mismatch and cannot satisfy
 this negative proof.
 
-Installed identities are narrower evidence than archive digests or provenance.
-The lock preserves APT's existing authentication and ten direct arguments; it
-does not establish independently authenticated `.deb` bytes or prove which mirror
-supplied them. It enables no cache, publication, new App or credentials. Further
-admission and reuse remain [#1397](https://github.com/devantler-tech/world-at-ruin/issues/1397).
+Installed identities remain a separate final-state invariant. The
+[archive expectation](trusted-runtime-archives.md) now fixes the authenticated
+download closure before package scripts execute, while this lock still rejects
+unexpected final dpkg state. Neither contract enables a cache, publication, new
+App or credentials. Producer, custody and reuse decisions remain
+[#1397](https://github.com/devantler-tech/world-at-ruin/issues/1397).

@@ -10,7 +10,9 @@ cat > "$state/bin/docker" <<'DOCKER'
 set -euo pipefail
 printf '%s\n' "$*" >> "$TRACE"
 case "$1 $2" in
- 'build --pull') exit 0;;
+ 'build --pull')
+   [[ "$*" = *"--build-arg WAR_RUNTIME_ARCHIVE_POLICY=${EXPECTED_ARCHIVE_POLICY}"* ]]
+   exit 0;;
  'image inspect')
    if [[ "$*" = *'.Os'* ]]; then
      cat "$IMAGE_JSON"
@@ -28,12 +30,22 @@ DOCKER
 printf '#!/bin/sh\nprintf fake-engine\\n\n' > "$state/bin/godot"
 chmod +x "$state/bin/docker" "$state/bin/godot"
 export TRACE="$state/trace"
+export EXPECTED_ARCHIVE_POLICY=locked
 PATH="$state/bin:$PATH" WAR_TRUSTED_RUNTIME_INVENTORY=0 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out"
 grep -qx 'sha256:0000000000000000000000000000000000000000000000000000000000000001' "$state/out"
 if PATH="$state/bin:$PATH" WAR_TRUSTED_RUNTIME_INVENTORY=bogus bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/bad" 2>/dev/null; then
  echo 'unknown inventory mode accepted' >&2; exit 1
 fi
 [ ! -s "$state/bad" ]
+for selection in detached invalid; do
+  : > "$state/trace"
+  proposal=1
+  [ "$selection" = invalid ] && proposal=bogus
+  if PATH="$state/bin:$PATH" WAR_TRUSTED_RUNTIME_INVENTORY=0 WAR_TRUSTED_RUNTIME_ARCHIVE_PROPOSAL="$proposal" bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/bad" 2>/dev/null; then
+    echo "accepted $selection archive proposal selection" >&2; exit 1
+  fi
+  [ ! -s "$state/bad" ] && [ ! -s "$state/trace" ]
+done
 export IMAGE_JSON="$state/image.json" INVENTORY_FIXTURE="$state/inventory.tsv"
 export GODOT_VERSION=4.7.1 GODOT_SHA512
 GODOT_SHA512="$(printf '%0128d' 1)"
@@ -62,7 +74,14 @@ printf '[{"Id":"sha256:%064d","Os":"linux","Architecture":"amd64","Config":{"Use
 mkdir "$state/tmp"
 PATH="$state/bin:$PATH" TMPDIR="$state/tmp" WAR_TRUSTED_RUNTIME_INVENTORY=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"
 grep -q '^TRUSTED_RUNTIME_INVENTORY {"schema":1,' "$state/report"
-grep '^TRUSTED_RUNTIME_INVENTORY ' "$state/report" | sed 's/^TRUSTED_RUNTIME_INVENTORY //' | jq -e '.evidence=="observed-cold-build-inventory-only" and (.inventory.installed_packages|length)==12 and (.recipe_files|length)==19 and (.inventory.transaction.apt_targets|length)==1 and (.inventory.transaction.downloaded_archives|length)==10 and (.inventory.transaction.downloaded_archives | all((.apt_origins|length)==1 and all(.apt_origins[]; .trusted == true)))' >/dev/null
+grep '^TRUSTED_RUNTIME_INVENTORY ' "$state/report" | sed 's/^TRUSTED_RUNTIME_INVENTORY //' | jq -e '.evidence=="observed-cold-build-inventory-only" and (.inventory.installed_packages|length)==12 and (.recipe_files|length)==22 and (.inventory.transaction.apt_targets|length)==1 and (.inventory.transaction.downloaded_archives|length)==10 and (.inventory.transaction.downloaded_archives | all((.apt_origins|length)==1 and all(.apt_origins[]; .trusted == true)))' >/dev/null
+export EXPECTED_ARCHIVE_POLICY=proposal
+: > "$state/trace"
+PATH="$state/bin:$PATH" TMPDIR="$state/tmp" WAR_TRUSTED_RUNTIME_INVENTORY=1 WAR_TRUSTED_RUNTIME_ARCHIVE_PROPOSAL=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"
+grep -q -- '--build-arg WAR_RUNTIME_ARCHIVE_POLICY=proposal' "$state/trace"
+grep -q '^TRUSTED_RUNTIME_ARCHIVE_PROPOSAL evidence-only=true$' "$state/report"
+grep -q '^TRUSTED_RUNTIME_INVENTORY {"schema":1,' "$state/report"
+export EXPECTED_ARCHIVE_POLICY=locked
 for observation in inspect-failed extract-failed cleanup-failed timeout; do
   if PATH="$state/bin:$PATH" TMPDIR="$state/tmp" OBSERVATION="$observation" WAR_TRUSTED_INSPECT_SECONDS=2 WAR_TRUSTED_RUNTIME_INVENTORY=1 bash "$root/tools/build-trusted-regression-runtime.sh" > "$state/out" 2> "$state/report"; then
     echo "accepted failed $observation observation" >&2; exit 1

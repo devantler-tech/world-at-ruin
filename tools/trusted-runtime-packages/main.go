@@ -62,7 +62,7 @@ var packageVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 var manifestDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 var snapshotID = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z$`)
 var runtimeFrom = regexp.MustCompile(`(?m)^FROM ubuntu:24\.04@(sha256:[0-9a-f]{64})\s*$`)
-var snapshotSetting = regexp.MustCompile(`APT::Snapshot "([0-9]{8}T[0-9]{6}Z)";`)
+var snapshotSourceRewrite = regexp.MustCompile(`s#\^URIs: \.\*#URIs: https://snapshot[.]ubuntu[.]com/ubuntu/([0-9]{8}T[0-9]{6}Z)/#`)
 var installPin = regexp.MustCompile(`^([a-z0-9][a-z0-9+.-]*)=([A-Za-z0-9][A-Za-z0-9+.:~_-]*)$`)
 var fileDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var archiveDigest = regexp.MustCompile(`^[0-9a-f]{128}$`)
@@ -125,7 +125,7 @@ func joinRecipe(value packageLock, recipe []byte) error {
 	if bytes.Count(recipe, []byte(required)) != 1 {
 		return errors.New("mandatory package verifier recipe missing, altered or repeated")
 	}
-	bases, snapshots := runtimeFrom.FindAllSubmatch(recipe, -1), snapshotSetting.FindAllSubmatch(recipe, -1)
+	bases, snapshots := runtimeFrom.FindAllSubmatch(recipe, -1), snapshotSourceRewrite.FindAllSubmatch(recipe, -1)
 	if len(bases) != 1 || len(snapshots) != 1 || string(bases[0][1]) != value.RuntimeManifest || string(snapshots[0][1]) != value.Snapshot {
 		return errors.New("package lock does not match runtime base or snapshot")
 	}
@@ -236,7 +236,7 @@ func generate(raw, recipe []byte) (packageLock, error) {
 	if len(observed.Inventory.Packages) <= len(pins) {
 		return value, errors.New("cold report lacks installed dependency identities")
 	}
-	bases, snapshots := runtimeFrom.FindAllSubmatch(recipe, -1), snapshotSetting.FindAllSubmatch(recipe, -1)
+	bases, snapshots := runtimeFrom.FindAllSubmatch(recipe, -1), snapshotSourceRewrite.FindAllSubmatch(recipe, -1)
 	if len(bases) != 1 || len(snapshots) != 1 {
 		return value, errors.New("runtime recipe identity missing")
 	}

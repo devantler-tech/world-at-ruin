@@ -51,3 +51,13 @@ https://www\.playstation\.com/
 #
 # Scoped to the host, like the entry above, rather than accepting 403 globally.
 https://infocuria\.curia\.europa\.eu/
+
+# The archive expectation records APT's authenticated origin identities exactly as APT reports
+# them. Snapshot's repository root, distribution roots and logical uncompressed `Packages` index
+# identifiers are not browser resources: all seven deterministically return 404, while APT reads
+# the signed InRelease metadata and compressed index variants and the hosted locked cold build
+# proves the corresponding archive downloads. Keep the exception limited to those identities;
+# concrete `pool/.../*.deb` archive URLs remain link-checked.
+https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/$
+https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/dists/(noble|noble-updates|noble-security|noble-backports)/$
+https://snapshot\.ubuntu\.com/ubuntu/[0-9]{8}T[0-9]{6}Z/dists/(noble|noble-updates|noble-security|noble-backports)/main/binary-amd64/Packages$

@@ -12,6 +12,12 @@ updates:
       # devantler-tech Go modules are our own code — bump now, no cooldown.
       exclude:
         - "github.com/devantler-tech/*"
+    ignore:
+      # This is a nested module in this repository, required by a pseudo-version.
+      # Its versions are this repository's tags (vX.Y.Z), which Go cannot resolve
+      # for a nested module path, so Dependabot can never update it. It is moved
+      # on purpose, together with the change to server/nakama-issued-runtime.
+      - dependency-name: "github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime"
 
   # The explicitly experimental issued runtime has independent module locks.
   - package-ecosystem: gomod
