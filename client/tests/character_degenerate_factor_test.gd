@@ -13,6 +13,7 @@ extends Node
 
 const DEGENERATE_VALUES := [0.0, 1e-9, -0.5, -1.0]
 const TOLERANCE := 1e-5
+const PROBE := "user://character_degenerate_factor_probe.json"
 
 
 func _ready() -> void:
@@ -82,9 +83,21 @@ func _recipe(overrides: Dictionary) -> Dictionary:
 	return recipe
 
 
-## The bone rests of one built body, or null when the recipe is refused.
+## The bone rests of one built body, or null when the recipe is refused. The
+## recipe takes the saved-character read path first: it is written to disk,
+## parsed by load_recipe and checked by refusal_reason, so a reader that
+## rejected, coerced or dropped a degenerate factor fails here too.
 func _rests(recipe: Dictionary) -> Variant:
-	var built := CharacterFactory.build(recipe)
+	PersistenceTestSupport.remove_file(PROBE)
+	if not PersistenceTestSupport.write_text(PROBE, JSON.stringify(recipe, "  ", true, true)):
+		return null
+	var loaded: Variant = CharacterFactory.load_recipe(PROBE)
+	PersistenceTestSupport.remove_file(PROBE)
+	if loaded is not Dictionary:
+		return null
+	if CharacterFactory.refusal_reason(loaded) != "":
+		return null
+	var built := CharacterFactory.build(loaded)
 	if built == null:
 		return null
 	var skeleton := CharacterFactory.find_skeleton(built)
