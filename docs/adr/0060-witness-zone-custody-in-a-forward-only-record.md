@@ -51,8 +51,9 @@ The package tests drive a local compare-and-set fake through the forward chain,
 every refusal control with the stored record unchanged, a committed write whose
 reply is lost or canceled, an uncommitted write whose reply is lost, a competing
 writer's record, a replaced or unreadable table and each comparison verdict. An
-import control keeps the package free of any network, cloud SDK or storage
-client.
+import control keeps the `custodywitness` package itself free of any network,
+cloud SDK or storage client; only its `dynamowitness` subpackage imports the AWS
+SDK.
 
 ## Not covered
 
