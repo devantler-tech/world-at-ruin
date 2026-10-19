@@ -757,7 +757,7 @@ the permanent blocking policy.
   key whose stage moves enrolled → custody → tombstone, carrying exactly the pins
   of reached stages. Its strict reader and `Follows` refuse any skipped, repeated
   or backward step or rewritten pin. The default-off client checks the pinned
-  table identity before every read and write, writes conditionally on the exact
+  table identity before and after every read and write, writes conditionally on the exact
   previous record, resolves a lost reply by one exact re-read and never retries;
   `Compare` returns one of seven verdicts and only `verified` is positive. It
   grants no authority, and nothing composes it; the DynamoDB adapter and native

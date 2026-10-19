@@ -28,8 +28,10 @@ the server durability guard.
 
 The client works over an abstract strongly consistent table. It is default-off
 and requires a table identity pinned at deployment; it reads the table's actual
-identity before every read and write and refuses a mismatch, because a restored
-or recreated table has a different identity even under the same name. An
+identity before and after every read and write and refuses a mismatch, because a
+restored or recreated table has a different identity even under the same name,
+and a table replaced while an operation is in flight must not yield an
+acknowledgement or a verified comparison. An
 enrollment is created only when no record exists; every later stage is written
 only when the stored record equals the exact previous record. A refused
 condition is final. A lost or late reply is resolved by exactly one strongly

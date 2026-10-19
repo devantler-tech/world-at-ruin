@@ -27,6 +27,8 @@ type fakeTable struct {
 	loseWithoutCommit bool
 	// onPut runs after a write is stored, before its reply returns.
 	onPut func()
+	// onGet runs after a read, before its reply returns.
+	onGet func()
 }
 
 func newFake() *fakeTable {
@@ -47,6 +49,9 @@ func (f *fakeTable) Get(_ context.Context, key string) (string, bool, error) {
 		return "", false, f.getErr
 	}
 	value, found := f.items[key]
+	if f.onGet != nil {
+		f.onGet()
+	}
 	return value, found, nil
 }
 
@@ -309,5 +314,43 @@ func TestCompareClassifiesEveryOutcome(t *testing.T) {
 		if got := newClient(t, table).Compare(ctx, enrolled); got != Unavailable {
 			t.Fatal(name, "failure not unavailable", got)
 		}
+	}
+}
+
+// replacementTable is the identity a recreated table under the same name has.
+var replacementTable = TableIdentity{ID: "table-b", CreatedAt: pinnedTable.CreatedAt.Add(time.Hour)}
+
+func TestTableReplacedDuringAnOperationIsNeverAcknowledgedOrVerified(t *testing.T) {
+	ctx := context.Background()
+
+	writer := newFake()
+	writer.onPut = func() { writer.identity = replacementTable }
+	if got, err := newClient(t, writer).Write(ctx, Record{}, enrolled); !errors.Is(err, ErrUnknown) || got != (Record{}) {
+		t.Fatal("write that reached a replacement table acknowledged", got, err)
+	}
+
+	lost := newFake()
+	lost.commitThenLose = true
+	lost.onGet = func() { lost.identity = replacementTable }
+	if got, err := newClient(t, lost).Write(ctx, Record{}, enrolled); !errors.Is(err, ErrUnknown) || got != (Record{}) {
+		t.Fatal("re-read from a replacement table acknowledged", got, err)
+	}
+
+	reader := newFake()
+	if _, err := newClient(t, reader).Write(ctx, Record{}, enrolled); err != nil {
+		t.Fatal(err)
+	}
+	reader.onGet = func() { reader.identity = replacementTable }
+	if got := newClient(t, reader).Compare(ctx, enrolled); got != TableReplaced {
+		t.Fatal("read from a replacement table not reported replaced", got)
+	}
+
+	unreadable := newFake()
+	if _, err := newClient(t, unreadable).Write(ctx, Record{}, enrolled); err != nil {
+		t.Fatal(err)
+	}
+	unreadable.onGet = func() { unreadable.identityErr = errLost }
+	if got := newClient(t, unreadable).Compare(ctx, enrolled); got != Unavailable {
+		t.Fatal("unconfirmed identity after a read not reported unavailable", got)
 	}
 }

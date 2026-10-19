@@ -14,6 +14,9 @@ import (
 var ErrConditionFailed = errors.New("custody witness: write condition refused")
 
 // Table is the witness storage boundary. Every read is strongly consistent.
+// Get and Put may address the table by a replaceable name, so the client reads
+// Identity both before and after each of them: a call that reached a
+// replacement table is never acknowledged and never verified.
 type Table interface {
 	// Identity reads the identity of the table the client is actually using.
 	Identity(ctx context.Context) (TableIdentity, error)
@@ -91,6 +94,11 @@ func (c *Client) Write(ctx context.Context, previous, next Record) (Record, erro
 	}
 	err = c.table.Put(writeCtx, next.LifetimeKey, expected, value)
 	if err == nil && writeCtx.Err() == nil {
+		// A write that may have reached a replacement table is no
+		// acknowledgement, even though that table accepted it.
+		if !c.pinned(writeCtx) {
+			return Record{}, ErrUnknown
+		}
 		return next, nil
 	}
 	if errors.Is(err, ErrConditionFailed) {
@@ -106,7 +114,7 @@ func (c *Client) Write(ctx context.Context, previous, next Record) (Record, erro
 		return Record{}, ErrUnknown
 	}
 	stored, found, err := c.table.Get(readCtx, next.LifetimeKey)
-	if err != nil || readCtx.Err() != nil || !found || stored != value {
+	if err != nil || readCtx.Err() != nil || !found || stored != value || !c.pinned(readCtx) {
 		return Record{}, ErrUnknown
 	}
 	return next, nil
@@ -145,16 +153,17 @@ func (c *Client) Compare(ctx context.Context, expected Record) Verdict {
 	}
 	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
-	identity, err := c.table.Identity(ctx)
-	if err != nil || ctx.Err() != nil {
-		return Unavailable
-	}
-	if !sameIdentity(identity, c.identity) {
-		return TableReplaced
+	if verdict := c.identityVerdict(ctx); verdict != Verified {
+		return verdict
 	}
 	value, found, err := c.table.Get(ctx, expected.LifetimeKey)
 	if err != nil || ctx.Err() != nil {
 		return Unavailable
+	}
+	// The read may have reached a table that replaced the pinned one after
+	// the first check, so nothing it returned counts until the pin holds again.
+	if verdict := c.identityVerdict(ctx); verdict != Verified {
+		return verdict
 	}
 	if !found {
 		return Absent
@@ -189,8 +198,20 @@ func (r Record) truncate(rank int) Record {
 
 // pinned reads the table identity and requires it to equal the pinned value.
 func (c *Client) pinned(ctx context.Context) bool {
+	return c.identityVerdict(ctx) == Verified
+}
+
+// identityVerdict reads the table identity: Verified when it equals the pinned
+// value, TableReplaced when it differs and Unavailable when it cannot be read.
+func (c *Client) identityVerdict(ctx context.Context) Verdict {
 	identity, err := c.table.Identity(ctx)
-	return err == nil && ctx.Err() == nil && sameIdentity(identity, c.identity)
+	if err != nil || ctx.Err() != nil {
+		return Unavailable
+	}
+	if !sameIdentity(identity, c.identity) {
+		return TableReplaced
+	}
+	return Verified
 }
 
 // sameIdentity compares instants, so a location or monotonic reading cannot
