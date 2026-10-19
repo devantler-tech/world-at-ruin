@@ -408,17 +408,37 @@ func frozenRepo(t *testing.T, files map[string]string) string {
 	return strings.TrimSpace(string(revision))
 }
 
-// frozenClone is one reported Go clone between two files.
+// frozenClone is one reported Go clone between two files, from column 0 of its
+// first line to column 20 of its last.
 func frozenClone(first, second, text string, lines int) map[string]any {
-	side := func(name string) map[string]any { return map[string]any{"name": name, "start": 1, "end": lines} }
-	return map[string]any{"format": "go", "fragment": text, "lines": lines, "tokens": 6, "firstFile": side(first), "secondFile": side(second)}
+	return place(map[string]any{"format": "go", "fragment": text, "lines": lines, "tokens": 10 * lines,
+		"firstFile": map[string]any{"name": first}, "secondFile": map[string]any{"name": second}}, 1, 0, 20)
+}
+
+// place puts both sides of a clone at a start line, between two columns.
+func place(copy map[string]any, start, startColumn, endColumn int) map[string]any {
+	end := start + copy["lines"].(int) - 1
+	for _, side := range []string{"firstFile", "secondFile"} {
+		copy[side] = map[string]any{"name": copy[side].(map[string]any)["name"], "start": start, "end": end,
+			"startLoc": map[string]any{"line": start, "column": startColumn}, "endLoc": map[string]any{"line": end, "column": endColumn}}
+	}
+	return copy
 }
 
 // shifted moves both sides of a clone to start at the given line.
-func shifted(copy map[string]any, start int) map[string]any {
-	lines := copy["lines"].(int)
+func shifted(copy map[string]any, start int) map[string]any { return place(copy, start, 0, 20) }
+
+// with sets one field of a clone.
+func with(copy map[string]any, field string, value any) map[string]any {
+	copy[field] = value
+	return copy
+}
+
+// unplaced drops the scanner's line and column coordinates from both sides.
+func unplaced(copy map[string]any) map[string]any {
 	for _, side := range []string{"firstFile", "secondFile"} {
-		copy[side] = map[string]any{"name": copy[side].(map[string]any)["name"], "start": start, "end": start + lines - 1}
+		delete(copy[side].(map[string]any), "startLoc")
+		delete(copy[side].(map[string]any), "endLoc")
 	}
 	return copy
 }
@@ -426,11 +446,12 @@ func shifted(copy map[string]any, start int) map[string]any {
 // cloneReport writes a scanner report whose statistics agree with its clones.
 func cloneReport(t *testing.T, dir, name string, clones []any) string {
 	t.Helper()
-	lines := 0
+	lines, tokens := 0, 0
 	for _, copy := range clones {
 		lines += copy.(map[string]any)["lines"].(int)
+		tokens += copy.(map[string]any)["tokens"].(int)
 	}
-	return putReport(t, dir, name, clones, 100, 1000, lines, 6*len(clones))
+	return putReport(t, dir, name, clones, 100, 1000, lines, tokens)
 }
 
 // TestFrozenReferenceSplitNeedsTheBaseScan accepts an uncatalogued clone between
@@ -462,6 +483,16 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 			base: []any{whole}, head: []any{shifted(frozenClone(live, frozen, "elsewhere", 5), 20)}},
 		{name: "text straddling the reported region is refused", want: "unaccepted clone",
 			base: []any{whole}, head: []any{shifted(frozenClone(live, frozen, "edge", 4), 8)}},
+		{name: "a split may start partway through the reported first line",
+			base: []any{place(frozenClone(live, frozen, "whole", 10), 1, 15, 20)}, head: []any{place(frozenClone(live, frozen, "front", 5), 1, 15, 20)}},
+		{name: "a split reaching into the unshared start of a boundary line is refused", want: "unaccepted clone",
+			base: []any{place(frozenClone(live, frozen, "whole", 10), 1, 15, 20)}, head: []any{place(frozenClone(live, frozen, "front", 5), 1, 0, 20)}},
+		{name: "a split reaching past the reported last column is refused", want: "unaccepted clone",
+			base: []any{whole}, head: []any{place(frozenClone(live, frozen, "back", 5), 6, 0, 21)}},
+		{name: "a split without scanner columns is refused", want: "unaccepted clone",
+			base: []any{whole}, head: []any{unplaced(frozenClone(live, frozen, "front", 5))}},
+		{name: "a split that grows duplicated tokens is refused", want: "grows duplication",
+			base: []any{whole}, head: []any{with(frozenClone(live, frozen, "front", 5), "tokens", 101)}},
 		{name: "a split that grows duplicated lines is refused", want: "grows duplication",
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 6), frozenClone(live, frozen, "back", 5)}},
 		{name: "a later split of an accepted split is accepted", unheld: true,

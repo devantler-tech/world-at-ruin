@@ -40,9 +40,25 @@ const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e3
 var formatData []byte
 
 type location struct {
-	Name  string `json:"name"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
+	Name     string `json:"name"`
+	Start    int    `json:"start"`
+	End      int    `json:"end"`
+	StartLoc *point `json:"startLoc"`
+	EndLoc   *point `json:"endLoc"`
+}
+
+// point is the scanner's line and column of one end of a clone side.
+type point struct {
+	Line   *int `json:"line"`
+	Column *int `json:"column"`
+}
+
+// before reports whether a lies at or before b; a missing coordinate never does.
+func (a *point) before(b *point) bool {
+	if a == nil || b == nil || a.Line == nil || a.Column == nil || b.Line == nil || b.Column == nil {
+		return false
+	}
+	return *a.Line < *b.Line || (*a.Line == *b.Line && *a.Column <= *b.Column)
 }
 
 // revisionPattern is a full commit name, the only base the frozen-reference proof reads.
@@ -405,10 +421,10 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 		}
 	}
 	if len(split) != 0 {
-		head, base := pairLines(*r.Duplicates), pairLines(*baseScan.Duplicates)
+		head, base := pairTotals(*r.Duplicates), pairTotals(*baseScan.Duplicates)
 		for p := range split {
-			if head[p] > base[p] {
-				return fmt.Errorf("frozen-reference split grows duplication: %s and %s report %d duplicated lines, %d at the base; share the code instead", p.Files[0], p.Files[1], head[p], base[p])
+			if head[p][0] > base[p][0] || head[p][1] > base[p][1] {
+				return fmt.Errorf("frozen-reference split grows duplication: %s and %s report %d duplicated lines and %d tokens, %d and %d at the base; share the code instead", p.Files[0], p.Files[1], head[p][0], head[p][1], base[p][0], base[p][1])
 			}
 		}
 	}
@@ -430,14 +446,15 @@ func frozenPair(files [2]string) bool {
 // frozen reference only as a split of duplication the pinned scanner already
 // reported at the base revision: the base catalog did not list this exact
 // identity (a catalogued clone keeps its entry, so deleting one fails), the
-// reference is byte-identical to its base, and the clone's lines in the
-// reference lie inside one clone the base scan reported for the pair. An unchanged reference keeps
-// its line numbers, so text copied from a part of it that was not duplicated
-// at the base never qualifies. The base passed this gate, so each reported
-// clone there was catalogued or was itself such a split: a split of a split is
-// accepted, and regions only shrink. check then budgets the pair's duplicated
-// lines by the base scan. Every other clone, and any proof that cannot be
-// completed, is not a split.
+// reference is byte-identical to its base, and the clone's side in the
+// reference lies inside one clone the base scan reported for the pair, to the
+// line and column. An unchanged reference tokenizes identically, so text
+// copied from any part of it that was not duplicated at the base, even part of
+// a boundary line, never qualifies. The base passed this gate, so each
+// reported clone there was catalogued or was itself such a split: a split of a
+// split is accepted, and regions only shrink. check then budgets the pair's
+// duplicated lines and tokens by the base scan. Every other clone, and any
+// proof that cannot be completed, is not a split.
 func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revision string) (bool, error) {
 	e := identity(copy)
 	if baseScan == nil {
@@ -464,7 +481,7 @@ func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revisi
 	inside := false
 	for _, old := range *baseScan.Duplicates {
 		was := identity(old)
-		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.Start <= span.Start && span.End <= region.End {
+		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) {
 			inside = true
 		}
 	}
@@ -493,14 +510,15 @@ func sideIn(copy clone, name string) (location, bool) {
 	return location{}, false
 }
 
-// pairLines sums the duplicated lines a scan reports for each file pair.
-func pairLines(clones []clone) map[pair]int {
-	lines := make(map[pair]int)
+// pairTotals sums the duplicated lines and tokens a scan reports for each file pair.
+func pairTotals(clones []clone) map[pair][2]int {
+	totals := make(map[pair][2]int)
 	for _, copy := range clones {
 		e := identity(copy)
-		lines[pair{e.Format, e.Files}] += copy.Lines
+		p := pair{e.Format, e.Files}
+		totals[p] = [2]int{totals[p][0] + copy.Lines, totals[p][1] + copy.Tokens}
 	}
-	return lines
+	return totals
 }
 
 // atRevision reads one tracked file's bytes at a commit; absence is not an error.

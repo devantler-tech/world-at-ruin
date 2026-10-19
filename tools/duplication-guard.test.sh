@@ -149,4 +149,33 @@ if frozen_check "$tmp_dir/frozen-grown" "$base_scan" > "$tmp_dir/frozen-grown.lo
   echo 'TEST FAIL — text newly copied from a frozen reference passed' >&2; exit 1
 fi
 grep -q 'unaccepted clone' "$tmp_dir/frozen-grown.log"
+# A base clone that starts partway through a line: matching the reference's
+# unshared prefix on that line keeps the line span but adds duplicated tokens.
+mkdir -p "$tmp_dir/column/client/scripts" "$tmp_dir/column/client/tests/historical"
+cd "$tmp_dir/column"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n'; } > client/tests/historical/frozen.go
+sed -e 's/^package fixture$/package live/' -e 's/^func calculate(input int) int {$/func estimate(input int) int {/' \
+  client/tests/historical/frozen.go > client/scripts/live.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/column-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+[[ "$(jq '[.duplicates[] | .firstFile.startLoc.column] | min' "$tmp_dir/column-base/jscpd-report.json")" -gt 0 ]] || {
+  echo 'TEST FAIL — the fixture base clone does not start partway through a line' >&2; exit 1
+}
+"$tmp_dir/guard" generate "$tmp_dir/column-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/column-base-catalog.json"
+perl -pi -e 's/^func estimate\(/func calculate(/' client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/column-head" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/column-base-catalog.json" "$tmp_dir/column-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/column-head/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/column-catalog.json"
+start_lines() { jq -c '[.duplicates[] | [.firstFile.startLoc.line, .secondFile.startLoc.line]]' "$1"; }
+[[ "$(start_lines "$tmp_dir/column-base/jscpd-report.json")" == "$(start_lines "$tmp_dir/column-head/jscpd-report.json")" ]] || {
+  echo 'TEST FAIL — the fixture edit moved the clone start line' >&2; exit 1
+}
+if "$tmp_dir/guard" check "$tmp_dir/column-head/jscpd-report.json" "$tmp_dir/column-catalog.json" \
+  "$tmp_dir/column-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/column-base/jscpd-report.json" > "$tmp_dir/column.log" 2>&1; then
+  echo 'TEST FAIL — a clone grown into the unshared start of a boundary line passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/column.log"
 echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'
