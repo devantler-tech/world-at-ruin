@@ -542,9 +542,16 @@ func same(a, b location) bool {
 // head unchanged was not cut at all. Removing an unrelated clone of the pair
 // changes no count.
 func cutsIn(head, base []clone, p pair, frozen string) int {
-	kept := make(map[string]bool)
-	for _, copy := range head {
-		kept[identity(copy).Key] = true
+	// A base occurrence is kept when the head reports the same identity over the
+	// same reference span; another occurrence of that identity may still be cut.
+	kept := func(old clone) bool {
+		region, ok := sideIn(old, frozen)
+		for _, copy := range head {
+			if side, found := sideIn(copy, frozen); ok && found && identity(copy).Key == identity(old).Key && same(side, region) {
+				return true
+			}
+		}
+		return false
 	}
 	children := make([]int, len(base))
 	for _, copy := range head {
@@ -564,7 +571,7 @@ func cutsIn(head, base []clone, p pair, frozen string) int {
 	}
 	cuts := 0
 	for i, n := range children {
-		if !kept[identity(base[i]).Key] {
+		if !kept(base[i]) {
 			cuts += max(0, n-1)
 		}
 	}
