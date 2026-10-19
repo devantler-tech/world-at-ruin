@@ -202,4 +202,26 @@ if "$tmp_dir/guard" check "$tmp_dir/overlap-head/jscpd-report.json" "$tmp_dir/ov
   echo 'TEST FAIL — two fragments sharing the same reference text passed' >&2; exit 1
 fi
 grep -q 'more often' "$tmp_dir/overlap.log"
+# Fragments may share the token at a cut, but repeating a whole reference line
+# on both sides of an inserted statement copies that line's tokens again.
+mkdir -p "$tmp_dir/sameline/client/scripts" "$tmp_dir/sameline/client/tests/historical"
+cd "$tmp_dir/sameline"
+same_line='  p := input*91; q := input*92; r := input*93'
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 15; printf '%s\n' "$same_line"; frozen_body 16 30; printf '  return value30\n}\n'; } > client/tests/historical/frozen.go
+sed 's/^package fixture$/package live/' client/tests/historical/frozen.go > client/scripts/live.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/sameline-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+"$tmp_dir/guard" generate "$tmp_dir/sameline-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/sameline-base-catalog.json"
+{ printf 'package live\n\nfunc calculate(input int) int {\n'; frozen_body 1 15; printf '%s\n  inserted := input - 1\n%s\n' "$same_line" "$same_line"; frozen_body 16 30; printf '  return value30\n}\n'; } > client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/sameline-head" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/sameline-base-catalog.json" "$tmp_dir/sameline-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/sameline-head/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/sameline-catalog.json"
+if "$tmp_dir/guard" check "$tmp_dir/sameline-head/jscpd-report.json" "$tmp_dir/sameline-catalog.json" \
+  "$tmp_dir/sameline-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/sameline-base/jscpd-report.json" > "$tmp_dir/sameline.log" 2>&1; then
+  echo 'TEST FAIL — a reference line copied on both sides of a cut passed' >&2; exit 1
+fi
+grep -q 'grows duplication' "$tmp_dir/sameline.log"
 echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'

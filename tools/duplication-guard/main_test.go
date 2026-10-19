@@ -428,16 +428,6 @@ func place(copy map[string]any, start, startColumn, endColumn int) map[string]an
 // shifted moves both sides of a clone to start at the given line.
 func shifted(copy map[string]any, start int) map[string]any { return place(copy, start, 0, 20) }
 
-// stretched lengthens one side of a clone by extra lines, as the live side
-// of tokens laid over more lines than in the reference.
-func stretched(copy map[string]any, side string, extra int) map[string]any {
-	where := copy[side].(map[string]any)
-	end := where["end"].(int) + extra
-	where["end"] = end
-	where["endLoc"] = map[string]any{"line": end, "column": 20}
-	return copy
-}
-
 // with sets one field of a clone.
 func with(copy map[string]any, field string, value any) map[string]any {
 	copy[field] = value
@@ -504,7 +494,7 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 		{name: "two splits sharing reference text are refused", want: "more often",
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), shifted(frozenClone(live, frozen, "again", 4), 4)}},
 		{name: "fragments of a split sharing the token at the cut are accepted",
-			base: []any{whole}, head: []any{place(frozenClone(live, frozen, "front", 5), 1, 0, 4), place(frozenClone(live, frozen, "back", 6), 5, 1, 20)}},
+			base: []any{whole}, head: []any{with(place(frozenClone(live, frozen, "front", 5), 1, 0, 4), "tokens", 51), with(place(frozenClone(live, frozen, "back", 6), 5, 1, 20), "tokens", 50)}},
 		{name: "another clone of the pair without scanner columns fails closed", want: "more often",
 			base: []any{whole, shifted(frozenClone(live, frozen, "tail", 4), 20)}, head: []any{frozenClone(live, frozen, "front", 5), unplaced(shifted(frozenClone(live, frozen, "tail", 4), 20))}},
 		{name: "fragments sharing text across a line break are refused", want: "more often",
@@ -519,14 +509,12 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 			head: []any{whole, place(frozenClone(live, frozen, "tail", 6), 9, 0, 20), shifted(frozenClone(live, frozen, "again", 2), 9)}},
 		{name: "splits meeting at one column are accepted",
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), place(frozenClone(live, frozen, "touch", 4), 5, 20, 20)}},
-		{name: "a split whose live side spans more lines than its reference side is refused", want: "unaccepted clone",
-			base: []any{whole}, head: []any{stretched(frozenClone(live, frozen, "front", 5), "firstFile", 3)}},
-		{name: "a split may keep the stretch its base clone had",
-			base: []any{stretched(frozenClone(live, frozen, "whole", 10), "firstFile", 3)}, head: []any{stretched(frozenClone(live, frozen, "front", 5), "firstFile", 3)}},
-		{name: "a split may not stretch further than its base clone", want: "unaccepted clone",
-			base: []any{stretched(frozenClone(live, frozen, "whole", 10), "firstFile", 1)}, head: []any{stretched(frozenClone(live, frozen, "front", 5), "firstFile", 2)}},
-		{name: "a stretched live side reported second is refused", want: "unaccepted clone",
-			base: []any{frozenClone(frozen, live, "whole", 10)}, head: []any{stretched(frozenClone(frozen, live, "front", 5), "secondFile", 3)}},
+		{name: "a split adding lines beyond one per cut is refused", want: "grows duplication",
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), with(shifted(frozenClone(live, frozen, "back", 5), 6), "lines", 7)}},
+		{name: "a split adding tokens beyond one per cut is refused", want: "grows duplication",
+			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), with(shifted(frozenClone(live, frozen, "back", 5), 6), "tokens", 52)}},
+		{name: "an unsplit clone gets no cut allowance", want: "grows duplication", unheld: true,
+			base: []any{frozenClone(live, frozen, "front", 5)}, head: []any{with(shifted(frozenClone(live, frozen, "inner", 3), 2), "tokens", 51)}},
 		{name: "a later split of an accepted split is accepted", unheld: true,
 			base: []any{frozenClone(live, frozen, "front", 5)}, head: []any{shifted(frozenClone(live, frozen, "inner", 3), 2)}},
 		{name: "an untouched fragment of an accepted split is accepted", unheld: true,
