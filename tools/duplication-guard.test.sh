@@ -201,5 +201,5 @@ if "$tmp_dir/guard" check "$tmp_dir/overlap-head/jscpd-report.json" "$tmp_dir/ov
   "$(git rev-parse HEAD)" "$tmp_dir/overlap-base/jscpd-report.json" > "$tmp_dir/overlap.log" 2>&1; then
   echo 'TEST FAIL — two fragments sharing the same reference text passed' >&2; exit 1
 fi
-grep -q 'shared twice' "$tmp_dir/overlap.log"
+grep -q 'more often' "$tmp_dir/overlap.log"
 echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'

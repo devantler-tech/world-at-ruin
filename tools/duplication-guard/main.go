@@ -404,8 +404,7 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 	}
 	observed := make(map[string]int)
 	split := make(map[pair]bool)
-	var splits []int
-	for index, copy := range *r.Duplicates {
+	for _, copy := range *r.Duplicates {
 		e := identity(copy)
 		observed[e.Key]++
 		if observed[e.Key] > accepted[e.Key].Occurrences {
@@ -419,34 +418,17 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 			// Accepted by the base scan, not by this identity's catalog entry.
 			observed[e.Key]--
 			split[pair{e.Format, e.Files}] = true
-			splits = append(splits, index)
 		}
 	}
-	// Each piece of reference text may be shared once: a split overlapping any
-	// other clone of its pair in the reference would copy that text again.
-	for _, index := range splits {
-		copy := (*r.Duplicates)[index]
-		e := identity(copy)
-		frozen := e.Files[0]
+	// Each piece of reference text may be shared no more often than the base
+	// scan shared it: otherwise removed duplication would pay for a new copy.
+	for p := range split {
+		frozen := p.Files[0]
 		if !strings.HasPrefix(frozen, frozenReferencePrefix) {
-			frozen = e.Files[1]
+			frozen = p.Files[1]
 		}
-		span, _ := sideIn(copy, frozen)
-		for other, peer := range *r.Duplicates {
-			if was := identity(peer); other == index || was.Format != e.Format || was.Files != e.Files {
-				continue
-			}
-			if near, ok := sideIn(peer, frozen); !ok || !(span.EndLoc.before(near.StartLoc) || near.EndLoc.before(span.StartLoc)) {
-				return fmt.Errorf("frozen-reference split overlaps another clone of %s and %s in the reference: that text would be shared twice; share the code instead", e.Files[0], e.Files[1])
-			}
-		}
-	}
-	if len(split) != 0 {
-		head, base := pairTotals(*r.Duplicates), pairTotals(*baseScan.Duplicates)
-		for p := range split {
-			if head[p][0] > base[p][0] || head[p][1] > base[p][1] {
-				return fmt.Errorf("frozen-reference split grows duplication: %s and %s report %d duplicated lines and %d tokens, %d and %d at the base; share the code instead", p.Files[0], p.Files[1], head[p][0], head[p][1], base[p][0], base[p][1])
-			}
+		if coverageGrows(sidesIn(*r.Duplicates, p, frozen), sidesIn(*baseScan.Duplicates, p, frozen)) {
+			return fmt.Errorf("frozen-reference split shares text of %s more often than the base scan did (pair %s and %s); share the code instead", frozen, p.Files[0], p.Files[1])
 		}
 	}
 	for key, e := range accepted {
@@ -473,9 +455,9 @@ func frozenPair(files [2]string) bool {
 // copied from any part of it that was not duplicated at the base, even part of
 // a boundary line, never qualifies. The base passed this gate, so each
 // reported clone there was catalogued or was itself such a split: a split of a
-// split is accepted, and regions only shrink. check then budgets the pair's
-// duplicated lines and tokens by the base scan. Every other clone, and any
-// proof that cannot be completed, is not a split.
+// split is accepted, and regions only shrink. check then bounds how often
+// each piece of the reference is shared by the base scan. Every other clone,
+// and any proof that cannot be completed, is not a split.
 func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revision string) (bool, error) {
 	e := identity(copy)
 	if baseScan == nil {
@@ -520,6 +502,51 @@ func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revisi
 	return err == nil && bytes.Equal(current, baseFrozen), nil
 }
 
+// sidesIn returns the reference side of every clone of one pair.
+func sidesIn(clones []clone, p pair, frozen string) []location {
+	var sides []location
+	for _, copy := range clones {
+		if e := identity(copy); e.Format == p.Format && e.Files == p.Files {
+			side, _ := sideIn(copy, frozen)
+			sides = append(sides, side)
+		}
+	}
+	return sides
+}
+
+// coverageGrows reports whether the head sides cover any piece of the
+// reference more often than the base sides do. Pieces run between consecutive
+// clone ends, by line and column; a side without coordinates fails closed.
+// The scanner reports both fragments of a split sharing the token at the cut,
+// so excess inside one line is not growth. Excess reaching across a line
+// break always includes a piece that spans it, so it is never excused.
+func coverageGrows(head, base []location) bool {
+	var marks []point
+	for _, side := range append(append([]location{}, head...), base...) {
+		if !side.StartLoc.before(side.EndLoc) {
+			return true
+		}
+		marks = append(marks, *side.StartLoc, *side.EndLoc)
+	}
+	sort.Slice(marks, func(i, j int) bool { return !marks[j].before(&marks[i]) })
+	count := func(sides []location, from, to *point) int {
+		n := 0
+		for _, side := range sides {
+			if side.StartLoc.before(from) && to.before(side.EndLoc) {
+				n++
+			}
+		}
+		return n
+	}
+	for i := 0; i+1 < len(marks); i++ {
+		from, to := &marks[i], &marks[i+1]
+		if *from.Line != *to.Line && count(head, from, to) > count(base, from, to) {
+			return true
+		}
+	}
+	return false
+}
+
 // sideIn returns the side of a clone that lies in the named file.
 func sideIn(copy clone, name string) (location, bool) {
 	switch {
@@ -529,17 +556,6 @@ func sideIn(copy clone, name string) (location, bool) {
 		return copy.Second, true
 	}
 	return location{}, false
-}
-
-// pairTotals sums the duplicated lines and tokens a scan reports for each file pair.
-func pairTotals(clones []clone) map[pair][2]int {
-	totals := make(map[pair][2]int)
-	for _, copy := range clones {
-		e := identity(copy)
-		p := pair{e.Format, e.Files}
-		totals[p] = [2]int{totals[p][0] + copy.Lines, totals[p][1] + copy.Tokens}
-	}
-	return totals
 }
 
 // atRevision reads one tracked file's bytes at a commit; absence is not an error.
