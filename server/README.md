@@ -163,7 +163,9 @@ zone/dungeon server:
   replay. Explicit speed, bounds and hold settings are required; v3 does not
   distribute them or attest when a sample reached its mailbox. Shared Go/Godot
   position vectors and the required native TLS prediction scenario exercise
-  this boundary. Player controls, collision prediction, rendering and live
+  this boundary. With `WAR_PREDICTED_MOVEMENT=1` as well, the player's controls
+  produce the intents and the body follows the prediction, using the demo
+  zone's settings as fixture configuration. Collision prediction and live
   configuration remain separate work. See [ADR 0026](../docs/adr/0026-keep-client-ground-prediction-explicit.md).
 - **Zone shutdown** — after the simulation loop stops, the command closes HTTP
   ingress, calls `Hub.Shutdown` with a five-second budget, then notifies Agones.
@@ -569,8 +571,9 @@ the allocator-generation fence supervisor of
 [ADR 0002](../docs/adr/0002-seal-zone-admission-secrets-before-readiness.md),
 production composition of the private zone claim endpoint and fenced session-end recovery,
 the client entry point that enables Google account
-provisioning, the party and chat half of the Nakama social surface, client
-prediction and reconciliation in the player controller, real navmesh geometry, and Postgres/CNPG
+provisioning, the party and chat half of the Nakama social surface, default-on
+client prediction (running ahead by the round trip, collision parity and the
+zone's movement settings on the wire), real navmesh geometry, and Postgres/CNPG
 persistence. Zone boot already generates, publishes and observes the sealed
 envelope, and the concrete resource adapter validates, unwraps and recovers it;
 the fence, private claim listener composition and platform deployment of the

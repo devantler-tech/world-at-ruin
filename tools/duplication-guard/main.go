@@ -26,6 +26,17 @@ const adoptionRevision = "afd354c2987d92b89156d7bd96ddc34f7172bb8a"
 const scannerVersion = "cpd 5.0.16"
 const cleanupOwner = 276
 
+// A frozen reference is a historical copy kept byte-for-byte as a compatibility
+// oracle. Its text can never be shared, so editing the live file it was copied
+// from splits clones into new fragments without adding any duplicated text.
+const frozenReferencePrefix = "client/tests/historical/"
+const frozenReferenceReason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+
+// cutToken is the one lexical token the scanner reports both fragments of a
+// cut sharing: a word, a number or one punctuation character. Anything else in
+// a coverage excess is copied text, not a cut.
+var cutToken = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]{0,63}|[0-9]{1,64}|[^A-Za-z0-9_\s])$`)
+
 // Hash of the generated catalog from the independently measured adoption tree.
 // Neither an absent base file nor the adoption SHA permits an invented baseline.
 const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e32ccb6d4889d7"
@@ -34,9 +45,34 @@ const adoptionCatalogSHA = "2acbd35b5aec09ce46e1797987dd7b32fcefe41449ef1526c0e3
 var formatData []byte
 
 type location struct {
-	Name  string `json:"name"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
+	Name     string `json:"name"`
+	Start    int    `json:"start"`
+	End      int    `json:"end"`
+	StartLoc *point `json:"startLoc"`
+	EndLoc   *point `json:"endLoc"`
+}
+
+// point is the scanner's line and column of one end of a clone side.
+type point struct {
+	Line   *int `json:"line"`
+	Column *int `json:"column"`
+}
+
+// before reports whether a lies at or before b; a missing coordinate never does.
+func (a *point) before(b *point) bool {
+	if a == nil || b == nil || a.Line == nil || a.Column == nil || b.Line == nil || b.Column == nil {
+		return false
+	}
+	return *a.Line < *b.Line || (*a.Line == *b.Line && *a.Column <= *b.Column)
+}
+
+// revisionPattern is a full commit name, the only base the frozen-reference proof reads.
+var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// pair names the language and file pair a clone joins, whatever its text.
+type pair struct {
+	Format string
+	Files  [2]string
 }
 
 type clone struct {
@@ -93,10 +129,10 @@ func main() {
 		err = generate(args[1], args[2], args[3])
 	case len(args) == 4 && args[0] == "scan":
 		err = scan(args[1], args[2], args[3])
-	case len(args) == 7 && args[0] == "check":
-		err = check(args[1], args[2], args[3], args[4], args[5], args[6])
+	case len(args) == 8 && args[0] == "check":
+		err = check(args[1], args[2], args[3], args[4], args[5], args[6], args[7])
 	default:
-		err = fmt.Errorf("usage: duplication-guard scan SCANNER OUTPUT CONFIG | generate REPORT CONFIG CATALOG | check REPORT CATALOG BASE-CATALOG CONFIG OWNER BASE-REVISION")
+		err = fmt.Errorf("usage: duplication-guard scan SCANNER OUTPUT CONFIG | generate REPORT CONFIG CATALOG | check REPORT CATALOG BASE-CATALOG CONFIG OWNER BASE-REVISION BASE-REPORT")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "DUPLICATION FAIL:", err)
@@ -241,16 +277,23 @@ func generate(reportPath, configPath, catalogPath string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("existing catalog annotations: %w", err)
 	}
+	// A catalog that loaded, even with no entries, makes this an update.
+	update := err == nil
 	entries := make(map[string]entry)
 	for _, copy := range *r.Duplicates {
 		e := identity(copy)
+		if _, known := previous[e.Key]; !known && update && frozenPair(e.Files) {
+			// A split of an existing frozen-reference clone is accepted by
+			// check's base proof, never by a new catalog entry.
+			continue
+		}
 		if existing, ok := entries[e.Key]; ok {
 			e.Occurrences = existing.Occurrences + 1
 		}
 		e.CleanupIssue = cleanupOwner
-		if strings.HasPrefix(e.Files[0], "client/tests/historical/") || strings.HasPrefix(e.Files[1], "client/tests/historical/") {
+		if frozenPair(e.Files) {
 			e.CleanupIssue = 0
-			e.Reason = "Frozen version-4 save-reader reference; changing it would erase the historical compatibility oracle."
+			e.Reason = frozenReferenceReason
 		} else if e.Format == "csv" && strings.HasPrefix(e.Files[0], "docs/evidence/") && strings.HasPrefix(e.Files[1], "docs/evidence/") {
 			e.CleanupIssue = 0
 			e.Reason = "Before/after measurement records preserve the original observations, including unchanged rows."
@@ -299,7 +342,7 @@ func readCatalog(path string) (catalog, map[string]entry, error) {
 }
 
 // check rejects catalog growth, unaccepted copies, stale entries and unproven ownership.
-func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision string) error {
+func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, baseReportPath string) error {
 	r, err := readReport(reportPath)
 	if err != nil {
 		return err
@@ -315,6 +358,7 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 	if c.SettingsSHA != sha {
 		return fmt.Errorf("detection settings changed")
 	}
+	var previous map[string]entry
 	if basePath == "" {
 		if revision != adoptionRevision {
 			return fmt.Errorf("catalog bootstrap requires exact adoption revision")
@@ -324,7 +368,8 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 			return fmt.Errorf("catalog bootstrap requires the exact reviewed adoption catalog")
 		}
 	} else {
-		base, previous, err := readCatalog(basePath)
+		var base catalog
+		base, previous, err = readCatalog(basePath)
 		if err != nil {
 			return err
 		}
@@ -354,12 +399,51 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 			break
 		}
 	}
+	var baseScan *report
+	if basePath != "" && baseReportPath != "" {
+		value, err := readReport(baseReportPath)
+		if err != nil {
+			return fmt.Errorf("base scan: %w", err)
+		}
+		baseScan = &value
+	}
 	observed := make(map[string]int)
+	split := make(map[pair]bool)
 	for _, copy := range *r.Duplicates {
 		e := identity(copy)
 		observed[e.Key]++
 		if observed[e.Key] > accepted[e.Key].Occurrences {
-			return fmt.Errorf("unaccepted clone: %s:%d and %s:%d; share the code and regenerate the shrinking catalog", copy.First.Name, copy.First.Start, copy.Second.Name, copy.Second.Start)
+			ok, err := splitAtBase(copy, previous, baseScan, revision)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("unaccepted clone: %s:%d and %s:%d; share the code and regenerate the shrinking catalog", copy.First.Name, copy.First.Start, copy.Second.Name, copy.Second.Start)
+			}
+			// Accepted by the base scan, not by this identity's catalog entry.
+			observed[e.Key]--
+			split[pair{e.Format, e.Files}] = true
+		}
+	}
+	// Each piece of reference text may be shared no more often than the base
+	// scan shared it: otherwise removed duplication would pay for a new copy. The
+	// live side repeats the reference side's tokens, so this bounds both.
+	for p := range split {
+		frozen := p.Files[0]
+		if !strings.HasPrefix(frozen, frozenReferencePrefix) {
+			frozen = p.Files[1]
+		}
+		head, base := pairTotals(*r.Duplicates, p), pairTotals(*baseScan.Duplicates, p)
+		cuts := cutsIn(*r.Duplicates, *baseScan.Duplicates, p, frozen)
+		text, err := os.ReadFile(frozen)
+		if err != nil || coverageGrows(sidesIn(*r.Duplicates, p, frozen), sidesIn(*baseScan.Duplicates, p, frozen), text, cuts) {
+			return fmt.Errorf("frozen-reference split shares text of %s more often than the base scan did (pair %s and %s); share the code instead", frozen, p.Files[0], p.Files[1])
+		}
+		// The scanner reports both fragments of a cut sharing one token, on one
+		// line, so each fragment beyond the base's clone count may add one line
+		// and one token; more is duplication the cut did not need.
+		if head[1] > base[1]+cuts || head[2] > base[2]+cuts {
+			return fmt.Errorf("frozen-reference split grows duplication: %s and %s report %d duplicated lines and %d tokens in %d clones, %d and %d in %d at the base; share the code instead", p.Files[0], p.Files[1], head[1], head[2], head[0], base[1], base[2], base[0])
 		}
 	}
 	for key, e := range accepted {
@@ -369,6 +453,211 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision st
 	}
 	fmt.Printf("DUPLICATION PASS: %d clones, %d duplicated lines; every identity and occurrence accepted, catalog only shrinks\n", len(*r.Duplicates), *r.Statistics.Total.DuplicatedLines)
 	return nil
+}
+
+// frozenPair reports whether either file of a clone pair is a frozen reference.
+func frozenPair(files [2]string) bool {
+	return strings.HasPrefix(files[0], frozenReferencePrefix) || strings.HasPrefix(files[1], frozenReferencePrefix)
+}
+
+// splitAtBase accepts an uncatalogued clone between one live file and one
+// frozen reference only as a split of duplication the pinned scanner already
+// reported at the base revision: the base catalog did not list this exact
+// identity (a catalogued clone keeps its entry, so deleting one fails), the
+// reference is byte-identical to its base, and the clone's side in the
+// reference lies inside one clone the base scan reported for the pair, to the
+// line and column, and strictly smaller unless it is that same clone (an edit
+// that only reformats the live copy keeps the span and must keep its entry).
+// An unchanged reference tokenizes identically, so text copied from any part
+// of it that was not duplicated at the base, even part of a boundary line,
+// never qualifies. The base passed this gate, so each
+// reported clone there was catalogued or was itself such a split: a split of a
+// split is accepted, and regions only shrink. check then bounds how often
+// each piece of the reference is shared, and the pair's duplicated lines and
+// tokens, by the base scan. Every other clone,
+// and any proof that cannot be completed, is not a split.
+func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revision string) (bool, error) {
+	e := identity(copy)
+	if baseScan == nil {
+		return false, nil
+	}
+	first := strings.HasPrefix(e.Files[0], frozenReferencePrefix)
+	second := strings.HasPrefix(e.Files[1], frozenReferencePrefix)
+	if first == second {
+		return false, nil
+	}
+	for _, name := range e.Files {
+		if filepath.IsAbs(name) || filepath.ToSlash(filepath.Clean(name)) != name || strings.HasPrefix(name, "../") || strings.Contains(name, ":") {
+			return false, nil
+		}
+	}
+	if _, catalogued := previous[e.Key]; catalogued {
+		return false, nil
+	}
+	frozen := e.Files[0]
+	if second {
+		frozen = e.Files[1]
+	}
+	span, _ := sideIn(copy, frozen)
+	inside := false
+	for _, old := range *baseScan.Duplicates {
+		was := identity(old)
+		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) && (was.Key == e.Key || !same(region, span)) {
+			inside = true
+		}
+	}
+	if !inside {
+		return false, nil
+	}
+	if !revisionPattern.MatchString(revision) {
+		return false, fmt.Errorf("invalid base revision for the frozen-reference proof")
+	}
+	baseFrozen, ok := atRevision(revision, frozen)
+	if !ok {
+		return false, nil
+	}
+	current, err := os.ReadFile(frozen)
+	return err == nil && bytes.Equal(current, baseFrozen), nil
+}
+
+// pairTotals counts one pair's clones and sums their duplicated lines and tokens.
+func pairTotals(clones []clone, p pair) [3]int {
+	var totals [3]int
+	for _, copy := range clones {
+		if e := identity(copy); e.Format == p.Format && e.Files == p.Files {
+			totals = [3]int{totals[0] + 1, totals[1] + copy.Lines, totals[2] + copy.Tokens}
+		}
+	}
+	return totals
+}
+
+// same reports whether two sides span exactly the same reference text.
+func same(a, b location) bool {
+	return a.StartLoc.before(b.StartLoc) && b.StartLoc.before(a.StartLoc) && a.EndLoc.before(b.EndLoc) && b.EndLoc.before(a.EndLoc)
+}
+
+// cutsIn counts the cuts a head scan made in one pair's base clones: each
+// head clone belongs to the first base clone holding its reference side, and a
+// base clone with n such children was cut n-1 times. A base clone still in the
+// head unchanged was not cut at all. Removing an unrelated clone of the pair
+// changes no count.
+func cutsIn(head, base []clone, p pair, frozen string) int {
+	// A base occurrence is kept when the head reports the same identity over the
+	// same reference span; another occurrence of that identity may still be cut.
+	kept := func(old clone) bool {
+		region, ok := sideIn(old, frozen)
+		for _, copy := range head {
+			if side, found := sideIn(copy, frozen); ok && found && identity(copy).Key == identity(old).Key && same(side, region) {
+				return true
+			}
+		}
+		return false
+	}
+	children := make([]int, len(base))
+	for _, copy := range head {
+		if e := identity(copy); e.Format != p.Format || e.Files != p.Files {
+			continue
+		}
+		span, _ := sideIn(copy, frozen)
+		for i, old := range base {
+			if was := identity(old); was.Format != p.Format || was.Files != p.Files {
+				continue
+			}
+			if region, ok := sideIn(old, frozen); ok && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) {
+				children[i]++
+				break
+			}
+		}
+	}
+	cuts := 0
+	for i, n := range children {
+		if !kept(base[i]) {
+			cuts += max(0, n-1)
+		}
+	}
+	return cuts
+}
+
+// sidesIn returns the reference side of every clone of one pair.
+func sidesIn(clones []clone, p pair, frozen string) []location {
+	var sides []location
+	for _, copy := range clones {
+		if e := identity(copy); e.Format == p.Format && e.Files == p.Files {
+			side, _ := sideIn(copy, frozen)
+			sides = append(sides, side)
+		}
+	}
+	return sides
+}
+
+// coverageGrows reports whether the head sides cover any piece of the
+// reference more often than the base sides do. Pieces run between consecutive
+// clone ends, by line and column; a side without coordinates fails closed.
+// The scanner reports both fragments of a cut sharing the token at the cut, so
+// up to cuts excess pieces are excused when each lies inside one line and its
+// reference text is a single cutToken.
+// Anything wider, or reaching across a line break, is refused.
+func coverageGrows(head, base []location, text []byte, cuts int) bool {
+	var marks []point
+	for _, side := range append(append([]location{}, head...), base...) {
+		if !side.StartLoc.before(side.EndLoc) {
+			return true
+		}
+		marks = append(marks, *side.StartLoc, *side.EndLoc)
+	}
+	sort.Slice(marks, func(i, j int) bool { return !marks[j].before(&marks[i]) })
+	count := func(sides []location, from, to *point) int {
+		n := 0
+		for _, side := range sides {
+			if side.StartLoc.before(from) && to.before(side.EndLoc) {
+				n++
+			}
+		}
+		return n
+	}
+	lines := strings.Split(string(text), "\n")
+	excused := 0
+	for i := 0; i+1 < len(marks); i++ {
+		from, to := &marks[i], &marks[i+1]
+		if to.before(from) || count(head, from, to) <= count(base, from, to) {
+			continue
+		}
+		if *from.Line != *to.Line || *from.Line < 1 || *from.Line > len(lines) {
+			return true
+		}
+		line := []rune(lines[*from.Line-1])
+		if *from.Column < 0 || *to.Column > len(line) {
+			return true
+		}
+		word := string(line[*from.Column:*to.Column])
+		excused++
+		if excused > cuts || !cutToken.MatchString(word) {
+			return true
+		}
+	}
+	return false
+}
+
+// sideIn returns the side of a clone that lies in the named file.
+func sideIn(copy clone, name string) (location, bool) {
+	switch {
+	case copy.First.Name == name && copy.Second.Name != name:
+		return copy.First, true
+	case copy.Second.Name == name && copy.First.Name != name:
+		return copy.Second, true
+	}
+	return location{}, false
+}
+
+// atRevision reads one tracked file's bytes at a commit; absence is not an error.
+func atRevision(revision, name string) ([]byte, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, "git", "show", revision+":"+name).Output()
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // scan requires a fresh pinned report consistent with the independently staged sources.

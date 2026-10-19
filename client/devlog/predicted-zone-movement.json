@@ -1,0 +1,11 @@
+{
+  "version": "next",
+  "date": "2026-10-17",
+  "title": "Walking on the server's terms",
+  "notes": [
+    "In the private server trial your wanderer can now walk by the server's own rules: you move the moment you press a key, and the server's answer quietly corrects you a few times a second.",
+    "A small disagreement is smoothed out over a tenth of a second instead of jerking the camera. A large one, wider than your body, moves you straight to where the server says you are.",
+    "Jumping stays a visual hop in this trial, so it never changes where the server thinks you stand.",
+    "This is a preview for server trials only: launch the trial with both WAR_ZONE_MOVEMENT=1 and WAR_PREDICTED_MOVEMENT=1 to try it. Ordinary launches, and trials without the second switch, move exactly as before."
+  ]
+}

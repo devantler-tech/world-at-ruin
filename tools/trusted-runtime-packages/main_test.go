@@ -19,6 +19,11 @@ func fixtureLock() packageLock {
 	return packageLock{1, "amd64", "sha256:" + strings.Repeat("a", 64), "20261003T000000Z", []packageIdentity{{"base-files", "13ubuntu10.3", "amd64"}, {"libgl1", "1.7.0-1build1", "amd64"}}}
 }
 
+func recipeIdentity(value packageLock) string {
+	return "FROM ubuntu:24.04@" + value.RuntimeManifest + "\n" +
+		"RUN sed -i -e 's#^URIs: .*#URIs: https://snapshot.ubuntu.com/ubuntu/" + value.Snapshot + "/#' /etc/apt/sources.list.d/ubuntu.sources\n"
+}
+
 // TestPackageLockRefusals checks complete decoding and canonical installed identities.
 func TestPackageLockRefusals(t *testing.T) {
 	good, _ := json.Marshal(fixtureLock())
@@ -59,7 +64,7 @@ func TestRecipeJoinAndCompleteEmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	value := fixtureLock()
-	recipe := "FROM ubuntu:24.04@" + value.RuntimeManifest + "\n'APT::Snapshot \"" + value.Snapshot + "\";'\n libgl1=1.7.0-1build1 \\\n"
+	recipe := recipeIdentity(value) + " libgl1=1.7.0-1build1 \\\n"
 	recipe = strings.Replace(recipe, " libgl1=", " apt-get install -y --no-install-recommends libgl1=", 1) + "&& true\n"
 	recipe += verifierRecipe()
 	write := func(path string, raw []byte) {
@@ -98,10 +103,19 @@ func TestRecipeJoinAndCompleteEmission(t *testing.T) {
 	}
 }
 
+func TestRecipeJoinAcceptsDirectSnapshotWithoutSelector(t *testing.T) {
+	value := fixtureLock()
+	recipe := recipeIdentity(value) +
+		" && apt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n" + verifierRecipe()
+	if err := joinRecipe(value, []byte(recipe)); err != nil {
+		t.Fatalf("direct immutable snapshot recipe was rejected: %v", err)
+	}
+}
+
 // TestEveryInstallArgumentIsPinned exercises partial pin removal and duplicates.
 func TestEveryInstallArgumentIsPinned(t *testing.T) {
 	value := fixtureLock()
-	prefix := "FROM ubuntu:24.04@" + value.RuntimeManifest + "\n'APT::Snapshot \"" + value.Snapshot + "\";'\napt-get install -y --no-install-recommends "
+	prefix := recipeIdentity(value) + "apt-get install -y --no-install-recommends "
 	for _, arguments := range []string{
 		"libgl1 base-files=13ubuntu10.3", "libgl1=1.7.0-1build1 base-files",
 		"libgl1=1.7.0-1build1 libgl1=1.7.0-1build1",
@@ -145,7 +159,7 @@ func fixtureReport() map[string]any {
 // TestReportEvidenceCannotBeOmitted rejects plausible package rows without their envelope.
 func TestReportEvidenceCannotBeOmitted(t *testing.T) {
 	value := fixtureLock()
-	recipe := []byte("FROM ubuntu:24.04@" + value.RuntimeManifest + "\n'APT::Snapshot \"" + value.Snapshot + "\";'\napt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n" + verifierRecipe())
+	recipe := []byte(recipeIdentity(value) + "apt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n" + verifierRecipe())
 	for _, path := range [][]string{{"image", "Id"}, {"inventory", "apt_inputs"}, {"inventory", "engine_sha256"}, {"recipe_files"}, {"caller_engine_version"}, {"caller_engine_archive_sha512"}} {
 		t.Run(strings.Join(path, "/"), func(t *testing.T) {
 			report := fixtureReport()
@@ -168,7 +182,7 @@ func TestReportEvidenceCannotBeOmitted(t *testing.T) {
 // TestMalformedReportEvidence rejects shortened inventories and invalid evidence rows.
 func TestMalformedReportEvidence(t *testing.T) {
 	value := fixtureLock()
-	recipe := []byte("FROM ubuntu:24.04@" + value.RuntimeManifest + "\n'APT::Snapshot \"" + value.Snapshot + "\";'\napt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n" + verifierRecipe())
+	recipe := []byte(recipeIdentity(value) + "apt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n" + verifierRecipe())
 	for name, mutate := range map[string]func(map[string]any){
 		"direct packages only": func(r map[string]any) {
 			r["inventory"].(map[string]any)["installed_packages"] = fixtureLock().Packages[1:]
@@ -210,7 +224,7 @@ func TestMalformedReportEvidence(t *testing.T) {
 // TestGeneratedExpectationRequiresCompleteReport preserves complete report generation.
 func TestGeneratedExpectationRequiresCompleteReport(t *testing.T) {
 	value := fixtureLock()
-	recipe := "FROM ubuntu:24.04@" + value.RuntimeManifest + "\n'APT::Snapshot \"" + value.Snapshot + "\";'\napt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n"
+	recipe := recipeIdentity(value) + "apt-get install -y --no-install-recommends libgl1=1.7.0-1build1 && true\n"
 	recipe += verifierRecipe()
 	raw, err := json.Marshal(fixtureReport())
 	if err != nil {

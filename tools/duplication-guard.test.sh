@@ -35,7 +35,7 @@ cp "$tmp_dir/catalog.json" "$tmp_dir/base.json"
 run_check() {
   "$tmp_dir/guard" check "$1/jscpd-report.json" "$tmp_dir/catalog.json" \
     "$tmp_dir/base.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
-    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ''
 }
 run_check "$tmp_dir/initial"
 printf 'b.go\n' > .gitignore
@@ -74,4 +74,154 @@ if "$tmp_dir/guard" scan "$scanner" "$tmp_dir/removed" "$tmp_dir/config.json" > 
   echo 'TEST FAIL — old producer report reused' >&2; exit 1
 fi
 grep -q 'fresh report directory' "$tmp_dir/stale.log"
-echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup passes'
+# A frozen-reference split through the real scanner: an edit inside the live
+# copy passes only against the base scan, and new copying still fails.
+frozen_body() {
+  for i in $(seq "$1" "$2"); do printf '  value%d := input*%d + %d\n' "$i" "$i" "$((i * 7))"; done
+}
+mkdir -p "$tmp_dir/frozen/client/scripts" "$tmp_dir/frozen/client/tests/historical"
+cd "$tmp_dir/frozen"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n'; } > client/scripts/live.go
+{ cat client/scripts/live.go; printf '\nfunc extra(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } > client/tests/historical/frozen.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+revision="$(git rev-parse HEAD)"
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/frozen-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+"$tmp_dir/guard" generate "$tmp_dir/frozen-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/frozen-base-catalog.json"
+frozen_check() {
+  "$tmp_dir/guard" check "$1/jscpd-report.json" "$tmp_dir/frozen-catalog.json" \
+    "$tmp_dir/frozen-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" "$revision" "$2"
+}
+frozen_scan() {
+  "$tmp_dir/guard" scan "$scanner" "$tmp_dir/$1" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+  cp "$tmp_dir/frozen-base-catalog.json" "$tmp_dir/frozen-catalog.json"
+  "$tmp_dir/guard" generate "$tmp_dir/$1/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/frozen-catalog.json"
+}
+base_scan="$tmp_dir/frozen-base/jscpd-report.json"
+perl -pi -e 's/^(  value15 := .*)\n/$1\n  inserted := input - 1\n/' client/scripts/live.go
+grep -q '^  inserted := input - 1$' client/scripts/live.go
+frozen_scan frozen-split
+[[ "$(jq '.duplicates | length' "$tmp_dir/frozen-split/jscpd-report.json")" -gt "$(jq '.duplicates | length' "$base_scan")" ]] || {
+  echo 'TEST FAIL — the fixture edit did not split the frozen-reference clone' >&2; exit 1
+}
+frozen_check "$tmp_dir/frozen-split" "$base_scan"
+# Once merged, the split leaves no catalog entry for the pair; a later edit
+# inside one fragment must still pass against the new base's scan.
+cp client/scripts/live.go "$tmp_dir/split-live.go"
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -am split
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/frozen-split-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/frozen-catalog.json" "$tmp_dir/frozen-split-catalog.json"
+perl -pi -e 's/^(  value8 := .*)\n/$1\n  again := input - 2\n/' client/scripts/live.go
+grep -q '^  again := input - 2$' client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/frozen-resplit" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/frozen-split-catalog.json" "$tmp_dir/frozen-resplit-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/frozen-resplit/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/frozen-resplit-catalog.json"
+if [[ "$(jq -c "[.duplicates[].fragment]" "$tmp_dir/frozen-split-base/jscpd-report.json")" == "$(jq -c "[.duplicates[].fragment]" "$tmp_dir/frozen-resplit/jscpd-report.json")" ]]; then
+  echo "TEST FAIL — the second edit did not change the reported fragments" >&2; exit 1
+fi
+"$tmp_dir/guard" check "$tmp_dir/frozen-resplit/jscpd-report.json" "$tmp_dir/frozen-resplit-catalog.json" \
+  "$tmp_dir/frozen-split-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/frozen-split-base/jscpd-report.json"
+cp "$tmp_dir/split-live.go" client/scripts/live.go
+if frozen_check "$tmp_dir/frozen-split" '' > "$tmp_dir/frozen-nobase.log" 2>&1; then
+  echo 'TEST FAIL — a frozen-reference split passed without the base scan' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-nobase.log"
+# The split's catalog has no entry for the base's unchanged clone.
+if frozen_check "$tmp_dir/frozen-base" "$base_scan" > "$tmp_dir/frozen-deleted.log" 2>&1; then
+  echo 'TEST FAIL — a hand-deleted frozen-reference entry passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-deleted.log"
+# Replacing the shared block with an equally long block copied from a part of
+# the reference that was not duplicated at the base keeps the line budget.
+cp client/scripts/live.go "$tmp_dir/split-live.go"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 31 50; frozen_body 1 10; printf '  return value50\n}\n'; } > client/scripts/live.go
+frozen_scan frozen-replaced
+if frozen_check "$tmp_dir/frozen-replaced" "$base_scan" > "$tmp_dir/frozen-replaced.log" 2>&1; then
+  echo 'TEST FAIL — a block newly copied from an unshared part of a frozen reference passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-replaced.log"
+cp "$tmp_dir/split-live.go" client/scripts/live.go
+{ printf '\nfunc copied(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } >> client/scripts/live.go
+frozen_scan frozen-grown
+if frozen_check "$tmp_dir/frozen-grown" "$base_scan" > "$tmp_dir/frozen-grown.log" 2>&1; then
+  echo 'TEST FAIL — text newly copied from a frozen reference passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-grown.log"
+# A base clone that starts partway through a line: matching the reference's
+# unshared prefix on that line keeps the line span but adds duplicated tokens.
+mkdir -p "$tmp_dir/column/client/scripts" "$tmp_dir/column/client/tests/historical"
+cd "$tmp_dir/column"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n'; } > client/tests/historical/frozen.go
+sed -e 's/^package fixture$/package live/' -e 's/^func calculate(input int) int {$/func estimate(input int) int {/' \
+  client/tests/historical/frozen.go > client/scripts/live.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/column-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+[[ "$(jq '[.duplicates[] | .firstFile.startLoc.column] | min' "$tmp_dir/column-base/jscpd-report.json")" -gt 0 ]] || {
+  echo 'TEST FAIL — the fixture base clone does not start partway through a line' >&2; exit 1
+}
+"$tmp_dir/guard" generate "$tmp_dir/column-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/column-base-catalog.json"
+perl -pi -e 's/^func estimate\(/func calculate(/' client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/column-head" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/column-base-catalog.json" "$tmp_dir/column-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/column-head/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/column-catalog.json"
+start_lines() { jq -c '[.duplicates[] | [.firstFile.startLoc.line, .secondFile.startLoc.line]]' "$1"; }
+[[ "$(start_lines "$tmp_dir/column-base/jscpd-report.json")" == "$(start_lines "$tmp_dir/column-head/jscpd-report.json")" ]] || {
+  echo 'TEST FAIL — the fixture edit moved the clone start line' >&2; exit 1
+}
+if "$tmp_dir/guard" check "$tmp_dir/column-head/jscpd-report.json" "$tmp_dir/column-catalog.json" \
+  "$tmp_dir/column-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/column-base/jscpd-report.json" > "$tmp_dir/column.log" 2>&1; then
+  echo 'TEST FAIL — a clone grown into the unshared start of a boundary line passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/column.log"
+# Removing one shared block must not pay for sharing another part twice: two
+# fragments that overlap in the reference copy the overlap again.
+mkdir -p "$tmp_dir/overlap/client/scripts" "$tmp_dir/overlap/client/tests/historical"
+cd "$tmp_dir/overlap"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n\nfunc extra(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } > client/tests/historical/frozen.go
+{ printf 'package live\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n\nfunc unique(seed int) string {\n  return fmt.Sprint(seed)\n}\n\nfunc extra(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } > client/scripts/live.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/overlap-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+[[ "$(jq '.duplicates | length' "$tmp_dir/overlap-base/jscpd-report.json")" -eq 2 ]] || {
+  echo 'TEST FAIL — the overlap fixture base does not report two clones' >&2; exit 1
+}
+"$tmp_dir/guard" generate "$tmp_dir/overlap-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/overlap-base-catalog.json"
+{ printf 'package live\n\nfunc calculate(input int) int {\n'; frozen_body 1 20; printf '  inserted := input - 1\n'; frozen_body 18 30; printf '  return value30\n}\n'; } > client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/overlap-head" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/overlap-base-catalog.json" "$tmp_dir/overlap-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/overlap-head/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/overlap-catalog.json"
+if "$tmp_dir/guard" check "$tmp_dir/overlap-head/jscpd-report.json" "$tmp_dir/overlap-catalog.json" \
+  "$tmp_dir/overlap-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/overlap-base/jscpd-report.json" > "$tmp_dir/overlap.log" 2>&1; then
+  echo 'TEST FAIL — two fragments sharing the same reference text passed' >&2; exit 1
+fi
+grep -q 'more often' "$tmp_dir/overlap.log"
+# Fragments may share the token at a cut, but repeating a whole reference line
+# on both sides of an inserted statement copies that line's tokens again.
+mkdir -p "$tmp_dir/sameline/client/scripts" "$tmp_dir/sameline/client/tests/historical"
+cd "$tmp_dir/sameline"
+same_line='  p := input*91; q := input*92; r := input*93'
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 15; printf '%s\n' "$same_line"; frozen_body 16 30; printf '  return value30\n}\n'; } > client/tests/historical/frozen.go
+sed 's/^package fixture$/package live/' client/tests/historical/frozen.go > client/scripts/live.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/sameline-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+"$tmp_dir/guard" generate "$tmp_dir/sameline-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/sameline-base-catalog.json"
+{ printf 'package live\n\nfunc calculate(input int) int {\n'; frozen_body 1 15; printf '%s\n  inserted := input - 1\n%s\n' "$same_line" "$same_line"; frozen_body 16 30; printf '  return value30\n}\n'; } > client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/sameline-head" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/sameline-base-catalog.json" "$tmp_dir/sameline-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/sameline-head/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/sameline-catalog.json"
+if "$tmp_dir/guard" check "$tmp_dir/sameline-head/jscpd-report.json" "$tmp_dir/sameline-catalog.json" \
+  "$tmp_dir/sameline-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/sameline-base/jscpd-report.json" > "$tmp_dir/sameline.log" 2>&1; then
+  echo 'TEST FAIL — a reference line copied on both sides of a cut passed' >&2; exit 1
+fi
+grep -q 'more often' "$tmp_dir/sameline.log"
+echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'

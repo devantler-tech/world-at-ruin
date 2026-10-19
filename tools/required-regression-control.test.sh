@@ -219,14 +219,16 @@ for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
-mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${workflow_source}/tools/trusted-runtime-packages" "${workflow_source}/tools/trusted-runtime-origin" "${trusted}/docs/phase-0" \
+mkdir -p "${workflow_source}/.github/containers" "${workflow_source}/tools/trusted-runtime-bases" "${workflow_source}/tools/trusted-runtime-packages" "${workflow_source}/tools/trusted-runtime-origin" "${workflow_source}/tools/trusted-runtime-archives" "${trusted}/docs/phase-0" \
   "${candidate}/server/wire" "${candidate}/.github/workflows"
 cp "${repo_root}/.github/containers/trusted-regressions.Dockerfile" "${workflow_source}/.github/containers/"
 cp "${repo_root}/.github/containers/"trusted-runtime-bases.*.json "${workflow_source}/.github/containers/"
 cp "${repo_root}/.github/containers/trusted-runtime-packages.lock.json" "${workflow_source}/.github/containers/"
+cp "${repo_root}/.github/containers/trusted-runtime-archives.lock.json" "${workflow_source}/.github/containers/"
 cp "${repo_root}/tools/trusted-runtime-packages/main.go" "${workflow_source}/tools/trusted-runtime-packages/"
 cp "${repo_root}/tools/trusted-runtime-bases/main.go" "${workflow_source}/tools/trusted-runtime-bases/"
 cp "${repo_root}/tools/trusted-runtime-origin/main.go" "${workflow_source}/tools/trusted-runtime-origin/"
+cp "${repo_root}/tools/trusted-runtime-archives/main.go" "${workflow_source}/tools/trusted-runtime-archives/"
 printf 'historical frame fixture\n' >"${trusted}/docs/phase-0/cave-chamber.png"
 printf 'candidate source data\n' >"${candidate}/server/wire/wire.go"
 printf 'candidate source data\n' >"${candidate}/.github/workflows/ci.yaml"
@@ -234,7 +236,7 @@ real_go="$(command -v go)"
 cat >"${bin_dir}/go" <<'COMPILER'
 #!/bin/bash
 set -euo pipefail
-if [ "$1" = run ] && { [[ "${2:-}" = */tools/trusted-runtime-bases/main.go ]] || [[ "${2:-}" = */tools/trusted-runtime-packages/main.go ]]; }; then
+if [ "$1" = run ] && { [[ "${2:-}" = */tools/trusted-runtime-bases/main.go ]] || [[ "${2:-}" = */tools/trusted-runtime-packages/main.go ]] || [[ "${2:-}" = */tools/trusted-runtime-archives/main.go ]]; }; then
   exec "$REQUIRED_REGRESSION_REAL_GO" "$@"
 fi
 while [ "$#" -gt 0 ]; do

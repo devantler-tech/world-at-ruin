@@ -486,8 +486,9 @@ func store() -> ReplicaStore:
 	return _store
 
 
-## A producer submits finite planar direction when it has fresh input. No
-## producer is wired to player controls yet; silence lets the server stop.
+## A producer submits finite planar direction when it has fresh input. The
+## player's controls produce it only under WAR_PREDICTED_MOVEMENT (#812);
+## silence lets the server stop.
 func queue_movement(direction: Vector2, sprint: bool = false) -> bool:
 	if _state != State.LIVE or _movement == null or not _store.has_base():
 		return false
@@ -500,6 +501,13 @@ func movement_state() -> Dictionary:
 
 func pending_movement_count() -> int:
 	return 0 if _movement == null else _movement.pending_count()
+
+
+## Samples the transport accepted since the last call; empty without v3.
+func take_sent_movement() -> Array[Dictionary]:
+	if _movement == null:
+		return []
+	return _movement.take_sent()
 
 
 ## Fold every frame the transport has already delivered, stopping at the first

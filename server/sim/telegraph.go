@@ -159,11 +159,17 @@ func RingTelegraph(center Vec3, inner, outer int64) Telegraph {
 // ConeTelegraph returns a sector with its apex at apex, opening toward facing,
 // reaching rangeMM, and spanning the half-angle whose cosine is
 // cosHalfScaled/CosScale to each side of the facing.
+//
+// The returned shape is always canonical (ADR 0059): the threshold is clamped
+// into [-CosScale, CosScale], and a facing with no planar direction is stored as
+// world-forward, the direction membership resolves it to. The stored shape is
+// therefore exactly the cone the server resolves, and the wire carries that cone
+// rather than a degenerate one the client refuses to paint.
 func ConeTelegraph(apex, facing Vec3, rangeMM, cosHalfScaled int64) Telegraph {
 	return Telegraph{
 		Kind:    ShapeCone,
 		Origin:  planarOrigin(apex),
-		Facing:  planarFacing(facing),
+		Facing:  planarDir(facing),
 		Outer:   clampExtent(rangeMM),
 		CosHalf: clampAxis(cosHalfScaled, -CosScale, CosScale),
 	}

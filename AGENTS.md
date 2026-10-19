@@ -405,21 +405,34 @@ everything shipped afterwards is held to.
 ## Maintenance
 
 Every trusted cold runtime enforces the generated complete installed-package
-identity lock, independently of diagnostic selection. Keep the exact base,
-snapshot and direct-pin joins, full successful dpkg observation, phase bounds
-and native changed-expectation refusal. Update through the generator, never by
-hand; run `go test -race tools/trusted-runtime-packages/main.go tools/trusted-runtime-packages/main_test.go`
-and `bash tools/trusted-runtime-packages.test.sh`. This is an installed identity
-expectation, not archive provenance or reusable-executor authority. See
-[the maintenance procedure](docs/ci/trusted-runtime-packages.md) and ADR 0057.
+identity lock and reviewed archive expectation, independently of diagnostic
+selection. Keep the exact base, snapshot and direct-pin joins, full successful
+dpkg observation, phase bounds and native changed-expectation refusal. Update
+both Ubuntu source stanzas through the dated snapshot URL and derive the
+snapshot identity from that rewrite; do not combine it with APT's separate
+snapshot selector. Regenerate both locks through their generators, never by
+hand; run the package and archive Go
+tests plus `bash tools/trusted-runtime-packages.test.sh` and
+`bash tools/trusted-runtime-transaction.test.sh`. The archive lock fixes the
+complete package tuple/basename/URI/size/SHA-256/trusted-origin set before
+package scripts execute. It grants no archive publication or reusable-executor
+authority. See the [package](docs/ci/trusted-runtime-packages.md) and
+[archive](docs/ci/trusted-runtime-archives.md) procedures and ADRs 0057-0058.
 
 The opt-in cold-runtime diagnostic joins every acquired archive to the complete
 nonempty set of byte-identical APT 2.8 trusted Packages targets before package
 scripts run. Preserve the complete target census, regular single-link
 Packages/InRelease reads, URI + tuple + byte + SHA-256 join, duplicate/conflict
-refusals, same-cache offline install and final installed-set equality. The report is evidence for reviewing a later archive
-expectation; it cannot create that expectation or authorize reuse. Run
+refusals, reviewed archive-expectation equality, same-cache offline install and
+final installed-set equality. Normal and diagnostic builds always use the
+reviewed archive lock. Only the manually dispatched proposal workflow may pair
+complete inventory publication with the evidence-only proposal selector; that
+path bypasses only the stale expectation comparison, deletes its disposable
+image and grants no repository update or runtime-admission authority. The report
+is evidence for proposing an archive expectation; only the reviewed repository
+lock authorizes the cold build. Run
 `go test -race tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go`,
+`go test -race tools/trusted-runtime-archives/main.go tools/trusted-runtime-archives/main_test.go`,
 `go test -race tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go`
 and `bash tools/trusted-runtime-transaction.test.sh`. See
 [the inventory procedure](docs/ci/trusted-runtime-inventory.md).
@@ -679,8 +692,16 @@ the permanent blocking policy.
   ADR 0026 — explicit immutable isolated-flat configuration, exact integer
   ground arithmetic and bounded speculative tick replay independent of sent
   sequence ownership; shared actual Go position goldens plus the native TLS
-  prediction scenario; no boot, connection or player-controller caller,
-  collision parity, rendered correction or production configuration discovery),
+  prediction scenario; no collision parity or production configuration discovery),
+  the **default-off predicted player body** (`WAR_PREDICTED_MOVEMENT=1`, which
+  also requires `WAR_ZONE_MOVEMENT=1`; `PredictedBody` steps the prediction at
+  30 Hz from the player's controls, interpolates it to the display rate, shows a
+  correction as an offset that decays over 100 ms and snaps once a correction or
+  the drawn error is wider than the 0.4 m capsule radius, holds still rather than
+  refusing when the zone is silent for the whole 120-tick replay window, keeps the
+  jump a render-only hop per #814, and hands the
+  body back to local physics on any refusal or lost connection; the demo zone's
+  settings are its fixture configuration; `predicted_body_test`, #812),
   the **Agones lifecycle** (`server/agones/` — Ready/Health/Shutdown through the
   official SDK, opt-in and default-off; its sealed-admission mode accepts a projected RSA public
   key, generates one in-memory 32-byte secret while the GameServer is `Starting`, publishes the
@@ -731,6 +752,17 @@ the permanent blocking policy.
   protected production custody nor exclusive child launch. Normal artifacts have
   no probe/writer dependency. ADR 0045/#1342 and ADR 0050/#1371
   preserve #1340/#1341/#1336/#1318/#567 authority gates; #1192 owns retirement.
+  `server/internal/custodywitness/` holds the #1341 witness record contract and
+  its client over an abstract table: one schema-1 record per ADR 0044 lifetime
+  key whose stage moves enrolled → custody → tombstone, carrying exactly the pins
+  of reached stages. Its strict reader and `Follows` refuse any skipped, repeated
+  or backward step or rewritten pin. The default-off client checks the pinned
+  table identity before and after every read and write, writes conditionally on the exact
+  previous record, resolves a lost reply by one exact re-read and never retries;
+  `Compare` returns one of seven verdicts and only `verified` is positive. It
+  grants no authority, and nothing composes it; the DynamoDB adapter and native
+  trial are #1442/#1443. Keep its import control and the server durability
+  guard for the `custody_witness` family.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
@@ -1152,14 +1184,15 @@ the permanent blocking policy.
   Run `tools/trusted-runtime-inventory.test.sh` and the standalone Go parser tests;
   real cold-build evidence and limits are in
   [the inventory guide](docs/ci/trusted-runtime-inventory.md). This is diagnostic
-  data, never an expected dependency lock or executor admission authority (#1397).
+  data; only separately reviewed package/archive locks admit a cold build.
   Selected collection also records the complete pre-install APT transaction,
   inherited identities and private-cache archive tuples/bytes. Plan/digest/set
-  checks precede a same-argument no-download install; the independent final
-  installed-set verifier remains required. Run
+  checks and the reviewed archive lock precede a same-argument no-download
+  install; the independent final installed-set verifier remains required. Run
   `tools/trusted-runtime-transaction.test.sh` for cache, partial-read and corruption
-  refusals. Requested URLs are observations, not selected authenticated metadata
-  provenance or an independently reviewed archive lock (#1428).
+  refusals. See [the archive procedure](docs/ci/trusted-runtime-archives.md).
+  The expectation does not authorize publication, an archive producer or reuse
+  (#1397).
 - **Trusted setup is bounded:** runtime builds, image inspection, editor import and sandbox probes
   use reviewed host deadlines; cancellation forwards to the active child and cleanup verifies
   absence of invocation-owned containers. The scene verdict watchdog remains 180 seconds. Run
