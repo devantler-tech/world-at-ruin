@@ -392,7 +392,7 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 		e := identity(copy)
 		observed[e.Key]++
 		if observed[e.Key] > accepted[e.Key].Occurrences {
-			ok, err := splitAtBase(e, previous, baseScan, revision)
+			ok, err := splitAtBase(copy, previous, baseScan, revision)
 			if err != nil {
 				return err
 			}
@@ -430,10 +430,14 @@ func frozenPair(files [2]string) bool {
 // frozen reference only as a split of duplication the pinned scanner already
 // reported at the base revision: the base scan never reported this exact
 // identity (an existing clone needs its catalog entry), the base catalog held
-// this file pair, and the reference is byte-identical to its base. check then
+// this file pair, the reference is byte-identical to its base, and the clone's
+// lines in the reference lie inside one clone the base scan reported for the
+// pair. An unchanged reference keeps its line numbers, so text copied from a
+// part of it that was not duplicated at the base never qualifies. check then
 // budgets the pair's duplicated lines by the base scan. Every other clone, and
 // any proof that cannot be completed, is not a split.
-func splitAtBase(e entry, previous map[string]entry, baseScan *report, revision string) (bool, error) {
+func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revision string) (bool, error) {
+	e := identity(copy)
 	if baseScan == nil {
 		return false, nil
 	}
@@ -447,10 +451,23 @@ func splitAtBase(e entry, previous map[string]entry, baseScan *report, revision 
 			return false, nil
 		}
 	}
-	for _, copy := range *baseScan.Duplicates {
-		if identity(copy).Key == e.Key {
+	frozen := e.Files[0]
+	if second {
+		frozen = e.Files[1]
+	}
+	span, _ := sideIn(copy, frozen)
+	inside := false
+	for _, old := range *baseScan.Duplicates {
+		was := identity(old)
+		if was.Key == e.Key {
 			return false, nil
 		}
+		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.Start <= span.Start && span.End <= region.End {
+			inside = true
+		}
+	}
+	if !inside {
+		return false, nil
 	}
 	held := false
 	for _, old := range previous {
@@ -465,16 +482,23 @@ func splitAtBase(e entry, previous map[string]entry, baseScan *report, revision 
 	if !revisionPattern.MatchString(revision) {
 		return false, fmt.Errorf("invalid base revision for the frozen-reference proof")
 	}
-	frozen := e.Files[0]
-	if second {
-		frozen = e.Files[1]
-	}
 	baseFrozen, ok := atRevision(revision, frozen)
 	if !ok {
 		return false, nil
 	}
 	current, err := os.ReadFile(frozen)
 	return err == nil && bytes.Equal(current, baseFrozen), nil
+}
+
+// sideIn returns the side of a clone that lies in the named file.
+func sideIn(copy clone, name string) (location, bool) {
+	switch {
+	case copy.First.Name == name && copy.Second.Name != name:
+		return copy.First, true
+	case copy.Second.Name == name && copy.First.Name != name:
+		return copy.Second, true
+	}
+	return location{}, false
 }
 
 // pairLines sums the duplicated lines a scan reports for each file pair.

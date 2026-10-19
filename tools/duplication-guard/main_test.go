@@ -414,6 +414,15 @@ func frozenClone(first, second, text string, lines int) map[string]any {
 	return map[string]any{"format": "go", "fragment": text, "lines": lines, "tokens": 6, "firstFile": side(first), "secondFile": side(second)}
 }
 
+// shifted moves both sides of a clone to start at the given line.
+func shifted(copy map[string]any, start int) map[string]any {
+	lines := copy["lines"].(int)
+	for _, side := range []string{"firstFile", "secondFile"} {
+		copy[side] = map[string]any{"name": copy[side].(map[string]any)["name"], "start": start, "end": start + lines - 1}
+	}
+	return copy
+}
+
 // cloneReport writes a scanner report whose statistics agree with its clones.
 func cloneReport(t *testing.T, dir, name string, clones []any) string {
 	t.Helper()
@@ -447,6 +456,12 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), frozenClone(live, frozen, "back", 5)}},
 		{name: "a hand-deleted catalog entry is refused", want: "unaccepted clone", handDeleted: true,
 			base: []any{whole}, head: []any{whole}},
+		{name: "a split inside the reported region may sit anywhere in it",
+			base: []any{whole}, head: []any{shifted(frozenClone(live, frozen, "middle", 4), 4)}},
+		{name: "text copied from outside the reported region is refused", want: "unaccepted clone",
+			base: []any{whole}, head: []any{shifted(frozenClone(live, frozen, "elsewhere", 5), 20)}},
+		{name: "text straddling the reported region is refused", want: "unaccepted clone",
+			base: []any{whole}, head: []any{shifted(frozenClone(live, frozen, "edge", 4), 8)}},
 		{name: "a split that grows duplicated lines is refused", want: "grows duplication",
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 6), frozenClone(live, frozen, "back", 5)}},
 		{name: "a pair the base catalog never held is refused", want: "unaccepted clone", unheld: true,

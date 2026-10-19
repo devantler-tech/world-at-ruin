@@ -115,10 +115,20 @@ if frozen_check "$tmp_dir/frozen-base" "$base_scan" > "$tmp_dir/frozen-deleted.l
   echo 'TEST FAIL — a hand-deleted frozen-reference entry passed' >&2; exit 1
 fi
 grep -q 'unaccepted clone' "$tmp_dir/frozen-deleted.log"
+# Replacing the shared block with an equally long block copied from a part of
+# the reference that was not duplicated at the base keeps the line budget.
+cp client/scripts/live.go "$tmp_dir/split-live.go"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 31 50; frozen_body 1 10; printf '  return value50\n}\n'; } > client/scripts/live.go
+frozen_scan frozen-replaced
+if frozen_check "$tmp_dir/frozen-replaced" "$base_scan" > "$tmp_dir/frozen-replaced.log" 2>&1; then
+  echo 'TEST FAIL — a block newly copied from an unshared part of a frozen reference passed' >&2; exit 1
+fi
+grep -q 'unaccepted clone' "$tmp_dir/frozen-replaced.log"
+cp "$tmp_dir/split-live.go" client/scripts/live.go
 { printf '\nfunc copied(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } >> client/scripts/live.go
 frozen_scan frozen-grown
 if frozen_check "$tmp_dir/frozen-grown" "$base_scan" > "$tmp_dir/frozen-grown.log" 2>&1; then
   echo 'TEST FAIL — text newly copied from a frozen reference passed' >&2; exit 1
 fi
-grep -q 'grows duplication' "$tmp_dir/frozen-grown.log"
+grep -q 'unaccepted clone' "$tmp_dir/frozen-grown.log"
 echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'
