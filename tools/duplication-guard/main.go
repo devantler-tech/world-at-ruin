@@ -404,7 +404,8 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 	}
 	observed := make(map[string]int)
 	split := make(map[pair]bool)
-	for _, copy := range *r.Duplicates {
+	var splits []int
+	for index, copy := range *r.Duplicates {
 		e := identity(copy)
 		observed[e.Key]++
 		if observed[e.Key] > accepted[e.Key].Occurrences {
@@ -418,6 +419,26 @@ func check(reportPath, catalogPath, basePath, configPath, ownerPath, revision, b
 			// Accepted by the base scan, not by this identity's catalog entry.
 			observed[e.Key]--
 			split[pair{e.Format, e.Files}] = true
+			splits = append(splits, index)
+		}
+	}
+	// Each piece of reference text may be shared once: a split overlapping any
+	// other clone of its pair in the reference would copy that text again.
+	for _, index := range splits {
+		copy := (*r.Duplicates)[index]
+		e := identity(copy)
+		frozen := e.Files[0]
+		if !strings.HasPrefix(frozen, frozenReferencePrefix) {
+			frozen = e.Files[1]
+		}
+		span, _ := sideIn(copy, frozen)
+		for other, peer := range *r.Duplicates {
+			if was := identity(peer); other == index || was.Format != e.Format || was.Files != e.Files {
+				continue
+			}
+			if near, ok := sideIn(peer, frozen); !ok || !(span.EndLoc.before(near.StartLoc) || near.EndLoc.before(span.StartLoc)) {
+				return fmt.Errorf("frozen-reference split overlaps another clone of %s and %s in the reference: that text would be shared twice; share the code instead", e.Files[0], e.Files[1])
+			}
 		}
 	}
 	if len(split) != 0 {

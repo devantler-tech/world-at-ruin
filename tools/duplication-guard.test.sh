@@ -178,4 +178,28 @@ if "$tmp_dir/guard" check "$tmp_dir/column-head/jscpd-report.json" "$tmp_dir/col
   echo 'TEST FAIL — a clone grown into the unshared start of a boundary line passed' >&2; exit 1
 fi
 grep -q 'unaccepted clone' "$tmp_dir/column.log"
+# Removing one shared block must not pay for sharing another part twice: two
+# fragments that overlap in the reference copy the overlap again.
+mkdir -p "$tmp_dir/overlap/client/scripts" "$tmp_dir/overlap/client/tests/historical"
+cd "$tmp_dir/overlap"
+{ printf 'package fixture\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n\nfunc extra(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } > client/tests/historical/frozen.go
+{ printf 'package live\n\nfunc calculate(input int) int {\n'; frozen_body 1 30; printf '  return value30\n}\n\nfunc unique(seed int) string {\n  return fmt.Sprint(seed)\n}\n\nfunc extra(input int) int {\n'; frozen_body 31 50; printf '  return value50\n}\n'; } > client/scripts/live.go
+git init --quiet
+git add client
+git -c commit.gpgsign=false -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet -m base
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/overlap-base" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+[[ "$(jq '.duplicates | length' "$tmp_dir/overlap-base/jscpd-report.json")" -eq 2 ]] || {
+  echo 'TEST FAIL — the overlap fixture base does not report two clones' >&2; exit 1
+}
+"$tmp_dir/guard" generate "$tmp_dir/overlap-base/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/overlap-base-catalog.json"
+{ printf 'package live\n\nfunc calculate(input int) int {\n'; frozen_body 1 20; printf '  inserted := input - 1\n'; frozen_body 18 30; printf '  return value30\n}\n'; } > client/scripts/live.go
+"$tmp_dir/guard" scan "$scanner" "$tmp_dir/overlap-head" "$tmp_dir/config.json" >> "$tmp_dir/scan.log" 2>&1
+cp "$tmp_dir/overlap-base-catalog.json" "$tmp_dir/overlap-catalog.json"
+"$tmp_dir/guard" generate "$tmp_dir/overlap-head/jscpd-report.json" "$tmp_dir/config.json" "$tmp_dir/overlap-catalog.json"
+if "$tmp_dir/guard" check "$tmp_dir/overlap-head/jscpd-report.json" "$tmp_dir/overlap-catalog.json" \
+  "$tmp_dir/overlap-base-catalog.json" "$tmp_dir/config.json" "$tmp_dir/owner.json" \
+  "$(git rev-parse HEAD)" "$tmp_dir/overlap-base/jscpd-report.json" > "$tmp_dir/overlap.log" 2>&1; then
+  echo 'TEST FAIL — two fragments sharing the same reference text passed' >&2; exit 1
+fi
+grep -q 'shared twice' "$tmp_dir/overlap.log"
 echo 'TEST PASS — real pinned scanner rejects added clones and stale entries; cleanup and frozen-reference splits pass'
