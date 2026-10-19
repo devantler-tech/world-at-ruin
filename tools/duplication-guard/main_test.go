@@ -428,6 +428,16 @@ func place(copy map[string]any, start, startColumn, endColumn int) map[string]an
 // shifted moves both sides of a clone to start at the given line.
 func shifted(copy map[string]any, start int) map[string]any { return place(copy, start, 0, 20) }
 
+// stretched lengthens one side of a clone by extra lines, as the live side
+// of tokens laid over more lines than in the reference.
+func stretched(copy map[string]any, side string, extra int) map[string]any {
+	where := copy[side].(map[string]any)
+	end := where["end"].(int) + extra
+	where["end"] = end
+	where["endLoc"] = map[string]any{"line": end, "column": 20}
+	return copy
+}
+
 // with sets one field of a clone.
 func with(copy map[string]any, field string, value any) map[string]any {
 	copy[field] = value
@@ -509,6 +519,14 @@ func TestFrozenReferenceSplitNeedsTheBaseScan(t *testing.T) {
 			head: []any{whole, place(frozenClone(live, frozen, "tail", 6), 9, 0, 20), shifted(frozenClone(live, frozen, "again", 2), 9)}},
 		{name: "splits meeting at one column are accepted",
 			base: []any{whole}, head: []any{frozenClone(live, frozen, "front", 5), place(frozenClone(live, frozen, "touch", 4), 5, 20, 20)}},
+		{name: "a split whose live side spans more lines than its reference side is refused", want: "unaccepted clone",
+			base: []any{whole}, head: []any{stretched(frozenClone(live, frozen, "front", 5), "firstFile", 3)}},
+		{name: "a split may keep the stretch its base clone had",
+			base: []any{stretched(frozenClone(live, frozen, "whole", 10), "firstFile", 3)}, head: []any{stretched(frozenClone(live, frozen, "front", 5), "firstFile", 3)}},
+		{name: "a split may not stretch further than its base clone", want: "unaccepted clone",
+			base: []any{stretched(frozenClone(live, frozen, "whole", 10), "firstFile", 1)}, head: []any{stretched(frozenClone(live, frozen, "front", 5), "firstFile", 2)}},
+		{name: "a stretched live side reported second is refused", want: "unaccepted clone",
+			base: []any{frozenClone(frozen, live, "whole", 10)}, head: []any{stretched(frozenClone(frozen, live, "front", 5), "secondFile", 3)}},
 		{name: "a later split of an accepted split is accepted", unheld: true,
 			base: []any{frozenClone(live, frozen, "front", 5)}, head: []any{shifted(frozenClone(live, frozen, "inner", 3), 2)}},
 		{name: "an untouched fragment of an accepted split is accepted", unheld: true,

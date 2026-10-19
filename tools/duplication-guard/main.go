@@ -451,7 +451,8 @@ func frozenPair(files [2]string) bool {
 // identity (a catalogued clone keeps its entry, so deleting one fails), the
 // reference is byte-identical to its base, and the clone's side in the
 // reference lies inside one clone the base scan reported for the pair, to the
-// line and column. An unchanged reference tokenizes identically, so text
+// line and column, with its live side stretched no further than that clone's.
+// An unchanged reference tokenizes identically, so text
 // copied from any part of it that was not duplicated at the base, even part of
 // a boundary line, never qualifies. The base passed this gate, so each
 // reported clone there was catalogued or was itself such a split: a split of a
@@ -480,11 +481,15 @@ func splitAtBase(copy clone, previous map[string]entry, baseScan *report, revisi
 	if second {
 		frozen = e.Files[1]
 	}
+	live := e.Files[1]
+	if second {
+		live = e.Files[0]
+	}
 	span, _ := sideIn(copy, frozen)
 	inside := false
 	for _, old := range *baseScan.Duplicates {
 		was := identity(old)
-		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) {
+		if region, ok := sideIn(old, frozen); ok && was.Format == e.Format && was.Files == e.Files && region.StartLoc.before(span.StartLoc) && span.EndLoc.before(region.EndLoc) && stretch(copy, live, frozen) <= stretch(old, live, frozen) {
 			inside = true
 		}
 	}
@@ -545,6 +550,15 @@ func coverageGrows(head, base []location) bool {
 		}
 	}
 	return false
+}
+
+// stretch is how many more lines a clone's live side spans than its side in
+// the reference. The same tokens laid over more live lines add duplicated
+// lines, so a split may stretch no further than the base clone holding it.
+func stretch(copy clone, live, frozen string) int {
+	lived, _ := sideIn(copy, live)
+	kept, _ := sideIn(copy, frozen)
+	return (lived.End - lived.Start) - (kept.End - kept.Start)
 }
 
 // sideIn returns the side of a clone that lies in the named file.
