@@ -1,7 +1,7 @@
 # Witness zone custody in a forward-only record
 
-Status: accepted for the witness record and its source client (#1442). The
-DynamoDB adapter and the native trial (#1443) remain open.
+Status: accepted for the witness record, its source client and its default-off
+DynamoDB adapter (#1442). The native trial (#1443) remains open.
 
 ## Context
 
@@ -51,13 +51,35 @@ The package tests drive a local compare-and-set fake through the forward chain,
 every refusal control with the stored record unchanged, a committed write whose
 reply is lost or canceled, an uncommitted write whose reply is lost, a competing
 writer's record, a replaced or unreadable table and each comparison verdict. An
-import control keeps the package free of any network, cloud SDK or storage
-client.
+import control keeps the `custodywitness` package itself free of any network,
+cloud SDK or storage client; only its `dynamowitness` subpackage imports the AWS
+SDK.
 
 ## Not covered
 
 A local fake cannot prove the service's durability, its conditional-write
 atomicity, its strong consistency or that a restore creates a new table
-identity. The DynamoDB adapter and the native trial on a real disposable table
-(#1443) carry that proof. Nothing composes the client, so no launch, custody or
+identity. The adapter tests use a local fake of the DynamoDB API too, so only
+the native trial on a real disposable table (#1443) carries that proof. Nothing composes the client, so no launch, custody or
 completion path depends on it yet (#1336, #1340, #1318).
+
+## DynamoDB adapter (2026-10-19)
+
+`server/internal/custodywitness/dynamowitness` implements the client's table
+boundary over one DynamoDB table and adds the AWS SDK for Go v2 DynamoDB module
+to the server module. Each item is the lifetime key (`lifetime_key`, the
+partition key) and the canonical record (`record`, a string).
+
+- **Identity:** `DescribeTable`'s table ID and creation time. A table recreated
+  or restored under the same name gets a new ID.
+- **Reads:** `GetItem` with `ConsistentRead`. An item with any other shape is
+  read as unreadable, so the client reports it as conflicting, never absent.
+- **Writes:** one `PutItem` per stage, conditioned on `attribute_not_exists` for
+  enrollment and on the stored record equalling the previous record otherwise.
+  Only `ConditionalCheckFailedException` is a refusal; every other error stays
+  ambiguous for the client's single re-read.
+- **Default-off:** `New` refuses a disabled or incomplete configuration before
+  any call, and the adapter never builds an AWS client or loads credentials; the
+  caller injects a configured client. A test proves that no command under
+  `server/cmd`, with or without the native trial tag, imports the client, the
+  adapter or the AWS SDK.
