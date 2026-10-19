@@ -353,4 +353,15 @@ func TestTableReplacedDuringAnOperationIsNeverAcknowledgedOrVerified(t *testing.
 	if got := newClient(t, unreadable).Compare(ctx, enrolled); got != Unavailable {
 		t.Fatal("unconfirmed identity after a read not reported unavailable", got)
 	}
+
+	failing := newFake()
+	if _, err := newClient(t, failing).Write(ctx, Record{}, enrolled); err != nil {
+		t.Fatal(err)
+	}
+	failing.getErr = errLost
+	failing.identity = replacementTable
+	client := &Client{table: failing, identity: pinnedTable}
+	failing.identity = pinnedTable
+	failing.onGet = nil
+	_ = client
 }

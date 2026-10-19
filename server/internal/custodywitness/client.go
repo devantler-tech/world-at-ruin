@@ -157,13 +157,14 @@ func (c *Client) Compare(ctx context.Context, expected Record) Verdict {
 		return verdict
 	}
 	value, found, err := c.table.Get(ctx, expected.LifetimeKey)
-	if err != nil || ctx.Err() != nil {
-		return Unavailable
-	}
 	// The read may have reached a table that replaced the pinned one after
-	// the first check, so nothing it returned counts until the pin holds again.
+	// the first check, so neither its result nor its error counts until the
+	// pin holds again.
 	if verdict := c.identityVerdict(ctx); verdict != Verified {
 		return verdict
+	}
+	if err != nil || ctx.Err() != nil {
+		return Unavailable
 	}
 	if !found {
 		return Absent
