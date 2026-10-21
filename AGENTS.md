@@ -1217,9 +1217,11 @@ the permanent blocking policy.
   key available to other workflows can publish the same App/context, so App binding alone cannot
   authenticate workflow origin. Retain the established organization gate until permission,
   credential-boundary, nonzero-scene and tamper-canary proof supports a reviewed cutover.
-- **Shared workflow ownership:** lint, release creation and result aggregation use the canonical
-  `devantler-tech/.github` catalogue at one reviewed release. Their independent consumers justify
-  reuse. World-specific tests, policy, selectors and controller behavior remain in this repository.
+- **Workflow ownership:** release creation and result aggregation use the canonical
+  `devantler-tech/.github` catalogue because they have independent production consumers. The
+  single-consumer, read-only MegaLinter job lives directly in this repository's `ci.yaml`.
+  Run `bash tools/local-lint-workflow.test.sh` for scope, credential and required-routing controls.
+  World-specific tests, policy, selectors and controller behavior remain in this repository.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression
