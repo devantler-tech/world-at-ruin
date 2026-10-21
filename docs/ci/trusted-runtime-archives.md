@@ -13,8 +13,8 @@ for a replacement after an intentional snapshot or pin change; it cannot admit
 a runtime or update the repository.
 
 The current lock was derived from the complete snapshot-only report emitted by
-successful CI run
-[39072863047, job 117513902055](https://github.com/devantler-tech/world-at-ruin/actions/runs/39072863047/job/117513902055).
+successful proposal run
+[39541538194, job 119030174725](https://github.com/devantler-tech/world-at-ruin/actions/runs/39541538194/job/119030174725).
 The committed source-report digest and image ID let a reviewer match the proposed
 lock to those retained job logs. They do not make the report an authority.
 

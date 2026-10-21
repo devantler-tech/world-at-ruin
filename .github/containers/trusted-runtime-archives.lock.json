@@ -17,9 +17,9 @@
     "libxrandr2=2:1.5.2-2build1"
   ],
   "package_lock_sha256": "ca6858c880a53612efc394d7ff4e603442ab107707d7b5ec70692572ba6bf99d",
-  "base_lock_sha256": "d5b2ca6956786fe9135c2bd7d451829d31acbd6bde76b462a28b8820589ac57f",
-  "source_report_sha256": "401934e41c81b49fc6bf58c1faa80f7b69c504a975f06ca1ed2f3c165275aee3",
-  "source_image_id": "sha256:543b15d74627fae3e9cea1a5df72cfe0ab5c14c962d244cd0c597c8422195c15",
+  "base_lock_sha256": "f15a0583abd7da9803ed860d7beca1ff355e9b4b798b099148ed3de13c2c13d6",
+  "source_report_sha256": "15bfc28ffc5b78d3a2d0cc01743f4a0d698cb012d85fa844644d89e745b40b98",
+  "source_image_id": "sha256:09ad36cca11db05f49b6231e08924f4a4e84b2bfce8ab203002697d2e61cdbbc",
   "apt_targets": [
     {
       "release": "noble-backports",
