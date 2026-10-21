@@ -98,7 +98,7 @@ func verifyJournalArtifact(t *testing.T) {
 		Go           string            `json:"go_version"`
 		Artifacts    map[string]string `json:"artifact_sha256"`
 	}
-	if json.Unmarshal(raw, &evidence) != nil || evidence.Schema != 1 || evidence.OS != "linux" || evidence.Architecture != runtime.GOARCH || evidence.Go != "go1.27.2" || len(evidence.Artifacts) != 2 {
+	if json.Unmarshal(raw, &evidence) != nil || evidence.Schema != 1 || evidence.OS != "linux" || evidence.Architecture != runtime.GOARCH || evidence.Go != "go1.27.3" || len(evidence.Artifacts) != 2 {
 		t.Fatal("journal candidate identity incomplete")
 	}
 	for _, name := range []string{"nakama", "modules/world_at_ruin.so"} {

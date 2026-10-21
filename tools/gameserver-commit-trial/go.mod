@@ -1,6 +1,6 @@
 module github.com/devantler-tech/world-at-ruin/server/internal/gameservercommit/trial
 
-go 1.27.2
+go 1.27.3
 
 replace github.com/devantler-tech/world-at-ruin/server => ../../server
 

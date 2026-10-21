@@ -181,7 +181,7 @@ func execWorker(mode string) (code int) {
 	if err != nil || validateIdentity(reply{Status: status}) != nil {
 		return 1
 	}
-	// LockOSThread establishes the Go 1.27.2 template before changing seccomp.
+	// LockOSThread establishes the Go 1.27.3 template before changing seccomp.
 	runtime.LockOSThread()
 	probe, err := prepareExec()
 	if err != nil {

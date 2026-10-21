@@ -22,7 +22,7 @@ provenance rules.
 
 ## Install only the tools your change needs
 
-- Every contribution, including documentation, needs Git, **Node.js 24** with npm, **Go 1.27.2**
+- Every contribution, including documentation, needs Git, **Node.js 24** with npm, **Go 1.27.3**
   and the GitHub CLI for the universal duplication checks. Verify the cleanup request itself with
   `GH_HOST=github.com gh api repos/devantler-tech/world-at-ruin/issues/276 > /dev/null`.
   The duplication test also uses Go's race detector:
@@ -39,7 +39,7 @@ provenance rules.
   [CI GDScript lint job](.github/workflows/ci.yaml), then run `bash tools/gdscript-lint.test.sh` and
   `bash tools/gdscript-lint.sh client`. On macOS or another platform, use a Linux x86_64 development
   environment or obtain the lint result from that CI job; the Linux wheel hashes are not portable.
-- Server work uses **Go 1.27.2**, as declared in `server/go.mod`. Check `go version`; automatic
+- Server work uses **Go 1.27.3**, as declared in `server/go.mod`. Check `go version`; automatic
   toolchain selection may download the pinned version when you enter the module. Race tests need
   cgo enabled (`go env CGO_ENABLED` must print `1`); on Linux, install a C compiler such as GCC or
   Clang. See the [Go race-detector requirements](https://go.dev/doc/articles/race_detector#Requirements).
@@ -107,9 +107,9 @@ For **every** contribution, install and run the locked duplication checks from t
 
 ```sh
 npm ci --prefix tools/duplication --ignore-scripts --no-audit --no-fund
-GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.test.sh
+GOTOOLCHAIN=go1.27.3 bash tools/duplication-guard.test.sh
 war_duplication_dir=$(mktemp -d)
-GH_HOST=github.com DUPLICATION_REPORT_ROOT="$war_duplication_dir" GOTOOLCHAIN=go1.27.2 bash tools/duplication-guard.sh
+GH_HOST=github.com DUPLICATION_REPORT_ROOT="$war_duplication_dir" GOTOOLCHAIN=go1.27.3 bash tools/duplication-guard.sh
 ```
 
 The test must report `TEST PASS` and the real-tree guard must exit zero. Keep `origin/main`

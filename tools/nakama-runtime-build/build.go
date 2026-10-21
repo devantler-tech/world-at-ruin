@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const toolchain = "go1.27.2"
+const toolchain = "go1.27.3"
 
 type runtimeProfile struct {
 	name, directory, modfile, nakama, api string
@@ -87,7 +87,7 @@ func build(ctx context.Context, source, output string, out io.Writer, profile ru
 	}
 	fields := strings.Fields(string(version))
 	if len(fields) < 3 || fields[2] != toolchain {
-		return errors.New("native Nakama build requires Go 1.27.2")
+		return errors.New("native Nakama build requires Go 1.27.3")
 	}
 	for path, expected := range profile.dependencies {
 		selected, e := run("list", "-mod=readonly", "-modfile="+profile.modfile, "-m", "-json", path)
