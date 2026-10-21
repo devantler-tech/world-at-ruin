@@ -59,30 +59,9 @@ func TestEncodeIsTheCanonicalShippedDocument(t *testing.T) {
 func TestStrictReaderRefusesIncompleteAndConflictingDocuments(t *testing.T) {
 	for i, document := range readGolden(t) {
 		original := string(document)
-		bad := []string{"", "null", "[]", "7", "{}", original + "{}", original + " x", strings.Repeat(" ", maximumDocumentBytes) + original, strings.Replace(original, `"stage":"`, `"stage":"\ud800`, 1)}
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(document, &fields); err != nil {
-			t.Fatal(err)
-		}
 		// Each member is corrupted on its own: dropped, nulled, repeated,
 		// followed by a foreign member, emptied or retyped.
-		for name, value := range fields {
-			member := strconv.Quote(name) + ":" + string(value)
-			if strings.Count(original, member) != 1 {
-				t.Fatal("fixture member not exercised", name)
-			}
-			before, after, _ := strings.Cut(original, member)
-			dropped := before + strings.TrimPrefix(after, ",")
-			if trimmed, ok := strings.CutSuffix(before, ","); ok {
-				dropped = trimmed + after
-			}
-			if _, err := DecodeRecord(dropped); err == nil || !json.Valid([]byte(dropped)) {
-				t.Fatal("dropping a member must leave valid JSON that is refused", name, dropped)
-			}
-			for _, replacement := range []string{strconv.Quote(name) + ":null", member + "," + member, member + `,"foreign":7`, strconv.Quote(name) + `:""`, strconv.Quote(name) + ":7"} {
-				bad = append(bad, before+replacement+after)
-			}
-		}
+		bad, _ := strictReaderCorruptions(t, document, func(value string) error { _, err := DecodeRecord(value); return err }, "7")
 		// A schema from the future, a wrong-length or uppercase pin, a stage that
 		// disagrees with its fields and a pin for a stage not yet reached.
 		bad = append(bad,

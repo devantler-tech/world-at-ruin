@@ -3,7 +3,6 @@ package custodywitness
 import (
 	"encoding/json"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -83,32 +82,11 @@ func TestGenerationStrictReaderRefusesIncompleteAndConflictingDocuments(t *testi
 	laterPins := []string{"drain_pin", "handoff_pin", "owner_pin", "recovered_pin", "published_pin"}
 	for i, document := range readGenerationGolden(t) {
 		original := string(document)
-		bad := []string{"", "null", "[]", "7", "{}", original + "{}", original + " x", strings.Repeat(" ", maximumDocumentBytes) + original, strings.Replace(original, `"stage":"`, `"stage":"\ud800`, 1)}
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(document, &fields); err != nil {
-			t.Fatal(err)
-		}
-		if len(fields) != registeredMemberCount+i {
-			t.Fatal("fixture does not hold exactly its stage's members", i, len(fields))
-		}
 		// Each member is corrupted on its own: dropped, nulled, repeated,
 		// followed by a foreign member, emptied or retyped.
-		for name, value := range fields {
-			member := strconv.Quote(name) + ":" + string(value)
-			if strings.Count(original, member) != 1 {
-				t.Fatal("fixture member not exercised", name)
-			}
-			before, after, _ := strings.Cut(original, member)
-			dropped := before + strings.TrimPrefix(after, ",")
-			if trimmed, ok := strings.CutSuffix(before, ","); ok {
-				dropped = trimmed + after
-			}
-			if _, err := DecodeGenerationRecord(dropped); err == nil || !json.Valid([]byte(dropped)) {
-				t.Fatal("dropping a member must leave valid JSON that is refused", name, dropped)
-			}
-			for _, replacement := range []string{strconv.Quote(name) + ":null", member + "," + member, member + `,"foreign":7`, strconv.Quote(name) + `:""`, strconv.Quote(name) + `:"7"`, strconv.Quote(name) + ":[]"} {
-				bad = append(bad, before+replacement+after)
-			}
+		bad, members := strictReaderCorruptions(t, document, func(value string) error { _, err := DecodeGenerationRecord(value); return err }, `"7"`, "[]")
+		if members != registeredMemberCount+i {
+			t.Fatal("fixture does not hold exactly its stage's members", i, members)
 		}
 		// A schema from the future, a wrong-length or uppercase pin, a count out
 		// of bounds or fractional, every stage that disagrees with the members
