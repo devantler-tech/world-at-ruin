@@ -1,6 +1,6 @@
 module github.com/devantler-tech/world-at-ruin/server
 
-go 1.27.2
+go 1.27.3
 
 require (
 	agones.dev/agones v1.61.0

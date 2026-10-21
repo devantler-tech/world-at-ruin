@@ -1,6 +1,6 @@
 module github.com/devantler-tech/world-at-ruin/tools/spire-trial
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/devantler-tech/world-at-ruin/server v0.0.0
