@@ -30,7 +30,7 @@ permissions:
 jobs:
   release:
     name: 🎉 Create Release
-    uses: devantler-tech/.github/.github/workflows/create-release.yaml@68927b3801d388baf8243583def438d87d5cbece # v7.18.0
+    uses: devantler-tech/.github/.github/workflows/create-release.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b # v7.23.0
     with:
       # Skip semantic-release's success/fail hooks, which comment on referenced
       # issues and PRs. A bare `fix #N` meant for another repository otherwise
