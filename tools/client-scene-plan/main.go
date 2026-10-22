@@ -248,8 +248,11 @@ func verifyReceipts(root, sha, run, attempt, dir string) (int, error) {
 
 // execute validates the CLI identity before listing, sealing or reducing scene evidence.
 func execute(root string, args []string, out io.Writer) error {
-	if len(args) < 1 {
+	if len(args) == 0 {
 		return errors.New("expected list, seal or verify")
+	}
+	if len(args) < 5 {
+		return errors.New("invalid scene-proof invocation")
 	}
 	if args[0] == "verify" && len(args) == 5 {
 		count, err := verifyReceipts(root, args[1], args[2], args[3], args[4])
@@ -273,6 +276,9 @@ func execute(root string, args []string, out io.Writer) error {
 	if args[0] == "list" {
 		_, err := io.WriteString(out, strings.Join(p.Scenes, "\n")+"\n")
 		return err
+	}
+	if len(args) != 6 {
+		return errors.New("invalid scene-proof invocation")
 	}
 	temp := os.Getenv("RUNNER_TEMP")
 	state := filepath.Join(temp, fmt.Sprintf("war-client-scenes-%d", shard))

@@ -326,3 +326,31 @@ func TestCLIUsesTheActualPlan(t *testing.T) {
 		}
 	}
 }
+
+// TestCLIArgumentBoundaries characterizes every command's arity before any proof input is read.
+func TestCLIArgumentBoundaries(t *testing.T) {
+	for _, command := range []string{"list", "seal", "verify", "unknown"} {
+		for count := 0; count <= 9; count++ {
+			t.Run(fmt.Sprintf("%s/%d", command, count), func(t *testing.T) {
+				args := make([]string, count)
+				if count > 0 {
+					args[0] = command
+				}
+				var out bytes.Buffer
+				err := execute(t.TempDir(), args, &out)
+				if err == nil || out.Len() != 0 {
+					t.Fatal("invalid invocation produced success or partial output")
+				}
+				validArity := (command == "seal" && count == 6) ||
+					((command == "list" || command == "verify") && count == 5)
+				if count == 0 {
+					if err.Error() != "expected list, seal or verify" {
+						t.Fatal(err)
+					}
+				} else if !validArity && err.Error() != "invalid scene-proof invocation" {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
