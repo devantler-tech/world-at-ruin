@@ -7,12 +7,12 @@ trap 'rm -rf "$tmp"' EXIT
 sha=0123456789abcdef0123456789abcdef01234567
 # Invoke the actual gate with valid defaults and the case's explicit evidence overrides.
 run() {
-  env EXPECTED_SHA="$sha" ORDINARY_RESULT=success SANDBOX_RESULT=success \
-    ORDINARY_COMPLETE=true SANDBOX_COMPLETE=true ORDINARY_SHA="$sha" SANDBOX_SHA="$sha" \
+  env EXPECTED_SHA="$sha" ORDINARY_RESULT=success SANDBOX_RESULT=success SCENES_RESULT=success \
+    ORDINARY_COMPLETE=true SANDBOX_COMPLETE=true SCENES_COMPLETE=true ORDINARY_SHA="$sha" SANDBOX_SHA="$sha" SCENES_SHA="$sha" \
     "$@" bash "$root/tools/client-proof-gate.sh" >"$tmp/verdict" 2>&1
 }
 if ! run; then cat "$tmp/verdict"; exit 1; fi
-for participant in ORDINARY SANDBOX; do
+for participant in ORDINARY SANDBOX SCENES; do
   for result in failure cancelled skipped timed_out ''; do
     if run "${participant}_RESULT=$result"; then
       echo "FAIL: accepted $participant result '$result'" >&2; exit 1
@@ -34,4 +34,4 @@ for expected in '' short 'refs/heads/main'; do
     echo 'FAIL: accepted an invalid expected integration SHA' >&2; exit 1
   fi
 done
-echo 'TEST PASS -- stable client gate requires both complete proofs at one integration SHA'
+echo 'TEST PASS -- stable client gate requires all three complete proofs at one integration SHA'
