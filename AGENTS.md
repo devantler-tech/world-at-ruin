@@ -762,7 +762,12 @@ the permanent blocking policy.
   `Compare` returns one of seven verdicts and only `verified` is positive. It
   grants no authority, and nothing composes it; the DynamoDB adapter and native
   trial are #1442/#1443. Keep its import control and the server durability
-  guard for the `custody_witness` family.
+  guard for the `custody_witness` family. The package also holds the #1444
+  allocator-generation record (`generation_witness` family, its own key
+  namespace): stage registered → drained → handoff → owner → recovered →
+  published, where registration repeats only by advancing the issued-grant count
+  by exactly one with a new pin and set digest, and every later step keeps the
+  count, set digest and earlier pins. Nothing writes or compares it yet.
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;
