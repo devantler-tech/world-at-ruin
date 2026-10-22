@@ -26,7 +26,7 @@ if ! yq -o=json '.' "$workflow" | jq -e '
   ["retired-repo-links","client-ordinary","client-sandbox","client-export-macos",
     "license-guard","lint","duplication-gate","gdscript-lint","go-vulnerability-scan",
     "server-ci","gameserver-commit-trial","zone-container","nakama-native","spire-native",
-    "owned-child-native","detect-visual-changes","frame-capture","frame-capture-exported"] as $required
+    "owned-child-native","detect-visual-changes","frame-capture","frame-capture-cloth","frame-capture-exported"] as $required
   | .on == {pull_request:null,merge_group:null}
   and .permissions == {contents:"read"}
   and (has("defaults") | not)
