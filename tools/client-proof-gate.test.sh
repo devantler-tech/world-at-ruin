@@ -9,6 +9,7 @@ sha=0123456789abcdef0123456789abcdef01234567
 run() {
   env EXPECTED_SHA="$sha" ORDINARY_RESULT=success SANDBOX_RESULT=success SCENES_RESULT=success \
     ORDINARY_COMPLETE=true SANDBOX_COMPLETE=true SCENES_COMPLETE=true ORDINARY_SHA="$sha" SANDBOX_SHA="$sha" SCENES_SHA="$sha" \
+    EXPECTED_RUN=77 EXPECTED_ATTEMPT=2 SCENES_RUN=77 SCENES_ATTEMPT=2 \
     "$@" bash "$root/tools/client-proof-gate.sh" >"$tmp/verdict" 2>&1
 }
 if ! run; then cat "$tmp/verdict"; exit 1; fi
@@ -26,6 +27,13 @@ for participant in ORDINARY SANDBOX SCENES; do
   for observed in '' fedcba9876543210fedcba9876543210fedcba98 "$sha extra"; do
     if run "${participant}_SHA=$observed"; then
       echo "FAIL: accepted $participant mismatched integration" >&2; exit 1
+    fi
+  done
+done
+for field in SCENES_RUN SCENES_ATTEMPT EXPECTED_RUN EXPECTED_ATTEMPT; do
+  for value in '' 0 01 unknown 9; do
+    if run "$field=$value"; then
+      echo "FAIL: accepted stale or invalid $field" >&2; exit 1
     fi
   done
 done

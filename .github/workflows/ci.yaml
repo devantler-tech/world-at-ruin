@@ -21,7 +21,7 @@ env:
 jobs:
   client-ordinary:
     name: Ordinary client proof
-    timeout-minutes: 75
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     outputs:
       complete: ${{ steps.proof.outputs.complete }}
@@ -1020,54 +1020,10 @@ jobs:
         # this scene and merge a same-class strict upgrade. Power inflation is
         # permanent, so this guard must not be skippable.
         run: ./tools/run-client-test.sh ability_registry_test "a combat product law is broken"
-      - name: Regression tests
-        # Auto-discover every client/tests/*_test.tscn scene, so adding a test
-        # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
-        # parallel test-adding PR to collide on this one line). Each scene is
-        # judged by tools/run-client-test.sh, the same runner the product-law
-        # steps above call, so the pass criterion is defined in exactly one
-        # place (issue #305).
-        #   - save_fixture_guard_test, creature_factory_test,
-        #     save_vault_guard_test, boot_recovery_guard_test,
-        #     vault_restore_boot_test and ability_registry_test are deliberately
-        #     excluded: each runs in its own named step above (the product-law
-        #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
-        #     them here would both run them twice and expose them to ci-skip.
-        #   - A test can be temporarily excluded by adding its basename (no
-        #     .tscn) on its own line in client/tests/ci-skip.txt (edited rarely;
-        #     the RUN line stops changing per-test). Blank/`#`-comment lines are
-        #     ignored. The file is optional — absent means nothing is skipped.
+      - name: Client scene workers prove complete integration-bound selection
         run: |
-          set -o pipefail
-          shopt -s nullglob
-          skip_file=client/tests/ci-skip.txt
-          is_skipped() {
-            [ -f "$skip_file" ] || return 1
-            grep -vE '^[[:space:]]*(#|$)' "$skip_file" | grep -qxF "$1"
-          }
-          ran=0
-          for scene in $(printf '%s\n' client/tests/*_test.tscn | sort); do
-            t=$(basename "$scene" .tscn)
-            # Run in their own dedicated steps above — never twice, and never
-            # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|creature_factory_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
-            if is_skipped "$t"; then
-              echo "::notice::skipping ${t} (listed in ${skip_file})"
-              continue
-            fi
-            # `|| exit 1` rather than relying on the step shell's `-e`: the rest
-            # of this workflow propagates failure explicitly, and a discovered
-            # test that fails must never be counted into `ran`.
-            ./tools/run-client-test.sh "$t" || exit 1
-            ran=$((ran + 1))
-          done
-          # A glob that silently matches nothing would let this step pass
-          # vacuously (the same trap the smoke-boot BOOT_OK marker guards against).
-          if [ "$ran" -eq 0 ]; then
-            echo "::error::no regression test scenes discovered under client/tests/*_test.tscn"
-            exit 1
-          fi
-          echo "Ran ${ran} discovered regression test scene(s)."
+          bash tools/client-scene-shards.test.sh
+          bash tools/client-scene-workflow-guard.test.sh
       - name: Parallel save-isolation guard
         # Git worktrees still share Godot's project-wide user:// directory on
         # one host. A serial scene pass cannot prove two agent sessions will not
@@ -1077,6 +1033,81 @@ jobs:
         id: proof
         shell: bash
         run: bash tools/client-proof-completion.sh ordinary
+
+  client-scene-shards:
+    name: Client scenes (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0", "1", "2"]
+    env:
+      SCENE_SHARD: ${{ matrix.shard }}
+    defaults:
+      run:
+        shell: bash --noprofile --norc tools/client-proof-step.sh {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize the scene worker's private save seam
+        run: printf 'XDG_DATA_HOME=%s/war-client-scenes-%s\n' "$RUNNER_TEMP" "$SCENE_SHARD" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Prepare the isolated class-name cache
+        run: |
+          set -o pipefail
+          bash tools/trusted-regression-phase.sh "editor import" godot --headless --editor --quit --path client 2>&1 | tee import.log
+          if grep -qE 'SCRIPT ERROR|^ERROR' import.log; then exit 1; fi
+      - name: Build the scene planner
+        run: GOTOOLCHAIN=local GOWORK=off go build -o "$RUNNER_TEMP/client-scene-plan" tools/client-scene-plan/main.go
+      - name: Run every assigned scene and verify cleanup
+        run: bash tools/run-client-scene-shard.sh "$SCENE_SHARD"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: client-scenes-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/client-scene-${{ matrix.shard }}/receipt.json
+          if-no-files-found: error
+
+  client-scene-proof:
+    name: Complete client scene union
+    needs: [client-scene-shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      complete: ${{ steps.proof.outputs.complete }}
+      tested-sha: ${{ steps.proof.outputs.tested-sha }}
+      run-id: ${{ steps.proof.outputs.run-id }}
+      run-attempt: ${{ steps.proof.outputs.run-attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: client-scenes-*-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scene-proofs
+          merge-multiple: false
+      - name: Build the independent reducer
+        run: GOTOOLCHAIN=local GOWORK=off go build -o "$RUNNER_TEMP/client-scene-plan" tools/client-scene-plan/main.go
+      - name: Verify the complete scene set
+        id: proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/client-scene-plan" verify "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_TEMP/scene-proofs"
+          printf 'complete=true\ntested-sha=%s\nrun-id=%s\nrun-attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   client-sandbox:
     name: Trusted sandbox client proof
@@ -3239,6 +3270,8 @@ jobs:
         retired-repo-links,
         client-ordinary,
         client-sandbox,
+        client-scene-shards,
+        client-scene-proof,
         client-export-macos,
         license-guard,
         lint,
@@ -3275,6 +3308,13 @@ jobs:
           SANDBOX_COMPLETE: ${{ needs.client-sandbox.outputs.complete }}
           ORDINARY_SHA: ${{ needs.client-ordinary.outputs.tested-sha }}
           SANDBOX_SHA: ${{ needs.client-sandbox.outputs.tested-sha }}
+          SCENES_RESULT: ${{ needs.client-scene-proof.result }}
+          SCENES_COMPLETE: ${{ needs.client-scene-proof.outputs.complete }}
+          SCENES_SHA: ${{ needs.client-scene-proof.outputs.tested-sha }}
+          EXPECTED_RUN: ${{ github.run_id }}
+          EXPECTED_ATTEMPT: ${{ github.run_attempt }}
+          SCENES_RUN: ${{ needs.client-scene-proof.outputs.run-id }}
+          SCENES_ATTEMPT: ${{ needs.client-scene-proof.outputs.run-attempt }}
         run: bash tools/client-proof-gate.sh
       - uses: devantler-tech/.github/actions/aggregate-job-checks@6195e2493aa94246954d70a4e15bcd8165c4ea64 # v10.0.0
         with:
@@ -3290,6 +3330,8 @@ jobs:
             ${{ needs.retired-repo-links.result }}
             ${{ needs.client-ordinary.result == 'success' && 'success' || 'failure' }}
             ${{ needs.client-sandbox.result == 'success' && 'success' || 'failure' }}
+            ${{ needs.client-scene-shards.result == 'success' && 'success' || 'failure' }}
+            ${{ needs.client-scene-proof.result == 'success' && 'success' || 'failure' }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}

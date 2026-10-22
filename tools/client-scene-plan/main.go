@@ -87,8 +87,8 @@ func buildPlan(root, sha, run, attempt string, shard int) (scenePlan, error) {
 	if err != nil || strings.TrimSpace(string(head)) != sha {
 		return p, errors.New("checkout is not the tested integration")
 	}
-	if _, err := gitRead(root, "diff", "--quiet", "--no-ext-diff", "HEAD", "--", "client/tests"); err != nil {
-		return p, errors.New("tracked scene or skip inputs changed after checkout")
+	if _, err := gitRead(root, "diff", "--quiet", "--no-ext-diff", "HEAD", "--", "client"); err != nil {
+		return p, errors.New("tracked client inputs changed after checkout")
 	}
 	for _, dir := range []string{"client", "client/tests"} {
 		info, err := os.Lstat(filepath.Join(root, dir))

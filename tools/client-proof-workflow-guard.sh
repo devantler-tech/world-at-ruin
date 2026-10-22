@@ -11,7 +11,8 @@ if ! yq -o=json '.' "$workflow" | jq -e '
   def worker($kind):
     keys == (if $kind == "ordinary" then ["defaults","name","outputs","runs-on","steps","timeout-minutes"]
       else ["name","outputs","runs-on","steps","timeout-minutes"] end)
-    and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 75
+    and ."runs-on" == "ubuntu-latest"
+    and ."timeout-minutes" == (if $kind == "ordinary" then 15 else 75 end)
     and .outputs == {complete:"${{ steps.proof.outputs.complete }}", "tested-sha":"${{ steps.proof.outputs.tested-sha }}"}
     and (.steps[0] | checkout)
     and ([.steps[] | select(has("continue-on-error"))] | length) == 0
@@ -21,9 +22,9 @@ if ! yq -o=json '.' "$workflow" | jq -e '
       and .run == ("bash tools/client-proof-completion.sh " + $kind) and (has("if") | not));
   def result($job):
     "${{ needs." + $job + ".result"
-    + (if (["client-ordinary","client-sandbox","owned-child-native"] | index($job)) != null
+    + (if (["client-ordinary","client-sandbox","client-scene-shards","client-scene-proof","owned-child-native"] | index($job)) != null
       then " == '\''success'\'' && '\''success'\'' || '\''failure'\''" else "" end) + " }}";
-  ["retired-repo-links","client-ordinary","client-sandbox","client-export-macos",
+  ["retired-repo-links","client-ordinary","client-sandbox","client-scene-shards","client-scene-proof","client-export-macos",
     "license-guard","lint","duplication-gate","gdscript-lint","go-vulnerability-scan",
     "server-ci","gameserver-commit-trial","zone-container","nakama-native","spire-native",
     "owned-child-native","detect-visual-changes","frame-capture","frame-capture-cloth","frame-capture-exported"] as $required
@@ -40,7 +41,7 @@ if ! yq -o=json '.' "$workflow" | jq -e '
     and ([.steps[].name] | contains([
       "Required regression control is candidate-independent and fail-closed",
       "Headless import + class-name scan", "Smoke boot (120 frames)",
-      "Regression tests", "Parallel save-isolation guard"
+      "Client scene workers prove complete integration-bound selection", "Parallel save-isolation guard"
     ]))
     and ([.steps[] | select(.name == "Real sandbox refuses escape and runs the full trusted suite")] | length) == 0)
   and (.jobs["client-sandbox"] | worker("sandbox")
@@ -63,7 +64,13 @@ if ! yq -o=json '.' "$workflow" | jq -e '
       ORDINARY_COMPLETE:"${{ needs.client-ordinary.outputs.complete }}",
       SANDBOX_COMPLETE:"${{ needs.client-sandbox.outputs.complete }}",
       ORDINARY_SHA:"${{ needs.client-ordinary.outputs.tested-sha }}",
-      SANDBOX_SHA:"${{ needs.client-sandbox.outputs.tested-sha }}"
+      SANDBOX_SHA:"${{ needs.client-sandbox.outputs.tested-sha }}",
+      SCENES_RESULT:"${{ needs.client-scene-proof.result }}",
+      SCENES_COMPLETE:"${{ needs.client-scene-proof.outputs.complete }}",
+      SCENES_SHA:"${{ needs.client-scene-proof.outputs.tested-sha }}",
+      EXPECTED_RUN:"${{ github.run_id }}", EXPECTED_ATTEMPT:"${{ github.run_attempt }}",
+      SCENES_RUN:"${{ needs.client-scene-proof.outputs.run-id }}",
+      SCENES_ATTEMPT:"${{ needs.client-scene-proof.outputs.run-attempt }}"
     }
     and (.steps[4] | keys == ["uses","with"]
       and (.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))
@@ -73,3 +80,4 @@ if ! yq -o=json '.' "$workflow" | jq -e '
   echo '::error::client CI must require both complete, independently cleaned proofs at the integration SHA' >&2
   exit 1
 fi
+bash "$root/tools/client-scene-workflow-guard.sh" "$workflow"

@@ -144,6 +144,28 @@ func TestSealRequiresEverySuccessfulSceneExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestPlanRejectsChangedProductSource(t *testing.T) {
+	root, _ := sceneFixture(t, "")
+	dir := filepath.Join(root, "client/scripts")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "product.gd")
+	if err := os.WriteFile(path, []byte("extends Node\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitFixture(t, root, "add", "client/scripts/product.gd")
+	gitFixture(t, root, "commit", "-qm", "product source")
+	sha := gitFixture(t, root, "rev-parse", "HEAD")
+	mustPlan(t, root, sha, 0)
+	if err := os.WriteFile(path, []byte("extends Node2D\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildPlan(root, sha, "77", "2", 0); err == nil {
+		t.Fatal("accepted product code different from the tested integration")
+	}
+}
+
 func TestInventoryRefusesEmptyMissingAliasedAndUntrackedScenes(t *testing.T) {
 	for _, mode := range []string{"empty", "missing-guard", "symlink", "untracked"} {
 		t.Run(mode, func(t *testing.T) {

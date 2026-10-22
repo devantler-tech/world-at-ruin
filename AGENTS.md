@@ -404,6 +404,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+Ordinary discovered client scenes run on three isolated workers with an
+integration/run/attempt-bound complete-union receipt. The six dedicated
+product-law guards stay separate and non-skippable; the historical sandbox
+evaluation is unchanged. Preserve owned process groups and private-state
+cleanup before completion. Run the scene worker/workflow tests and both
+client-proof gate/guard tests after changes. A retry must rerun the complete CI
+workflow, not only failed jobs. See [scene proof](docs/ci/client-scene-proof.md).
+
 The sandbox isolation probe passes its own verified image ID to the full
 historical suite through a private terminal host function; it must not cold-build
 the same runtime twice. Public trusted-suite invocations still build from their

@@ -14,4 +14,10 @@ for participant in ORDINARY SANDBOX SCENES; do
     exit 1
   fi
 done
+if [[ ! ${EXPECTED_RUN:-} =~ ^[1-9][0-9]{0,19}$ ||
+  ! ${EXPECTED_ATTEMPT:-} =~ ^[1-9][0-9]{0,19}$ ||
+  ${SCENES_RUN:-} != "$EXPECTED_RUN" || ${SCENES_ATTEMPT:-} != "$EXPECTED_ATTEMPT" ]]; then
+  echo '::error::scene union proof does not belong to this run and attempt' >&2
+  exit 1
+fi
 echo "CLIENT PROOFS PASS: all three complete at $EXPECTED_SHA"
