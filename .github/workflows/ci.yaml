@@ -89,6 +89,8 @@ jobs:
         run: bash tools/client-proof-phase.test.sh
       - name: Protected controllers preserve cleanup acknowledgments
         run: bash tools/trusted-regression-lifecycle.test.sh
+      - name: Same-invocation runtime handoff retains build and cleanup authority
+        run: bash tools/sandbox-runtime-handoff.test.sh
       - name: Completion follows matching integration and private-state cleanup
         run: bash tools/client-proof-completion.test.sh
       - name: Private trial launcher scopes credentials and cleans up

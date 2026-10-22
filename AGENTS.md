@@ -404,6 +404,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+The sandbox isolation probe passes its own verified image ID to the full
+historical suite through a private terminal host function; it must not cold-build
+the same runtime twice. Public trusted-suite invocations still build from their
+reviewed sources and accept no image override. Preserve containment, package
+refusal, complete scene selection and cleanup acknowledgments. Run
+`bash tools/sandbox-runtime-handoff.test.sh` and the deadline/lifecycle suites
+after changes. See [runtime inventory](docs/ci/trusted-runtime-inventory.md).
+
 Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
 selection. Keep the exact base, snapshot and direct-pin joins, full successful
