@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
-# Keep all material/geometry arms in one isolated, real Metal capture.
+# Keep every material/geometry arm in an isolated, real Metal capture.
 set -euo pipefail
 : "${RUNNER_TEMP:?}"
-for mode in off on drape both; do
+modes=(off on drape both)
+if [[ $# -gt 0 ]]; then
+  if [[ $# -ne 1 ]]; then
+    echo 'cloth capture: expected one fixed mode or no arguments' >&2
+    exit 2
+  fi
+  case "$1" in
+  off | on | drape | both) modes=("$1") ;;
+  *)
+    echo 'cloth capture: unknown mode' >&2
+    exit 2
+    ;;
+  esac
+fi
+for mode in "${modes[@]}"; do
   value=0
   verdict=false
   drape=0

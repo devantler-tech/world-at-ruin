@@ -46,13 +46,32 @@ chmod +x "$scratch/bin/godot"
 run_capture() {
   local dir="$scratch/run-$case_number"
   mkdir "$dir"
-  (cd "$dir" && PATH="$scratch/bin:$PATH" RUNNER_TEMP="$dir" bash "$capture") >"$scratch/log" 2>&1
+  (cd "$dir" && PATH="$scratch/bin:$PATH" RUNNER_TEMP="$dir" bash "$capture" "$@") >"$scratch/log" 2>&1
 }
 case_number=0
 run_capture || fail 'complete synthetic capture failed'
 [[ $(paste -sd, "$scratch/run-0/calls") == off,on,drape,both ]] || fail 'mode set changed'
 [[ $(find "$scratch/run-0/shots" -name '*.png' | wc -l) -eq 160 &&
 $(find "$scratch/run-0/shots" -name '*.txt' | wc -l) -eq 160 ]] || fail 'complete evidence set changed'
+# Every matrix worker captures its entire mode, and no neighbouring mode. The
+# four fixed workers therefore preserve the same complete Cartesian product.
+for mode in off on drape both; do
+  case_number=$((case_number + 1))
+  run_capture "$mode" || fail "$mode worker failed"
+  [[ $(cat "$scratch/run-$case_number/calls") == "$mode" ]] || fail 'worker ran the wrong mode'
+  [[ $(find "$scratch/run-$case_number/shots" -name '*.png' | wc -l) -eq 40 &&
+  $(find "$scratch/run-$case_number/shots" -name '*.txt' | wc -l) -eq 40 ]] || fail 'incomplete worker evidence'
+  case_number=$((case_number + 1))
+  if MISSING_FILE=cloth_gameplay_unrefined_mask.txt run_capture "$mode"; then fail "$mode worker accepted missing evidence"; fi
+done
+for mode in '' missing 'off,on' '../off'; do
+  case_number=$((case_number + 1))
+  if run_capture "$mode"; then fail 'accepted an invalid worker mode'; fi
+  [[ ! -e "$scratch/run-$case_number/calls" ]] || fail 'invalid worker reached the engine'
+done
+case_number=$((case_number + 1))
+if run_capture off on; then fail 'accepted more than one worker mode'; fi
+[[ ! -e "$scratch/run-$case_number/calls" ]] || fail 'extra argument reached the engine'
 # Cover each view, arm and file type independently, without copying production
 # loop structure. Omitting any one assertion must make a negative control pass.
 missing_files=(cloth_rear.png cloth_profile.png cloth_gameplay.png cloth_front.txt)
@@ -154,24 +173,27 @@ done
 admit() {
   jq -e '
     .jobs as $jobs | $jobs["frame-capture-cloth"] as $cloth |
-    $cloth.name=="Frame capture (cloth evidence)" and
+    $cloth.name=="Frame capture (cloth evidence, ${{ matrix.mode }})" and
     $cloth.needs==["detect-visual-changes"] and
     $cloth.if==$jobs["frame-capture"].if and
     $cloth.if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
     $cloth["runs-on"]=="macos-latest" and $cloth["timeout-minutes"]==15 and
-    ($cloth|keys)==["if","name","needs","runs-on","steps","timeout-minutes"] and
+    ($cloth|keys)==["if","name","needs","runs-on","steps","strategy","timeout-minutes"] and
+    $cloth.strategy=={"fail-fast":false,matrix:{mode:["off","on","drape","both"]}} and
     ($cloth.steps|length)==5 and
     all($cloth.steps[]; (has("if") or has("continue-on-error"))|not) and
     $cloth.steps[0]=={uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",with:{"fetch-depth":0,"persist-credentials":false}} and
     $cloth.steps[1].run=="bash tools/install-ci-macos-godot.sh" and
     $cloth.steps[2].run=="godot --headless --editor --quit --path client 2>&1 | tee import.log" and
-    $cloth.steps[3].run=="bash tools/capture-cloth-evidence.sh" and
+    $cloth.steps[3].env=={CLOTH_MODE:"${{ matrix.mode }}"} and
+    $cloth.steps[3].run=="bash tools/capture-cloth-evidence.sh \"$CLOTH_MODE\"" and
     $cloth.steps[4].uses=="actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" and
-    $cloth.steps[4].with.name=="cloth-frames-${{ github.sha }}" and
+    $cloth.steps[4].with.name=="cloth-frames-${{ matrix.mode }}-${{ github.sha }}" and
     $cloth.steps[4].with["if-no-files-found"]=="error" and
     ($cloth.steps[4].with.path|split("\n")|map(select(length>0))|sort)==[
-      "${{ runner.temp }}/shots/ragged-cloth/**/*.png","${{ runner.temp }}/shots/ragged-cloth/**/*.txt",
-      "cloth-both.log","cloth-drape.log","cloth-off.log","cloth-on.log"] and
+      "${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.png",
+      "${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.txt",
+      "cloth-${{ matrix.mode }}.log"] and
     ($jobs["ci-required-checks"].needs|index("frame-capture-cloth"))!=null and
     ($jobs["ci-required-checks"].steps[-1].with["job-results"]|contains("${{ needs.frame-capture-cloth.result }}")) and
     any($jobs["client-ordinary"].steps[];.run?=="bash tools/cloth-capture.test.sh") and
@@ -186,12 +208,17 @@ for mutation in \
   '.jobs["frame-capture-cloth"].needs=["frame-capture"]' \
   '.jobs["frame-capture-cloth"]["continue-on-error"]=true' \
   '.jobs["frame-capture-cloth"]["timeout-minutes"]=30' \
+  '.jobs["frame-capture-cloth"].strategy["fail-fast"]=true' \
+  '.jobs["frame-capture-cloth"].strategy.matrix.mode=["off","on","drape"]' \
+  '.jobs["frame-capture-cloth"].strategy.matrix.mode=["off","on","drape","drape"]' \
+  '.jobs["frame-capture-cloth"].strategy.matrix.exclude=[{mode:"both"}]' \
   '.jobs["frame-capture-cloth"].steps[0].with["persist-credentials"]=true' \
   '.jobs["frame-capture-cloth"].steps[0].with.ref="main"' \
   '.jobs["frame-capture-cloth"].steps[1].run="true"' \
   '.jobs["frame-capture-cloth"].steps[2].run="true"' \
   '.jobs["frame-capture-cloth"].steps[3].if="false"' \
   '.jobs["frame-capture-cloth"].steps[3].run="true"' \
+  '.jobs["frame-capture-cloth"].steps[3].env.CLOTH_MODE="off"' \
   '.jobs["frame-capture-cloth"].steps[4].with.path="cloth-off.log"' \
   '.jobs["frame-capture-cloth"].steps[4].with.name="unbound-frames"' \
   '.jobs["frame-capture-cloth"].steps[4].with["if-no-files-found"]="ignore"' \

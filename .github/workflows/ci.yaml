@@ -2843,13 +2843,17 @@ jobs:
           if-no-files-found: error
 
   frame-capture-cloth:
-    name: Frame capture (cloth evidence)
+    name: Frame capture (cloth evidence, ${{ matrix.mode }})
     # Native Metal, identical selection and complete evidence in a parallel
     # runner. No cloth mode or camera is exchanged for a shorter verdict.
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
     runs-on: macos-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [off, on, drape, both]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2859,18 +2863,17 @@ jobs:
         run: bash tools/install-ci-macos-godot.sh
       - name: Headless import + class-name scan
         run: godot --headless --editor --quit --path client 2>&1 | tee import.log
-      - name: Capture ragged cloth in all material and geometry states
-        run: bash tools/capture-cloth-evidence.sh
+      - name: Capture the complete cloth mode
+        env:
+          CLOTH_MODE: ${{ matrix.mode }}
+        run: bash tools/capture-cloth-evidence.sh "$CLOTH_MODE"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: cloth-frames-${{ github.sha }}
+          name: cloth-frames-${{ matrix.mode }}-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/shots/ragged-cloth/**/*.png
-            ${{ runner.temp }}/shots/ragged-cloth/**/*.txt
-            cloth-off.log
-            cloth-on.log
-            cloth-drape.log
-            cloth-both.log
+            ${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.txt
+            cloth-${{ matrix.mode }}.log
           if-no-files-found: error
 
   frame-capture-exported:
