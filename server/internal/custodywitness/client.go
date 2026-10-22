@@ -197,7 +197,22 @@ func (c *Client) Compare(ctx context.Context, expected Record) Verdict {
 	if err != nil || stored.LifetimeKey != expected.LifetimeKey {
 		return Conflicting
 	}
-	switch storedRank, expectedRank := stored.Stage.rank(), expected.Stage.rank(); {
+	return classify(stored, expected, stored.Stage.rank(), expected.Stage.rank())
+}
+
+// truncatable is a record of either family that can be cut back to an earlier
+// stage of its own chain.
+type truncatable[R any] interface {
+	comparable
+	truncate(rank int) R
+}
+
+// classify compares a decoded stored record with the expected record for the
+// same key: Verified only for an exact match, ahead or behind only when the
+// longer record cut back to the shorter one's stage equals it exactly, and
+// Conflicting otherwise.
+func classify[R truncatable[R]](stored, expected R, storedRank, expectedRank int) Verdict {
+	switch {
 	case stored == expected:
 		return Verified
 	case storedRank > expectedRank && stored.truncate(expectedRank) == expected:
@@ -245,16 +260,7 @@ func (c *Client) CompareGeneration(ctx context.Context, expected GenerationRecor
 	}
 	// truncate keeps the grant count, set digest and registration pin, so a
 	// different registration never matches either way.
-	switch storedRank, expectedRank := stored.Stage.rank(), expected.Stage.rank(); {
-	case stored == expected:
-		return Verified
-	case storedRank > expectedRank && stored.truncate(expectedRank) == expected:
-		return WitnessAhead
-	case storedRank < expectedRank && expected.truncate(storedRank) == stored:
-		return WitnessBehind
-	default:
-		return Conflicting
-	}
+	return classify(stored, expected, stored.Stage.rank(), expected.Stage.rank())
 }
 
 // read performs one strongly consistent read between two table identity
