@@ -21,6 +21,8 @@ type DurableGenerationConfig struct {
 	Record        nakamageneration.Record
 	IncarnationID string
 	Storage       allocatoradmission.Storage
+	// Witness opts into persist-before-ACK witnessing (#1444); zero is off.
+	Witness GenerationWitnessConfig
 }
 
 // NewDurableGeneration requires explicit enablement before touching storage.
@@ -30,6 +32,10 @@ func NewDurableGeneration(ctx context.Context, cfg DurableGenerationConfig) (*Ge
 		return nil, ErrDisabled
 	}
 	if ctx == nil || !handoffidentity.OpaqueUTF8(cfg.IncarnationID, 128) {
+		return nil, ErrInvalid
+	}
+	witness, ok := cfg.Witness.compose()
+	if !ok {
 		return nil, ErrInvalid
 	}
 	g, err := NewGeneration(GenerationConfig{Enabled: true, Commit: cfg.Commit, Record: cfg.Record})
@@ -58,7 +64,17 @@ func NewDurableGeneration(ctx context.Context, cfg DurableGenerationConfig) (*Ge
 	if err != nil {
 		return nil, durableUnknown(ctx, err)
 	}
-	g.state.durable = &durableState{writer: w, head: head, gate: make(chan struct{}, 1)}
+	d := &durableState{writer: w, head: head, gate: make(chan struct{}, 1)}
+	if witness != nil {
+		// The root registration is witnessed before the generation is exported.
+		// A refusal leaves an unwitnessed root, which recovery must treat as
+		// absent from the witness and therefore keep quarantined.
+		d.witness = &generationWitness{writer: witness, key: allocatoradmission.Key(r.GenerationID)}
+		if err = d.witness.advance(ctx, WitnessRegistered, head); err != nil {
+			return nil, err
+		}
+	}
+	g.state.durable = d
 	return g, nil
 }
 
@@ -71,6 +87,8 @@ type durableState struct {
 	// Protected by gate; closure alone also describes a healthy in-progress
 	// Fence, so uncertainty needs a separate permanent terminal state.
 	uncertain bool
+	// witness is nil unless explicitly composed; protected by gate.
+	witness *generationWitness
 }
 
 func (d *durableState) lock(ctx context.Context) error {
@@ -101,6 +119,13 @@ func (d *durableState) drain(ctx context.Context) (*allocatoradmission.Snapshot,
 		return nil, durableUnknown(ctx, err)
 	}
 	d.head = next
+	if d.witness != nil {
+		// The drained snapshot leaves only after the witness holds `drained`.
+		if err = d.witness.advance(ctx, WitnessDrained, next); err != nil {
+			d.uncertain = true
+			return nil, err
+		}
+	}
 	return next, nil
 }
 
@@ -145,6 +170,13 @@ func (s *generationState) register(ctx context.Context, grant Grant, actor, atte
 		ActorUID: actor, AttemptID: attempt, Name: frozen.Name,
 		UID: string(frozen.UID), SourceVersion: frozen.ResourceVersion,
 	})
+	var witnessed error
+	if err == nil && d.witness != nil {
+		// The grant is exported only after the witness holds the matching
+		// registration. The witness call runs under the durable gate, never
+		// under the admission mutex, so closure does not wait for it.
+		witnessed = d.witness.advance(ctx, WitnessRegistered, next)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -157,6 +189,12 @@ func (s *generationState) register(ctx context.Context, grant Grant, actor, atte
 	d.head = next
 	issued := &generationGrantState{owner: s, grant: grant, actor: actor, attempt: attempt}
 	s.grants = append(s.grants, issued)
+	if witnessed != nil {
+		// The acknowledged registration stays in the conservative issued set.
+		s.closed = true
+		d.uncertain = true
+		return GenerationGrant{}, witnessed
+	}
 	if ctx.Err() != nil {
 		s.closed = true
 		d.uncertain = true
