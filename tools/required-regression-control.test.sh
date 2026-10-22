@@ -31,6 +31,8 @@ cp "$repo_root/tools/trusted-regression-phase.sh" "$repo_root/tools/trusted-phas
 # Neither historical data nor candidate content may supply a host helper.
 printf 'echo candidate-helper-was-sourced >&2; exit 99\n' > "$candidate/tools/process-group-lifecycle.sh"
 printf 'echo historical-helper-was-sourced >&2; exit 99\n' > "$trusted/tools/process-group-lifecycle.sh"
+printf 'echo candidate-context-was-sourced >&2; exit 99\n' > "$candidate/tools/sandbox-regression-context.sh"
+printf 'echo historical-context-was-sourced >&2; exit 99\n' > "$trusted/tools/sandbox-regression-context.sh"
 printf '%s\n' 'trusted alpha harness' >"${trusted}/client/tests/alpha_test.tscn"
 printf '%s\n' 'trusted beta harness' >"${trusted}/client/tests/beta_test.tscn"
 printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alpha_test.tscn"
@@ -215,7 +217,7 @@ cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
 # Execute the real launcher/controller with a divergent event-base helper pair.
 # Only the external compiler/container runtime are stubs in this ownership test.
 cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
-for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory observe-runtime-transaction verify-trusted-runtime-packages sandbox-godot; do
+for helper in run-sandboxed-trusted-regressions sandbox-regression-context build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory observe-runtime-transaction verify-trusted-runtime-packages sandbox-godot; do
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
