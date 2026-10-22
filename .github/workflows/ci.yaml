@@ -3315,6 +3315,8 @@ jobs:
           EXPECTED_ATTEMPT: ${{ github.run_attempt }}
           SCENES_RUN: ${{ needs.client-scene-proof.outputs.run-id }}
           SCENES_ATTEMPT: ${{ needs.client-scene-proof.outputs.run-attempt }}
+          CLOTH_SELECTED: ${{ needs.detect-visual-changes.outputs.visual }}
+          CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
         run: bash tools/client-proof-gate.sh
       - uses: devantler-tech/.github/actions/aggregate-job-checks@6195e2493aa94246954d70a4e15bcd8165c4ea64 # v10.0.0
         with:

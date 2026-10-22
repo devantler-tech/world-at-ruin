@@ -10,6 +10,7 @@ capture="$root/tools/capture-cloth-evidence.sh"
 }
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
+# Preserve the specific refused capture or routing condition in the test failure.
 fail() {
   echo "TEST FAIL -- $*" >&2
   exit 1
@@ -43,6 +44,7 @@ done
 exit "${ENGINE_EXIT:-0}"
 ENGINE
 chmod +x "$scratch/bin/godot"
+# Exercise the shipped loop in a fresh disposable worker directory.
 run_capture() {
   local dir="$scratch/run-$case_number"
   mkdir "$dir"
@@ -53,6 +55,30 @@ run_capture || fail 'complete synthetic capture failed'
 [[ $(paste -sd, "$scratch/run-0/calls") == off,on,drape,both ]] || fail 'mode set changed'
 [[ $(find "$scratch/run-0/shots" -name '*.png' | wc -l) -eq 160 &&
 $(find "$scratch/run-0/shots" -name '*.txt' | wc -l) -eq 160 ]] || fail 'complete evidence set changed'
+# An earlier success must never fill a missing file in a later capture.
+if (cd "$scratch/run-0" && PATH="$scratch/bin:$PATH" RUNNER_TEMP="$scratch/run-0" \
+  MISSING_FILE=cloth_front.png bash "$capture" off) >"$scratch/reused.log" 2>&1; then
+  fail 'accepted stale evidence from an earlier mode capture'
+fi
+[[ $(paste -sd, "$scratch/run-0/calls") == off,on,drape,both ]] ||
+  fail 'reused evidence reached the engine instead of refusing without overwriting'
+[[ -s "$scratch/run-0/shots/ragged-cloth/off/cloth_front.png" ]] ||
+  fail 'refusing reused evidence removed the earlier capture'
+for kind in directory file symlink; do
+  reused="$scratch/preexisting-$kind"
+  mkdir -p "$reused/shots/ragged-cloth"
+  output="$reused/shots/ragged-cloth/off"
+  case "$kind" in
+    directory) mkdir "$output" ;;
+    file) printf 'retained evidence\n' >"$output" ;;
+    symlink) ln -s "$scratch/run-0/shots/ragged-cloth/off" "$output" ;;
+  esac
+  if (cd "$reused" && PATH="$scratch/bin:$PATH" RUNNER_TEMP="$reused" bash "$capture" off) >"$scratch/reused.log" 2>&1; then
+    fail "accepted an existing $kind as fresh evidence"
+  fi
+  [[ ! -e "$reused/calls" ]] || fail 'existing output reached the engine'
+  [[ -e "$output" || -L "$output" ]] || fail 'refused output was deleted'
+done
 # Every matrix worker captures its entire mode, and no neighbouring mode. The
 # four fixed workers therefore preserve the same complete Cartesian product.
 for mode in off on drape both; do
@@ -133,6 +159,7 @@ esac
 SETUP
 chmod +x "$scratch/setup-bin/command-double"
 for command in curl shasum unzip sudo; do ln -s command-double "$scratch/setup-bin/$command"; done
+# Substitute transport and installation commands without touching the host installation.
 run_setup() {
   : >"$scratch/setup-trace"
   (cd "$scratch" && PATH="$scratch/setup-bin:$PATH" SETUP_TRACE="$scratch/setup-trace" \
@@ -170,6 +197,7 @@ for helper in capture-cloth-evidence install-ci-macos-godot; do
     bash -e -o pipefail "$scratch/detect.sh") >"$scratch/detect.log" 2>&1 || fail "$helper classification failed"
   grep -Fxq visual=true "$fixture/output" || fail "$helper change skipped real capture"
 done
+# Check the exact required worker matrix and artifact contract after parsing real YAML.
 admit() {
   jq -e '
     .jobs as $jobs | $jobs["frame-capture-cloth"] as $cloth |

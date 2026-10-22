@@ -16,11 +16,18 @@ contract tests. Each worker retains the 15-minute bound.
 `tools/capture-cloth-evidence.sh` runs the existing windowed Metal scene with
 detail and drape off, detail only, drape only, and both enabled. Every mode has
 front, rear, profile and gameplay views, each with ten comparison arms. The
-result is **160 PNG images and 160 caption files**. All must be nonempty.
+result is **160 PNGs and 160 caption files**. All must be nonempty.
 With no argument the helper captures all four modes for local use; CI passes
 exactly one of `off`, `on`, `drape` or `both` to each worker. Unknown, empty or
 extra arguments fail before starting the engine. Each worker verifies all
 40 images and 40 captions belonging to its mode.
+
+Each mode directory must be absent before capture. Atomic creation refuses reused
+directories, files and symlinks before starting the engine, preserving the previous
+capture instead of deleting it. Choose a fresh `RUNNER_TEMP` for another local run.
+The stable client proof gate requires a successful matrix result when visual
+capture is selected; it accepts a skipped result only when capture was explicitly
+not selected. This check is independent of the shared aggregate's skip policy.
 
 Every mode must also emit its exact capture, refinement and boot verdicts.
 Engine failures and script, shader or rendering errors fail the job even if a

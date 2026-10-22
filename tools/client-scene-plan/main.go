@@ -47,15 +47,18 @@ type sceneReceipt struct {
 
 type sceneInput struct{ Name, Digest string }
 
+// gitRead observes the selected checkout without taking optional Git write locks.
 func gitRead(root string, args ...string) ([]byte, error) {
 	return exec.Command("git", append([]string{"-C", root, "--no-optional-locks"}, args...)...).Output()
 }
 
+// hash gives source bytes and the complete plan the same stable SHA-256 encoding.
 func hash(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
+// regularBytes refuses aliased, replaced, oversized or incompletely read proof inputs.
 func regularBytes(path string, limit int64) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
@@ -77,6 +80,7 @@ func regularBytes(path string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
+// buildPlan reconstructs one deterministic shard from clean tracked integration inputs.
 func buildPlan(root, sha, run, attempt string, shard int) (scenePlan, error) {
 	p := scenePlan{SHA: sha, Run: run, Attempt: attempt, Shard: shard}
 	if !shaPattern.MatchString(sha) || !numberPattern.MatchString(run) ||
@@ -187,6 +191,7 @@ func buildPlan(root, sha, run, attempt string, shard int) (scenePlan, error) {
 	return p, nil
 }
 
+// sealPlan accepts only the exact ordered journal written after every assigned success.
 func sealPlan(p scenePlan, completed []byte) (sceneReceipt, error) {
 	if len(p.Scenes) == 0 || !bytes.Equal(completed, []byte(strings.Join(p.Scenes, "\n")+"\n")) {
 		return sceneReceipt{}, errors.New("successful-scene journal is not the complete ordered shard")
@@ -194,10 +199,12 @@ func sealPlan(p scenePlan, completed []byte) (sceneReceipt, error) {
 	return sceneReceipt{1, p.SHA, p.Run, p.Attempt, p.Shard, p.Digest, p.Scenes, true}, nil
 }
 
+// artifactName prevents receipts from another shard, integration, run or retry being reused.
 func artifactName(p scenePlan) string {
 	return fmt.Sprintf("client-scenes-%d-%s-%s-%s", p.Shard, p.SHA, p.Run, p.Attempt)
 }
 
+// verifyReceipts independently reconstructs all three expected canonical worker receipts.
 func verifyReceipts(root, sha, run, attempt, dir string) (int, error) {
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -239,6 +246,7 @@ func verifyReceipts(root, sha, run, attempt, dir string) (int, error) {
 	return count, nil
 }
 
+// execute validates the CLI identity before listing, sealing or reducing scene evidence.
 func execute(root string, args []string, out io.Writer) error {
 	if len(args) < 1 {
 		return errors.New("expected list, seal or verify")
@@ -285,6 +293,7 @@ func execute(root string, args []string, out io.Writer) error {
 	return json.NewEncoder(out).Encode(receipt)
 }
 
+// main keeps proof failures visible to the job rather than printing a partial success.
 func main() {
 	root, err := os.Getwd()
 	if err == nil {

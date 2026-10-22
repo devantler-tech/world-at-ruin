@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// gitFixture confines Git setup and observations to the disposable test repository.
 func gitFixture(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", root, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
@@ -25,6 +26,7 @@ func gitFixture(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// sceneFixture commits dedicated guards and ordinary scenes as a real integration input.
 func sceneFixture(t *testing.T, skip string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -53,6 +55,7 @@ func sceneFixture(t *testing.T, skip string) (string, string) {
 	return root, gitFixture(t, root, "rev-parse", "HEAD")
 }
 
+// mustPlan makes unexpected fixture admission failures fail at their originating test.
 func mustPlan(t *testing.T, root, sha string, shard int) scenePlan {
 	t.Helper()
 	p, err := buildPlan(root, sha, "77", "2", shard)
@@ -62,8 +65,10 @@ func mustPlan(t *testing.T, root, sha string, shard int) scenePlan {
 	return p
 }
 
+// journal models the exact newline-terminated producer record, not a set of scene names.
 func journal(p scenePlan) []byte { return []byte(strings.Join(p.Scenes, "\n") + "\n") }
 
+// TestCompleteDisjointPlan proves the three workers cover each eligible scene exactly once.
 func TestCompleteDisjointPlan(t *testing.T) {
 	root, sha := sceneFixture(t, "")
 	seen := map[string]bool{}
@@ -93,6 +98,7 @@ func TestCompleteDisjointPlan(t *testing.T) {
 	}
 }
 
+// TestSkipSemanticsAndIdentity preserves exact-line skips and binds plans to invocation identity.
 func TestSkipSemanticsAndIdentity(t *testing.T) {
 	root, sha := sceneFixture(t, " \t# comment\n\ncase01_test\n case02_test\ncase03_test \nsave_fixture_guard_test\n")
 	count := 0
@@ -128,6 +134,7 @@ func TestSkipSemanticsAndIdentity(t *testing.T) {
 	}
 }
 
+// TestSealRequiresEverySuccessfulSceneExactlyOnce rejects incomplete or ambiguous producer journals.
 func TestSealRequiresEverySuccessfulSceneExactlyOnce(t *testing.T) {
 	root, sha := sceneFixture(t, "")
 	p := mustPlan(t, root, sha, 0)
@@ -144,6 +151,7 @@ func TestSealRequiresEverySuccessfulSceneExactlyOnce(t *testing.T) {
 	}
 }
 
+// TestPlanRejectsChangedProductSource prevents a clean commit name from blessing changed client bytes.
 func TestPlanRejectsChangedProductSource(t *testing.T) {
 	root, _ := sceneFixture(t, "")
 	dir := filepath.Join(root, "client/scripts")
@@ -166,6 +174,7 @@ func TestPlanRejectsChangedProductSource(t *testing.T) {
 	}
 }
 
+// TestInventoryRefusesEmptyMissingAliasedAndUntrackedScenes exercises invalid filesystem inventories.
 func TestInventoryRefusesEmptyMissingAliasedAndUntrackedScenes(t *testing.T) {
 	for _, mode := range []string{"empty", "missing-guard", "symlink", "untracked"} {
 		t.Run(mode, func(t *testing.T) {
@@ -206,6 +215,7 @@ func TestInventoryRefusesEmptyMissingAliasedAndUntrackedScenes(t *testing.T) {
 	}
 }
 
+// TestReducerRejectsMissingStalePartialAndDuplicateReceipts corrupts actual emitted evidence.
 func TestReducerRejectsMissingStalePartialAndDuplicateReceipts(t *testing.T) {
 	root, sha := sceneFixture(t, "")
 	makeEvidence := func() string {
@@ -300,6 +310,7 @@ func TestReducerRejectsMissingStalePartialAndDuplicateReceipts(t *testing.T) {
 	}
 }
 
+// TestCLIUsesTheActualPlan exercises the public command forms and their refusal paths.
 func TestCLIUsesTheActualPlan(t *testing.T) {
 	root, sha := sceneFixture(t, "")
 	var out bytes.Buffer

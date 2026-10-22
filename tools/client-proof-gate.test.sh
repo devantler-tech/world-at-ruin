@@ -10,6 +10,7 @@ run() {
   env EXPECTED_SHA="$sha" ORDINARY_RESULT=success SANDBOX_RESULT=success SCENES_RESULT=success \
     ORDINARY_COMPLETE=true SANDBOX_COMPLETE=true SCENES_COMPLETE=true ORDINARY_SHA="$sha" SANDBOX_SHA="$sha" SCENES_SHA="$sha" \
     EXPECTED_RUN=77 EXPECTED_ATTEMPT=2 SCENES_RUN=77 SCENES_ATTEMPT=2 \
+    CLOTH_SELECTED=true CLOTH_RESULT=success \
     "$@" bash "$root/tools/client-proof-gate.sh" >"$tmp/verdict" 2>&1
 }
 if ! run; then cat "$tmp/verdict"; exit 1; fi
@@ -38,8 +39,29 @@ for field in SCENES_RUN SCENES_ATTEMPT EXPECTED_RUN EXPECTED_ATTEMPT; do
   done
 done
 for expected in '' short 'refs/heads/main'; do
-  if run "EXPECTED_SHA=$expected" "ORDINARY_SHA=$expected" "SANDBOX_SHA=$expected"; then
+  if run "EXPECTED_SHA=$expected" "ORDINARY_SHA=$expected" "SANDBOX_SHA=$expected" "SCENES_SHA=$expected"; then
     echo 'FAIL: accepted an invalid expected integration SHA' >&2; exit 1
   fi
+done
+for invalid in '' 0 01 unknown 123456789012345678901; do
+  if run "EXPECTED_RUN=$invalid" "SCENES_RUN=$invalid"; then
+    echo 'FAIL: accepted matching malformed run identifiers' >&2; exit 1
+  fi
+  if run "EXPECTED_ATTEMPT=$invalid" "SCENES_ATTEMPT=$invalid"; then
+    echo 'FAIL: accepted matching malformed attempt identifiers' >&2; exit 1
+  fi
+done
+# The shared aggregate accepts legitimate skips; this gate independently requires
+# every selected cloth worker to succeed, and permits a skip only when not selected.
+if ! run CLOTH_SELECTED=false CLOTH_RESULT=skipped; then
+  cat "$tmp/verdict"; exit 1
+fi
+for selected in true false '' yes; do
+  for result in success skipped failure cancelled timed_out ''; do
+    case "$selected:$result" in true:success|false:skipped) continue ;; esac
+    if run "CLOTH_SELECTED=$selected" "CLOTH_RESULT=$result"; then
+      echo 'FAIL: accepted absent or contradictory cloth capture evidence' >&2; exit 1
+    fi
+  done
 done
 echo 'TEST PASS -- stable client gate requires all three complete proofs at one integration SHA'

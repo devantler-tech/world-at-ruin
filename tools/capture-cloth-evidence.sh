@@ -30,7 +30,13 @@ for mode in "${modes[@]}"; do
     drape_verdict=true
   fi
   dir="${RUNNER_TEMP}/shots/ragged-cloth/$mode"
-  mkdir -p "$dir"
+  # Never overwrite an earlier local capture or accept its files as this run's
+  # evidence. Atomic creation also refuses a competing worker or a symlink.
+  mkdir -p "${dir%/*}"
+  if ! mkdir "$dir"; then
+    echo 'cloth capture: the mode output directory must be fresh' >&2
+    exit 1
+  fi
   WAR_RAGGED_CLOTH_DETAIL="$value" WAR_RAGGED_CLOTH_DRAPE="$drape" WAR_RAGGED_WRAP_REFINEMENT="$drape" WAR_SCENARIO=ragged_cloth \
     WAR_SHOT_DIR="$dir" \
     WAR_SAVE_PATH="${RUNNER_TEMP}/cloth_${mode}_absent.json" \

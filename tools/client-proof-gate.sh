@@ -20,4 +20,11 @@ if [[ ! ${EXPECTED_RUN:-} =~ ^[1-9][0-9]{0,19}$ ||
   echo '::error::scene union proof does not belong to this run and attempt' >&2
   exit 1
 fi
+case "${CLOTH_SELECTED:-}:${CLOTH_RESULT:-}" in
+  true:success | false:skipped) ;;
+  *)
+    echo '::error::selected cloth evidence lacks successful completion' >&2
+    exit 1
+    ;;
+esac
 echo "CLIENT PROOFS PASS: all three complete at $EXPECTED_SHA"

@@ -6,6 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 worker="$root/tools/run-client-scene-shard.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
+# Name the failed worker or evidence invariant without hiding its nonzero result.
 fail() {
   echo "TEST FAIL -- $*" >&2
   exit 1
@@ -33,6 +34,7 @@ git -C "$fixture" -c commit.gpgsign=false -c core.hooksPath=/dev/null \
   -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
 sha=$(git -C "$fixture" rev-parse HEAD)
 cp "$scratch/client-scene-plan" "$fixture/temp/client-scene-plan"
+# Run the real worker and compiled planner with only the scene verdict command doubled.
 run_worker() {
   (cd "$fixture" && RUNNER_TEMP="$fixture/temp" XDG_DATA_HOME="$fixture/temp/war-client-scenes-$1" \
     GITHUB_SHA="$sha" GITHUB_RUN_ID=77 GITHUB_RUN_ATTEMPT=2 bash "$worker" "$1")
