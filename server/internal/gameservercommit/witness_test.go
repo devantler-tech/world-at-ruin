@@ -312,21 +312,21 @@ func TestWitnessRefusalAtHandoffExportsNoHandoff(t *testing.T) {
 }
 
 // A handoff binding that is not the witnessed drained generation and issued
-// set is refused before any witness write.
+// set, or not its journal version, is refused before any witness write.
 func TestWitnessHandoffRefusesAForeignBinding(t *testing.T) {
 	g, table := grantedWitnessedGeneration(t)
 	if _, err := g.Fence(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	witness := g.state.durable.witness
-	own := allocatorjournal.JournalBinding{
-		GenerationID: generationRecord().GenerationID, IssuedCount: witness.acked.GrantCount, IssuedDigest: witness.acked.IssuedDigest,
-	}
+	own := g.state.durable.head.Observation().Journal.Binding
 	puts := table.puts
 	for name, mutate := range map[string]func(*allocatorjournal.JournalBinding){
 		"other generation": func(b *allocatorjournal.JournalBinding) { b.GenerationID = "generation-other" },
 		"other count":      func(b *allocatorjournal.JournalBinding) { b.IssuedCount++ },
 		"other issued set": func(b *allocatorjournal.JournalBinding) { b.IssuedDigest = witness.acked.RegistrationPin },
+		"other version":    func(b *allocatorjournal.JournalBinding) { b.Version += "-other" },
+		"no version":       func(b *allocatorjournal.JournalBinding) { b.Version = "" },
 	} {
 		foreign := own
 		mutate(&foreign)

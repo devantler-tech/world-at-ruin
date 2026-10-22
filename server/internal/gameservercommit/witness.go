@@ -135,6 +135,13 @@ func (w *generationWitness) handoff(ctx context.Context, binding allocatorjourna
 		binding.IssuedCount != w.acked.GrantCount || binding.IssuedDigest != w.acked.IssuedDigest {
 		return ErrInvalid
 	}
+	// The drain pin also binds the journal version, so only the exact drained
+	// binding re-derives it.
+	drainPin, err := witnessPin(WitnessDrained, allocatoradmission.Collection, w.key,
+		binding.Version, binding.IssuedCount, binding.IssuedDigest)
+	if err != nil || drainPin != w.acked.DrainPin {
+		return ErrInvalid
+	}
 	pin, err := witnessPin(WitnessHandoff, allocatoradmission.HandoffCollection, allocatoradmission.HandoffKey(binding.GenerationID),
 		binding.Version, binding.IssuedCount, binding.IssuedDigest, version)
 	if err != nil {
