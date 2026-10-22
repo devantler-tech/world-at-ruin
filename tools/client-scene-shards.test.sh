@@ -9,6 +9,7 @@ trap 'rm -rf "$scratch"' EXIT
 # Name the failed worker or evidence invariant without hiding its nonzero result.
 fail() {
   echo "TEST FAIL -- $*" >&2
+  if [[ -f "$scratch/worker.log" ]]; then cat "$scratch/worker.log" >&2; fi
   exit 1
 }
 [[ -f "$worker" ]] || fail 'ordinary scenes still have no isolated worker'
@@ -50,15 +51,21 @@ done
 [[ $(wc -l <"$fixture/temp/calls") -eq 12 && $(sort -u "$fixture/temp/calls" | wc -l) -eq 12 ]] || fail 'workers did not run the exact disjoint scene set'
 (cd "$fixture" && "$scratch/client-scene-plan" verify "$sha" 77 2 "$scratch/artifacts") || fail 'real worker receipts did not reduce'
 # Reused output directories must not allow old receipts to survive a retry.
+before=$(wc -l <"$fixture/temp/calls")
 if run_worker 0 >"$scratch/worker.log" 2>&1; then fail 'accepted a reused worker output directory'; fi
+[[ $(wc -l <"$fixture/temp/calls") -eq "$before" ]] || fail 'reused output refusal happened after scenes ran'
 rm -rf "$fixture/temp/client-scene-0"
+before=$(wc -l <"$fixture/temp/calls")
 if SCENE_FIXTURE_EXIT=23 run_worker 0 >"$scratch/worker.log" 2>&1; then fail 'accepted a failing scene'; fi
+[[ $(wc -l <"$fixture/temp/calls") -eq $((before + 1)) ]] || fail 'failing scene did not stop at the first scene'
 [[ ! -e "$fixture/temp/client-scene-0/receipt.json" ]] || fail 'failed scene produced completion'
 rm -rf "$fixture/temp/client-scene-0"
 mkdir "$scratch/bad-rm"
 printf '#!/usr/bin/env bash\nexit 31\n' >"$scratch/bad-rm/rm"
 chmod +x "$scratch/bad-rm/rm"
+before=$(wc -l <"$fixture/temp/calls")
 if PATH="$scratch/bad-rm:$PATH" run_worker 0 >"$scratch/worker.log" 2>&1; then fail 'accepted failed private-state cleanup'; fi
+[[ $(wc -l <"$fixture/temp/calls") -eq $((before + 4)) ]] || fail 'cleanup refusal did not follow all four assigned scenes'
 [[ ! -e "$fixture/temp/client-scene-0/receipt.json" ]] || fail 'cleanup refusal produced completion'
 for shard in '' -1 3 00 '0 1'; do
   if run_worker "$shard" >"$scratch/worker.log" 2>&1; then fail 'accepted an invalid worker'; fi

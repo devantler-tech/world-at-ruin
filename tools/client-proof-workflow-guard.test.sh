@@ -32,6 +32,8 @@ mutations=(
   '.jobs["ci-required-checks"].steps[3].env.SCENES_SHA = "unknown"'
   '.jobs["ci-required-checks"].steps[3].env.CLOTH_SELECTED = "false"'
   '.jobs["ci-required-checks"].steps[3].env.CLOTH_RESULT = "success"'
+  '.jobs["ci-required-checks"].steps[3].env.EVENT_NAME = "merge_group"'
+  'del(.jobs["ci-required-checks"].steps[3].env.EVENT_NAME)'
   '.jobs["client-ordinary"].steps[-1].if = "always()"'
   '.jobs["client-ordinary"].steps[-1].run = "true"'
   ".jobs[\"client-ordinary\"].steps[0].with.ref = \"\${{ github.event.pull_request.head.sha }}\""

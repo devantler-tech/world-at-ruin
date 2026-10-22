@@ -72,7 +72,8 @@ if ! yq -o=json '.' "$workflow" | jq -e '
       SCENES_RUN:"${{ needs.client-scene-proof.outputs.run-id }}",
       SCENES_ATTEMPT:"${{ needs.client-scene-proof.outputs.run-attempt }}",
       CLOTH_SELECTED:"${{ needs.detect-visual-changes.outputs.visual }}",
-      CLOTH_RESULT:"${{ needs.frame-capture-cloth.result }}"
+      CLOTH_RESULT:"${{ needs.frame-capture-cloth.result }}",
+      EVENT_NAME:"${{ github.event_name }}"
     }
     and (.steps[4] | keys == ["uses","with"]
       and (.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))

@@ -10,7 +10,7 @@ run() {
   env EXPECTED_SHA="$sha" ORDINARY_RESULT=success SANDBOX_RESULT=success SCENES_RESULT=success \
     ORDINARY_COMPLETE=true SANDBOX_COMPLETE=true SCENES_COMPLETE=true ORDINARY_SHA="$sha" SANDBOX_SHA="$sha" SCENES_SHA="$sha" \
     EXPECTED_RUN=77 EXPECTED_ATTEMPT=2 SCENES_RUN=77 SCENES_ATTEMPT=2 \
-    CLOTH_SELECTED=true CLOTH_RESULT=success \
+    EVENT_NAME=pull_request CLOTH_SELECTED=true CLOTH_RESULT=success \
     "$@" bash "$root/tools/client-proof-gate.sh" >"$tmp/verdict" 2>&1
 }
 if ! run; then cat "$tmp/verdict"; exit 1; fi
@@ -56,6 +56,23 @@ done
 if ! run CLOTH_SELECTED=false CLOTH_RESULT=skipped; then
   cat "$tmp/verdict"; exit 1
 fi
+for evidence in true:success false:skipped :skipped; do
+  if ! run EVENT_NAME=merge_group "CLOTH_SELECTED=${evidence%:*}" "CLOTH_RESULT=${evidence#*:}"; then
+    cat "$tmp/verdict"; exit 1
+  fi
+done
+for event in pull_request merge_group '' push; do
+  for selected in true false ''; do
+    for result in success skipped failure cancelled timed_out ''; do
+      case "$event:$selected:$result" in
+        pull_request:true:success|pull_request:false:skipped|merge_group:true:success|merge_group:false:skipped|merge_group::skipped) continue ;;
+      esac
+      if run "EVENT_NAME=$event" "CLOTH_SELECTED=$selected" "CLOTH_RESULT=$result"; then
+        echo 'FAIL: accepted cloth evidence outside its event-specific contract' >&2; exit 1
+      fi
+    done
+  done
+done
 for selected in true false '' yes; do
   for result in success skipped failure cancelled timed_out ''; do
     case "$selected:$result" in true:success|false:skipped) continue ;; esac

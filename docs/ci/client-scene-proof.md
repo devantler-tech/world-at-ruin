@@ -53,6 +53,12 @@ matching run and attempt. A skipped or failed worker is never accepted as a
 successful matrix. A previous attempt's completed proof cannot satisfy a new
 aggregate attempt.
 
+Cloth selection is event-aware. On a pull request, only selected-and-successful
+capture or explicitly unselected-and-skipped capture is valid. On a merge queue
+entry, the pull-request-only detector and capture are skipped, so an empty
+selection with a skipped capture is also valid. Empty selection on a pull
+request, unknown events and contradictory results remain failures.
+
 **Rerun the complete CI workflow after a failure.** A failed-jobs-only rerun
 mixes attempts and deliberately cannot satisfy this proof. Do not rename old
 artifacts, forge output fields or relax identity checks to make a retry green.

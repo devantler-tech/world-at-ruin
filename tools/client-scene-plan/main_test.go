@@ -327,6 +327,76 @@ func TestCLIUsesTheActualPlan(t *testing.T) {
 	}
 }
 
+// TestSealRequiresItsOwnCleanPrivateState exercises the CLI gate, not the worker's rm command.
+func TestSealRequiresItsOwnCleanPrivateState(t *testing.T) {
+	root, sha := sceneFixture(t, "")
+	p := mustPlan(t, root, sha, 0)
+	completed := filepath.Join(t.TempDir(), "completed")
+	if err := os.WriteFile(completed, journal(p), 0600); err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	state := filepath.Join(temp, "war-client-scenes-0")
+	t.Setenv("RUNNER_TEMP", temp)
+	args := []string{"seal", sha, "77", "2", "0", completed}
+	for _, kind := range []string{"mismatched-identity", "leftover-directory", "leftover-symlink", "clean"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("XDG_DATA_HOME", state)
+			switch kind {
+			case "mismatched-identity":
+				t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "other"))
+			case "leftover-directory":
+				if err := os.Mkdir(state, 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Remove(state); err != nil {
+						t.Error(err)
+					}
+				})
+			case "leftover-symlink":
+				if err := os.Symlink(filepath.Join(temp, "absent"), state); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Remove(state); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			var out bytes.Buffer
+			err := execute(root, args, &out)
+			if kind != "clean" {
+				if err == nil || out.Len() != 0 {
+					t.Fatal("unclean or mismatched state produced success or partial output")
+				}
+				want := "worker private state has not been cleaned"
+				if kind == "mismatched-identity" {
+					want = "worker private-state identity is invalid"
+				}
+				if err.Error() != want {
+					t.Fatalf("refused for the wrong cause: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := sealPlan(p, journal(p))
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.String() != string(encoded)+"\n" {
+				t.Fatal("clean CLI seal differs from the canonical receipt")
+			}
+		})
+	}
+}
+
 // TestCLIArgumentBoundaries characterizes every command's arity before any proof input is read.
 func TestCLIArgumentBoundaries(t *testing.T) {
 	for _, command := range []string{"list", "seal", "verify", "unknown"} {

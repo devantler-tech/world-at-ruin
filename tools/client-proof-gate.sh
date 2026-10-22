@@ -20,8 +20,8 @@ if [[ ! ${EXPECTED_RUN:-} =~ ^[1-9][0-9]{0,19}$ ||
   echo '::error::scene union proof does not belong to this run and attempt' >&2
   exit 1
 fi
-case "${CLOTH_SELECTED:-}:${CLOTH_RESULT:-}" in
-  true:success | false:skipped) ;;
+case "${EVENT_NAME:-}:${CLOTH_SELECTED:-}:${CLOTH_RESULT:-}" in
+  pull_request:true:success | pull_request:false:skipped | merge_group:true:success | merge_group:false:skipped | merge_group::skipped) ;;
   *)
     echo '::error::selected cloth evidence lacks successful completion' >&2
     exit 1
