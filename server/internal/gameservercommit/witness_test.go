@@ -87,29 +87,46 @@ func witnessedGeneration(t *testing.T, table *witnessTable) (*Generation, error)
 
 func newWitnessTable() *witnessTable { return &witnessTable{rows: map[string]string{}} }
 
-// Two registrations and a drain leave the witness holding exactly the
-// generation's own retained record, one conditional write per stage.
+// Two registrations and a closing (a drain for a fence, a drain and a handoff
+// for recovery) leave the witness holding exactly the generation's own
+// retained record, one conditional write per stage. Each closing is returned
+// only after the witness acknowledged its last stage.
 func TestWitnessedGenerationChainMatchesItsOwnRecord(t *testing.T) {
-	table := newWitnessTable()
-	g, err := witnessedGeneration(t, table)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"zone-a", "zone-b"} {
-		if _, err = g.Prepare(context.Background(), "pod-a", name, "attempt-"+name); err != nil {
-			t.Fatalf("witnessed registration %s: %v", name, err)
-		}
-	}
-	if _, err = g.Fence(context.Background()); err != nil {
-		t.Fatalf("witnessed drain: %v", err)
-	}
-	own := g.state.durable.witness.acked
-	if own.Stage != WitnessDrained || own.GrantCount != 2 || own.DrainPin == "" ||
-		own.GenerationKey != allocatoradmission.Key(generationRecord().GenerationID) || table.puts != 4 {
-		t.Fatalf("witness chain: %+v after %d writes", own, table.puts)
-	}
-	if got := witnessClient(t, table).CompareGeneration(context.Background(), toCustody(own)); got != custodywitness.Verified {
-		t.Fatalf("witness disagrees with the generation's record: %s", got)
+	for closing, want := range map[string]struct {
+		stage string
+		puts  int
+	}{"fence": {WitnessDrained, 4}, "handoff": {WitnessHandoff, 5}} {
+		t.Run(closing, func(t *testing.T) {
+			table := newWitnessTable()
+			g, err := witnessedGeneration(t, table)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"zone-a", "zone-b"} {
+				if _, err = g.Prepare(context.Background(), "pod-a", name, "attempt-"+name); err != nil {
+					t.Fatalf("witnessed registration %s: %v", name, err)
+				}
+			}
+			if closing == "fence" {
+				_, err = g.Fence(context.Background())
+			} else {
+				var version string
+				if _, version, err = g.CloseForRecovery(context.Background()); err == nil && version == "" {
+					err = errors.New("handoff without its acknowledged version")
+				}
+			}
+			if err != nil {
+				t.Fatalf("witnessed %s: %v", closing, err)
+			}
+			own := g.state.durable.witness.acked
+			if own.Stage != want.stage || own.GrantCount != 2 || own.DrainPin == "" || (closing == "handoff") != (own.HandoffPin != "") ||
+				own.HandoffPin == own.DrainPin || own.GenerationKey != allocatoradmission.Key(generationRecord().GenerationID) || table.puts != want.puts {
+				t.Fatalf("witness chain: %+v after %d writes", own, table.puts)
+			}
+			if got := witnessClient(t, table).CompareGeneration(context.Background(), toCustody(own)); got != custodywitness.Verified {
+				t.Fatalf("witness disagrees with the generation's record: %s", got)
+			}
+		})
 	}
 }
 
@@ -151,14 +168,8 @@ func TestWitnessRefusalExportsNoGrant(t *testing.T) {
 func TestWitnessRefusalAtDrainFormsNoReceiptOrHandoff(t *testing.T) {
 	for _, closing := range []string{"fence", "handoff"} {
 		t.Run(closing, func(t *testing.T) {
-			table := newWitnessTable()
-			g, err := witnessedGeneration(t, table)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = g.Prepare(context.Background(), "pod-a", "zone-a", "attempt-a"); err != nil {
-				t.Fatal(err)
-			}
+			g, table := grantedWitnessedGeneration(t)
+			var err error
 			table.arm("rejected")
 			if closing == "fence" {
 				_, err = g.Fence(context.Background())
@@ -242,13 +253,14 @@ func (c clientWitness) WriteGeneration(ctx context.Context, previous, next Witne
 func toCustody(r WitnessRecord) custodywitness.GenerationRecord {
 	return custodywitness.GenerationRecord{
 		GenerationKey: r.GenerationKey, Stage: custodywitness.GenerationStage(r.Stage), GrantCount: r.GrantCount,
-		IssuedDigest: r.IssuedDigest, RegistrationPin: r.RegistrationPin, DrainPin: r.DrainPin,
+		IssuedDigest: r.IssuedDigest, RegistrationPin: r.RegistrationPin, DrainPin: r.DrainPin, HandoffPin: r.HandoffPin,
 	}
 }
 
 // The local stage names are the witness family's own.
 func TestWitnessStagesAreTheGenerationFamilyStages(t *testing.T) {
-	if WitnessRegistered != string(custodywitness.GenerationRegistered) || WitnessDrained != string(custodywitness.GenerationDrained) {
+	if WitnessRegistered != string(custodywitness.GenerationRegistered) || WitnessDrained != string(custodywitness.GenerationDrained) ||
+		WitnessHandoff != string(custodywitness.GenerationHandoff) {
 		t.Fatal("local witness stage names drifted from the generation family")
 	}
 }
@@ -258,4 +270,73 @@ type witnessFunc func(context.Context, WitnessRecord, WitnessRecord) error
 
 func (f witnessFunc) WriteGeneration(ctx context.Context, previous, next WitnessRecord) error {
 	return f(ctx, previous, next)
+}
+
+// A refused, conflicting, unavailable or lost-then-unreadable handoff witness
+// exports no handoff, leaves the generation uncertain and keeps the retained
+// record at `drained`; a lost reply the exact re-read finds is acknowledged.
+func TestWitnessRefusalAtHandoffExportsNoHandoff(t *testing.T) {
+	for _, fault := range []string{"rejected", "conflicting", "unavailable", "lost-uncommitted", "lost-unreadable", "lost-committed"} {
+		t.Run(fault, func(t *testing.T) {
+			g, table := grantedWitnessedGeneration(t)
+			var err error
+			// Drain is witnessed normally; the fault applies to the handoff write.
+			witness := g.state.durable.witness
+			witness.writer = &faultAfter{witness.writer, 1, table, fault}
+			binding, version, err := g.CloseForRecovery(context.Background())
+			if fault == "lost-committed" {
+				if err != nil || witness.acked.Stage != WitnessHandoff {
+					t.Fatalf("committed handoff with a lost reply refused: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnknown) || version != "" || binding.GenerationID != "" || !g.state.durable.uncertain {
+				t.Fatalf("unwitnessed handoff exported: %v", err)
+			}
+			if witness.acked.Stage != WitnessDrained {
+				t.Fatal("refused handoff advanced the retained witness record")
+			}
+		})
+	}
+}
+
+// faultAfter lets the first calls through, then arms fault on the table (or,
+// for a conflict, replaces the witnessed row) before forwarding the rest.
+type faultAfter struct {
+	next  GenerationWitness
+	clean int
+	table *witnessTable
+	fault string
+}
+
+func (f *faultAfter) WriteGeneration(ctx context.Context, previous, next WitnessRecord) error {
+	if f.clean > 0 {
+		f.clean--
+		return f.next.WriteGeneration(ctx, previous, next)
+	}
+	if f.fault == "conflicting" {
+		f.table.mu.Lock()
+		for key := range f.table.rows {
+			f.table.rows[key] = "{}"
+		}
+		f.table.mu.Unlock()
+	} else {
+		f.table.arm(f.fault)
+	}
+	return f.next.WriteGeneration(ctx, previous, next)
+}
+
+// grantedWitnessedGeneration returns a witnessed generation holding one
+// witnessed grant, and its witness table.
+func grantedWitnessedGeneration(t *testing.T) (*Generation, *witnessTable) {
+	t.Helper()
+	table := newWitnessTable()
+	g, err := witnessedGeneration(t, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = g.Prepare(context.Background(), "pod-a", "zone-a", "attempt-a"); err != nil {
+		t.Fatal(err)
+	}
+	return g, table
 }
