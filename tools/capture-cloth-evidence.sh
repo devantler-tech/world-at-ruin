@@ -45,7 +45,7 @@ for mode in "${modes[@]}"; do
     godot --path client res://tools/frame_capture.tscn 2>&1 | tee "cloth-$mode.log"
   grep -Fxq "CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=$verdict drape=$drape_verdict" "cloth-$mode.log"
   grep -Fxq "WRAP REFINEMENT — enabled=$drape_verdict" "cloth-$mode.log"
-  grep -q 'BOOT_OK' "cloth-$mode.log"
+  grep -Eq '^BOOT_OK v[^[:space:]]+ — world built, [0-9]+ people and [0-9]+ hounds in the Reach$' "cloth-$mode.log"
   grep -vE 'timeout waiting for fence|drivers/metal/rendering_device_driver_metal' \
     "cloth-$mode.log" >"cloth-$mode.filtered.log" || true
   if grep -qE 'SCRIPT ERROR|^ERROR|SHADER ERROR|Shader compilation failed' "cloth-$mode.filtered.log"; then

@@ -39,6 +39,12 @@ mutations=(
   '.jobs["client-scene-proof"].outputs.complete="true"'
   '.jobs["ci-required-checks"].needs|=map(select(.!="client-scene-shards"))'
   '.jobs["ci-required-checks"].needs|=map(select(.!="client-scene-proof"))'
+  '(.jobs["client-ordinary"].steps[]|select((.run//"")|startswith("./tools/run-client-test.sh "))).if="false"'
+  '(.jobs["client-ordinary"].steps[]|select((.run//"")|startswith("./tools/run-client-test.sh ")))["continue-on-error"]=true'
+  '(.jobs["client-ordinary"].steps[]|select((.run//"")|startswith("./tools/run-client-test.sh "))).shell="true {0}"'
+  '(.jobs["client-ordinary"].steps[]|select((.run//"")|startswith("./tools/run-client-test.sh ")))["working-directory"]="fixture"'
+  '(.jobs["client-ordinary"].steps[]|select((.run//"")|startswith("./tools/run-client-test.sh "))).env={PATH:"fixture"}'
+  '(.jobs["client-ordinary"].steps[]|select((.run//"")|startswith("./tools/run-client-test.sh "))).run|="if false; then\n"+.+"\nfi"'
 )
 for mutation in "${mutations[@]}"; do
   jq "$mutation" "$scratch/workflow.json" >"$scratch/mutant.json"

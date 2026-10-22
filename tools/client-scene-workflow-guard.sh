@@ -46,7 +46,9 @@ if ! yq -o=json . "${1:-$root/.github/workflows/ci.yaml}" | jq -e '
     "set -euo pipefail\n\"$RUNNER_TEMP/client-scene-plan\" verify \"$GITHUB_SHA\" \"$GITHUB_RUN_ID\" \"$GITHUB_RUN_ATTEMPT\" \"$RUNNER_TEMP/scene-proofs\"\nprintf \u0027complete=true\\ntested-sha=%s\\nrun-id=%s\\nrun-attempt=%s\\n\u0027 \"$GITHUB_SHA\" \"$GITHUB_RUN_ID\" \"$GITHUB_RUN_ATTEMPT\" >> \"$GITHUB_OUTPUT\"\n"} and
   all(["client-scene-shards","client-scene-proof"][]; . as $job |
     ($jobs["ci-required-checks"].needs|index($job))!=null) and
-  ([ $jobs["client-ordinary"].steps[].run // "" ] | contains([
+  # Dedicated commands must be unique, unconditional ordinary steps. Reading
+  # closed step data never executes candidate workflow text in this validator.
+  all([
     "./tools/run-client-test.sh save_fixture_guard_test \"a historical save no longer loads with zero loss\"",
     "./tools/run-client-test.sh creature_factory_test \"a shipped creature recipe version lost its fixture or no longer builds\"",
     "./tools/run-client-test.sh save_vault_guard_test \"a historical vault no longer loads with zero loss\"",
@@ -54,7 +56,9 @@ if ! yq -o=json . "${1:-$root/.github/workflows/ci.yaml}" | jq -e '
     "./tools/run-client-test.sh vault_restore_boot_test \"an attuned respawn point no longer restores on boot\"",
     "./tools/run-client-test.sh ability_registry_test \"a combat product law is broken\"",
     "bash tools/client-scene-shards.test.sh\nbash tools/client-scene-workflow-guard.test.sh\n"
-  ])) and
+  ][]; . as $command |
+    [$jobs["client-ordinary"].steps[] | select(.run==$command)] as $steps |
+    ($steps|length)==1 and ($steps[0]|keys)==["name","run"]) and
   (any($jobs["client-ordinary"].steps[];(.run // "")|contains("Ran ${ran} discovered regression"))|not)
 ' >/dev/null; then
   echo '::error::client scenes require three isolated workers and a complete integration/attempt-bound union' >&2

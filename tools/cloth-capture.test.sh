@@ -39,7 +39,7 @@ for file in cloth_{front,rear,profile,gameplay}{,_repeat,_fold_off,_seam_off,_fl
 done
 [[ ${MISSING_MARKER:-} == pass ]] || printf 'CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=%s drape=%s\n' "$detail" "$drape"
 [[ ${MISSING_MARKER:-} == refinement ]] || printf 'WRAP REFINEMENT — enabled=%s\n' "$drape"
-[[ ${MISSING_MARKER:-} == boot ]] || printf 'BOOT_OK\n'
+[[ ${MISSING_MARKER:-} == boot ]] || printf '%s\n' "${BOOT_VERDICT:-BOOT_OK v0.0.0 — world built, 2 people and 1 hounds in the Reach}"
 [[ -z ${RENDER_ERROR:-} ]] || printf '%s\n' "$RENDER_ERROR"
 exit "${ENGINE_EXIT:-0}"
 ENGINE
@@ -111,6 +111,14 @@ done
 for marker in pass refinement boot; do
   case_number=$((case_number + 1))
   if MISSING_MARKER="$marker" run_capture; then fail "accepted missing $marker verdict"; fi
+done
+for verdict in \
+  'NOT_BOOT_OK v0.0.0 — world built, 2 people and 1 hounds in the Reach' \
+  'BOOT_OK' \
+  'prefix BOOT_OK v0.0.0 — world built, 2 people and 1 hounds in the Reach' \
+  'BOOT_OK v0.0.0 — world built, 2 people and 1 hounds in the Reach suffix'; do
+  case_number=$((case_number + 1))
+  if BOOT_VERDICT="$verdict" run_capture off; then fail 'accepted a near-miss boot verdict'; fi
 done
 for error in 'SCRIPT ERROR: synthetic refusal' 'SHADER ERROR: synthetic refusal'; do
   case_number=$((case_number + 1))
