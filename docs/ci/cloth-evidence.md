@@ -1,7 +1,7 @@
 # Cloth capture evidence
 
 The required **Frame capture (cloth evidence)** job runs on a native macOS
-runner, alongside **Frame capture (player-visible evidence)** rather than after
+runner, alongside **Frame capture (evidence)** rather than after
 its other scenarios. Both use the same visual-change decision. A change to the
 capture script or macOS installer triggers capture even without a client edit.
 The stable **CI - Required Checks** aggregate requires the new job's result as
