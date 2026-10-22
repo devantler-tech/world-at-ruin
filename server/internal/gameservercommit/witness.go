@@ -129,7 +129,10 @@ func (w *generationWitness) advance(ctx context.Context, stage string, snapshot 
 // create's acknowledgement: the handoff document's key, the drained binding it
 // carries and the version Nakama acknowledged.
 func (w *generationWitness) handoff(ctx context.Context, binding allocatorjournal.JournalBinding, version string) error {
-	if w.acked.Stage != WitnessDrained {
+	// The handoff must carry exactly the witnessed drained generation and
+	// issued set; any other binding would pin a handoff of a different one.
+	if w.acked.Stage != WitnessDrained || allocatoradmission.Key(binding.GenerationID) != w.key ||
+		binding.IssuedCount != w.acked.GrantCount || binding.IssuedDigest != w.acked.IssuedDigest {
 		return ErrInvalid
 	}
 	pin, err := witnessPin(WitnessHandoff, allocatoradmission.HandoffCollection, allocatoradmission.HandoffKey(binding.GenerationID),

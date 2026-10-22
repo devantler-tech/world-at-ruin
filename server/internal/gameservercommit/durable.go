@@ -110,6 +110,11 @@ func (d *durableState) drain(ctx context.Context) (*allocatoradmission.Snapshot,
 		return nil, err
 	}
 	defer d.unlock()
+	return d.drainLocked(ctx)
+}
+
+// drainLocked is drain under a gate the caller already holds.
+func (d *durableState) drainLocked(ctx context.Context) (*allocatoradmission.Snapshot, error) {
 	if d.uncertain {
 		return nil, unknown(ctx)
 	}
@@ -142,19 +147,20 @@ func (g *Generation) CloseForRecovery(ctx context.Context) (allocatorjournal.Jou
 	ctx, cancel := context.WithTimeout(ctx, requestLimit)
 	defer cancel()
 	d := g.state.durable
-	head, err := d.drain(ctx)
-	if err != nil {
-		return allocatorjournal.JournalBinding{}, "", err
-	}
-	// The handoff is published and witnessed under the durable gate, so a
-	// witness refusal can always mark the generation uncertain, and a gate that
-	// cannot be taken publishes nothing.
-	if err = d.lock(ctx); err != nil {
+	// Drain, handoff publication and its witness share one critical section,
+	// so every failure after the drain can mark the generation uncertain.
+	if err := d.lock(ctx); err != nil {
 		return allocatorjournal.JournalBinding{}, "", err
 	}
 	defer d.unlock()
+	head, err := d.drainLocked(ctx)
+	if err != nil {
+		return allocatorjournal.JournalBinding{}, "", err
+	}
 	binding, version, err := d.writer.PublishHandoff(ctx, head)
 	if err != nil {
+		// The handoff row may exist without an acknowledgement.
+		d.uncertain = true
 		return allocatorjournal.JournalBinding{}, "", durableUnknown(ctx, err)
 	}
 	if d.witness != nil {
