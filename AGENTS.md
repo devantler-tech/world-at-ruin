@@ -412,6 +412,15 @@ refusal, complete scene selection and cleanup acknowledgments. Run
 `bash tools/sandbox-runtime-handoff.test.sh` and the deadline/lifecycle suites
 after changes. See [runtime inventory](docs/ci/trusted-runtime-inventory.md).
 
+Cloth capture runs in its own required native macOS job, in parallel with the
+remaining source frames. Preserve all four modes, four views, ten comparison
+arms and both image/caption files; never exchange evidence for a shorter job.
+Run `bash tools/cloth-capture.test.sh` and
+`bash tools/client-proof-workflow-guard.test.sh` after changing its capture,
+verified installer, routing or required-result wiring. Local synthetic controls
+do not replace hosted Metal capture or measured run time. See
+[cloth evidence](docs/ci/cloth-evidence.md).
+
 Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
 selection. Keep the exact base, snapshot and direct-pin joins, full successful

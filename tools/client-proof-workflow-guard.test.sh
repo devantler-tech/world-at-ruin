@@ -75,7 +75,7 @@ mutations=(
   ".jobs[\"ci-required-checks\"].steps[4].with[\"job-results\"] |= (split(\"\${{ needs.client-sandbox.result == 'success' && 'success' || 'failure' }}\") | join(\"\${{ needs.client-sandbox.result }}\"))"
   ".jobs[\"ci-required-checks\"].steps[4].with[\"job-results\"] |= (split(\"\${{ needs.owned-child-native.result == 'success' && 'success' || 'failure' }}\") | join(\"\${{ needs.owned-child-native.result }}\"))"
 )
-for dependency in retired-repo-links client-ordinary client-sandbox client-export-macos license-guard lint duplication-gate gdscript-lint go-vulnerability-scan server-ci gameserver-commit-trial zone-container nakama-native spire-native owned-child-native detect-visual-changes frame-capture frame-capture-exported; do
+for dependency in retired-repo-links client-ordinary client-sandbox client-export-macos license-guard lint duplication-gate gdscript-lint go-vulnerability-scan server-ci gameserver-commit-trial zone-container nakama-native spire-native owned-child-native detect-visual-changes frame-capture frame-capture-cloth frame-capture-exported; do
   mutations+=(".jobs[\"ci-required-checks\"].needs |= map(select(. != \"$dependency\"))")
 done
 mutation_count=0
