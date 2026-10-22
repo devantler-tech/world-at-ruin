@@ -24,8 +24,11 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/internal/handoffidentity"
 )
 
-// The item shape: the partition key holds the ADR 0044 lifetime key and one
-// string attribute holds the canonical schema-1 witness record.
+// The item shape: the partition key holds the client's storage key and one
+// string attribute holds the canonical schema-1 witness record. The storage
+// key is the bare ADR 0044 lifetime key for a zone record, or the generation
+// key in the client's own generation namespace; the attribute keeps its
+// shipped name for both.
 const (
 	KeyAttribute    = "lifetime_key"
 	RecordAttribute = "record"

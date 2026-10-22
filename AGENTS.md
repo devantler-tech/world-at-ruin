@@ -767,7 +767,11 @@ the permanent blocking policy.
   namespace): stage registered → drained → handoff → owner → recovered →
   published, where registration repeats only by advancing the issued-grant count
   by exactly one with a new pin and set digest, and every later step keeps the
-  count, set digest and earlier pins. Nothing writes or compares it yet.
+  count, set digest and earlier pins. `WriteGeneration` and `CompareGeneration`
+  reuse the same pinned, conditional, single-re-read path under the
+  `generation/` key prefix (zone keys stay bare); ahead and behind are reported
+  only within one registration, and a differing grant count is `conflicting`.
+  Nothing composes them (#1498).
   The separately constructed completion handler requires exact workload identity plus a
   server-injected irreversible termination verifier before original-version fencing and
   UID cleanup (ADR 0020). It opens no listener and has no runtime or shutdown-hook caller;

@@ -84,25 +84,63 @@ func (c *Client) Write(ctx context.Context, previous, next Record) (Record, erro
 		return Record{}, ErrUnknown
 	}
 	value, err := EncodeRecord(next)
-	if err != nil {
+	if err != nil || c.put(ctx, next.LifetimeKey, expected, value) != nil {
 		return Record{}, ErrUnknown
 	}
+	return next, nil
+}
+
+// WriteGeneration moves the witness record for next.GenerationKey from
+// previous to next in one conditional write, in the generation key namespace.
+// A generation is opened only by its root registration when no record exists,
+// so previous must be the zero GenerationRecord; every later record must
+// follow previous exactly. Acknowledgement, refusal and lost-reply handling
+// are exactly those of Write.
+func (c *Client) WriteGeneration(ctx context.Context, previous, next GenerationRecord) (GenerationRecord, error) {
+	expected := ""
+	switch {
+	case previous == (GenerationRecord{}) && next.Opens():
+	case next.Follows(previous):
+		expected, _ = EncodeGenerationRecord(previous)
+	default:
+		return GenerationRecord{}, ErrUnknown
+	}
+	value, err := EncodeGenerationRecord(next)
+	if err != nil || c.put(ctx, generationStorageKey(next.GenerationKey), expected, value) != nil {
+		return GenerationRecord{}, ErrUnknown
+	}
+	return next, nil
+}
+
+// generationKeyPrefix gives generation records their own key namespace. Zone
+// lifetime records keep their bare, already shipped digest keys, which never
+// contain the separator, so the two families can never share a stored key.
+const generationKeyPrefix = "generation/"
+
+// generationStorageKey is the table key of one generation's record.
+func generationStorageKey(generationKey string) string {
+	return generationKeyPrefix + generationKey
+}
+
+// put stores value under key in one conditional write and returns nil only
+// when this call's own write is known to be stored.
+func (c *Client) put(ctx context.Context, key, expected, value string) error {
 	writeCtx, cancel := context.WithTimeout(ctx, operationTimeout)
 	defer cancel()
 	if !c.pinned(writeCtx) {
-		return Record{}, ErrUnknown
+		return ErrUnknown
 	}
-	err = c.table.Put(writeCtx, next.LifetimeKey, expected, value)
+	err := c.table.Put(writeCtx, key, expected, value)
 	if err == nil && writeCtx.Err() == nil {
 		// A write that may have reached a replacement table is no
 		// acknowledgement, even though that table accepted it.
 		if !c.pinned(writeCtx) {
-			return Record{}, ErrUnknown
+			return ErrUnknown
 		}
-		return next, nil
+		return nil
 	}
 	if errors.Is(err, ErrConditionFailed) {
-		return Record{}, ErrUnknown
+		return ErrUnknown
 	}
 	// The reply was lost or arrived after cancellation. Exactly one strongly
 	// consistent re-read decides: only the exact intended record is an
@@ -111,13 +149,13 @@ func (c *Client) Write(ctx context.Context, previous, next Record) (Record, erro
 	readCtx, cancelRead := context.WithTimeout(context.WithoutCancel(ctx), operationTimeout)
 	defer cancelRead()
 	if !c.pinned(readCtx) {
-		return Record{}, ErrUnknown
+		return ErrUnknown
 	}
-	stored, found, err := c.table.Get(readCtx, next.LifetimeKey)
+	stored, found, err := c.table.Get(readCtx, key)
 	if err != nil || readCtx.Err() != nil || !found || stored != value || !c.pinned(readCtx) {
-		return Record{}, ErrUnknown
+		return ErrUnknown
 	}
-	return next, nil
+	return nil
 }
 
 // Verdict is the outcome of comparing an independently retained record with
@@ -151,29 +189,30 @@ func (c *Client) Compare(ctx context.Context, expected Record) Verdict {
 	if !expected.Valid() {
 		return Unavailable
 	}
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
-	defer cancel()
-	if verdict := c.identityVerdict(ctx); verdict != Verified {
+	value, verdict := c.read(ctx, expected.LifetimeKey)
+	if verdict != Verified {
 		return verdict
-	}
-	value, found, err := c.table.Get(ctx, expected.LifetimeKey)
-	// The read may have reached a table that replaced the pinned one after
-	// the first check, so neither its result nor its error counts until the
-	// pin holds again.
-	if verdict := c.identityVerdict(ctx); verdict != Verified {
-		return verdict
-	}
-	if err != nil || ctx.Err() != nil {
-		return Unavailable
-	}
-	if !found {
-		return Absent
 	}
 	stored, err := DecodeRecord(value)
 	if err != nil || stored.LifetimeKey != expected.LifetimeKey {
 		return Conflicting
 	}
-	switch storedRank, expectedRank := stored.Stage.rank(), expected.Stage.rank(); {
+	return classify(stored, expected, stored.Stage.rank(), expected.Stage.rank())
+}
+
+// truncatable is a record of either family that can be cut back to an earlier
+// stage of its own chain.
+type truncatable[R any] interface {
+	comparable
+	truncate(rank int) R
+}
+
+// classify compares a decoded stored record with the expected record for the
+// same key: Verified only for an exact match, ahead or behind only when the
+// longer record cut back to the shorter one's stage equals it exactly, and
+// Conflicting otherwise.
+func classify[R truncatable[R]](stored, expected R, storedRank, expectedRank int) Verdict {
+	switch {
 	case stored == expected:
 		return Verified
 	case storedRank > expectedRank && stored.truncate(expectedRank) == expected:
@@ -195,6 +234,58 @@ func (r Record) truncate(rank int) Record {
 	default:
 		return r
 	}
+}
+
+// CompareGeneration reads the witness record for expected.GenerationKey from
+// the generation key namespace and classifies it against expected, with the
+// same verdicts and the same guarantees as Compare.
+//
+// WitnessAhead and WitnessBehind are reported only within one registration:
+// the same grant count, issued-grant set digest and registration pin. A
+// record keeps only its latest registration, so when the grant counts differ
+// neither record proves that the other extends its chain, and the comparison
+// is Conflicting in both directions. Like every verdict other than Verified,
+// that keeps the quarantine.
+func (c *Client) CompareGeneration(ctx context.Context, expected GenerationRecord) Verdict {
+	if !expected.Valid() {
+		return Unavailable
+	}
+	value, verdict := c.read(ctx, generationStorageKey(expected.GenerationKey))
+	if verdict != Verified {
+		return verdict
+	}
+	stored, err := DecodeGenerationRecord(value)
+	if err != nil || stored.GenerationKey != expected.GenerationKey {
+		return Conflicting
+	}
+	// truncate keeps the grant count, set digest and registration pin, so a
+	// different registration never matches either way.
+	return classify(stored, expected, stored.Stage.rank(), expected.Stage.rank())
+}
+
+// read performs one strongly consistent read between two table identity
+// checks. It returns the stored value with Verified, or the verdict that ends
+// the comparison: Absent, TableReplaced or Unavailable.
+func (c *Client) read(ctx context.Context, key string) (string, Verdict) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	if verdict := c.identityVerdict(ctx); verdict != Verified {
+		return "", verdict
+	}
+	value, found, err := c.table.Get(ctx, key)
+	// The read may have reached a table that replaced the pinned one after
+	// the first check, so neither its result nor its error counts until the
+	// pin holds again.
+	if verdict := c.identityVerdict(ctx); verdict != Verified {
+		return "", verdict
+	}
+	if err != nil || ctx.Err() != nil {
+		return "", Unavailable
+	}
+	if !found {
+		return "", Absent
+	}
+	return value, Verified
 }
 
 // pinned reads the table identity and requires it to equal the pinned value.

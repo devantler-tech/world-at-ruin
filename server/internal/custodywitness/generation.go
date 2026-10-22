@@ -26,6 +26,13 @@ const (
 // MaximumGrantCount matches the admission journal's bound on issued grants.
 const MaximumGrantCount = 256
 
+// generationStages lists the stages in order; a stage's rank is its index
+// plus one.
+var generationStages = []GenerationStage{
+	GenerationRegistered, GenerationDrained, GenerationHandoff,
+	GenerationOwner, GenerationRecovered, GenerationPublished,
+}
+
 // rank orders the stages; an unknown stage has no rank.
 func (s GenerationStage) rank() int {
 	switch s {
@@ -121,6 +128,23 @@ func (r GenerationRecord) Follows(previous GenerationRecord) bool {
 	return true
 }
 
+// truncate returns the record as it stood when it reached the given stage of
+// the same registration: the grant count, set digest and registration pin are
+// kept and every later stage's pin is cleared.
+func (r GenerationRecord) truncate(rank int) GenerationRecord {
+	if rank < 1 || rank >= r.Stage.rank() {
+		return r
+	}
+	kept := r
+	kept.Stage = generationStages[rank-1]
+	for index, pin := range []*string{&kept.DrainPin, &kept.HandoffPin, &kept.OwnerPin, &kept.RecoveredPin, &kept.PublishedPin} {
+		if index+2 > rank {
+			*pin = ""
+		}
+	}
+	return kept
+}
+
 // generationMembers names the document members of each stage, in canonical
 // order; each stage extends the previous one by its own pin.
 var generationMembers = []string{
@@ -173,10 +197,7 @@ func DecodeGenerationRecord(value string) (GenerationRecord, error) {
 	if len(value) > maximumDocumentBytes || !utf8.ValidString(value) {
 		return GenerationRecord{}, ErrUnknown
 	}
-	for _, want := range []GenerationStage{
-		GenerationRegistered, GenerationDrained, GenerationHandoff,
-		GenerationOwner, GenerationRecovered, GenerationPublished,
-	} {
+	for _, want := range generationStages {
 		var schema int
 		var got GenerationRecord
 		targets := []any{

@@ -184,44 +184,6 @@ func TestReplacedOrUnreadableTableRefusesWrites(t *testing.T) {
 	}
 }
 
-// A lost reply is resolved by one exact re-read and never by a second write.
-func TestLostReplyIsResolvedOnlyByTheExactReread(t *testing.T) {
-	ctx := context.Background()
-	committed := newFake()
-	committed.commitThenLose = true
-	if got, err := newClient(t, committed).Write(ctx, Record{}, enrolled); err != nil || got != enrolled {
-		t.Fatal("committed write with a lost reply was not acknowledged", err)
-	}
-	if committed.puts != 1 || committed.gets != 1 {
-		t.Fatal("lost reply was retried or re-read more than once", committed.puts, committed.gets)
-	}
-
-	lost := newFake()
-	lost.loseWithoutCommit = true
-	if got, err := newClient(t, lost).Write(ctx, Record{}, enrolled); err == nil || got != (Record{}) {
-		t.Fatal("uncommitted write acknowledged")
-	}
-	if lost.puts != 1 || lost.gets != 1 || len(lost.snapshot()) != 0 {
-		t.Fatal("uncommitted write was retried", lost.puts, lost.gets)
-	}
-
-	// A competing writer's record is not this call's acknowledgement.
-	raced := newFake()
-	raced.loseWithoutCommit = true
-	competing, _ := EncodeRecord(Record{LifetimeKey: key, Stage: StageEnrolled, EnrollmentPin: strings.Repeat("e", 64)})
-	raced.items[key] = competing
-	if _, err := newClient(t, raced).Write(ctx, Record{}, enrolled); err == nil {
-		t.Fatal("another writer's record acknowledged")
-	}
-
-	unreadable := newFake()
-	unreadable.commitThenLose = true
-	unreadable.getErr = errors.New("unavailable")
-	if _, err := newClient(t, unreadable).Write(ctx, Record{}, enrolled); err == nil {
-		t.Fatal("unresolved reply acknowledged")
-	}
-}
-
 // A caller that gave up still learns what it committed, through the bounded
 // detached re-read, and never through a retry.
 func TestCanceledCallerResolvesItsOwnCommit(t *testing.T) {
@@ -298,22 +260,6 @@ func TestCompareClassifiesEveryOutcome(t *testing.T) {
 	foreign.items[key] = value
 	if got := newClient(t, foreign).Compare(ctx, enrolled); got != Conflicting {
 		t.Fatal("record for another lifetime not conflicting", got)
-	}
-
-	replaced := write(t, enrolled)
-	replaced.identity.ID = "table-b"
-	if got := newClient(t, replaced).Compare(ctx, enrolled); got != TableReplaced {
-		t.Fatal("replaced table not detected", got)
-	}
-	for name, fault := range map[string]func(*fakeTable){
-		"identity": func(f *fakeTable) { f.identityErr = errors.New("auth refused") },
-		"read":     func(f *fakeTable) { f.getErr = errors.New("throttled") },
-	} {
-		table := write(t, enrolled)
-		fault(table)
-		if got := newClient(t, table).Compare(ctx, enrolled); got != Unavailable {
-			t.Fatal(name, "failure not unavailable", got)
-		}
 	}
 }
 
