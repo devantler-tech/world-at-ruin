@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Test the actual job supplied to Actions, not catalogue self-test call counts.
+set -euo pipefail
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+
+check() {
+  yq -o=json '.' "$1" | jq -e '
+    (.jobs["ci-required-checks"].needs | index("lint")) != null and
+    (.jobs.lint |
+      (has("uses") | not) and ."runs-on" == "ubuntu-latest" and
+      .permissions == {contents:"read"} and (has("secrets") | not) and
+      .concurrency["cancel-in-progress"] == true and
+      ([.steps[] | select(.uses? | strings | startswith("actions/checkout@"))] |
+        length == 1 and .[0].with["persist-credentials"] == false) and
+      ([.steps[] | select(.uses? | strings | startswith("oxsecurity/megalinter/flavors/go@"))] |
+        length == 1 and (.[0] |
+          .uses == "oxsecurity/megalinter/flavors/go@9949bad031045f366be2467e00e8371a7328a2e2" and
+          .env.DEFAULT_WORKSPACE == "." and .env.VALIDATE_ALL_CODEBASE == true and
+          .env.APPLY_FIXES == "none" and .env.GOTOOLCHAIN == "local")) and
+      ([.steps[] | (.env // {}) | keys[] | select(test("TOKEN|SECRET|PRIVATE_KEY"))] | length) == 0)
+  ' >/dev/null
+}
+
+check "$root/.github/workflows/ci.yaml" || {
+  echo 'FAIL: local lint must cover the complete repository without fixes or write credentials' >&2
+  exit 1
+}
+for mutation in \
+  'del(.jobs.lint)' \
+  '.jobs.lint.permissions.contents = "write"' \
+  '.jobs.lint.secrets.APP_PRIVATE_KEY = "secret"' \
+  '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).env.APPLY_FIXES = "all"' \
+  '(.jobs.lint.steps[] | select(.env.DEFAULT_WORKSPACE)).env.DEFAULT_WORKSPACE = "server"' \
+  '.jobs["ci-required-checks"].needs |= map(select(. != "lint"))'; do
+  yq "$mutation" "$root/.github/workflows/ci.yaml" >"$scratch/workflow.yaml"
+  if check "$scratch/workflow.yaml"; then
+    echo "FAIL: accepted lint boundary mutation: $mutation" >&2
+    exit 1
+  fi
+done
+echo 'TEST PASS -- local lint retains scope, read-only credentials and required routing'
