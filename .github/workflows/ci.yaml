@@ -1169,7 +1169,7 @@ jobs:
     # macOS host, and an unsigned arm64 .app is killed by macOS before it can
     # launch — a Linux-exported unsigned zip would be dead on arrival on the
     # maintainer's Apple-Silicon machine.
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1968,7 +1968,7 @@ jobs:
     name: Source capture (${{ matrix.group }})
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -2567,7 +2567,7 @@ jobs:
     name: Source capture (BASE)
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -2614,7 +2614,7 @@ jobs:
     # runner. No cloth mode or camera is exchanged for a shorter verdict.
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -2680,7 +2680,7 @@ jobs:
     # because this job runs a different entry path and a different scene.
     needs: [detect-visual-changes, client-export-macos]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       # The hosted display cannot realise the shipped 1600x900 window and has
@@ -2946,7 +2946,7 @@ jobs:
     # its own recipe, real macOS renderer and advisory installation/render result.
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       EXPORTED_CAPTURE_RESOLUTION: 1024x576
@@ -3017,7 +3017,12 @@ jobs:
 
   frame-capture-exported:
     name: Frame capture (exported client)
-    needs: [detect-visual-changes, frame-capture-exported-head, frame-capture-exported-base]
+    needs:
+      [
+        detect-visual-changes,
+        frame-capture-exported-head,
+        frame-capture-exported-base,
+      ]
     if: always() && needs.detect-visual-changes.result == 'success' && needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5

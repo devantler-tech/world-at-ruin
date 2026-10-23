@@ -407,6 +407,9 @@ everything shipped afterwards is held to.
 Native source-frame evidence runs in isolated `world`, `activity` and BASE jobs.
 The stable required collector accepts only the complete source/run/attempt-bound
 PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
+Native source, exported-client and cloth captures share the standard Apple-silicon
+`macos-15` runner. Measure queue delay separately from execution time; a runner
+label alone does not prove the complete feedback budget.
 Run the source-input, component-contract, source-workflow and Go evidence
 tests after changes; hosted capture and complete feedback timing remain separate
 proof. See [source evidence](docs/ci/source-evidence.md).

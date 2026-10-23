@@ -217,7 +217,7 @@ admit() {
     $cloth.needs==["detect-visual-changes"] and
     $cloth.if==$jobs["frame-capture-head"].if and
     $cloth.if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
-    $cloth["runs-on"]=="macos-latest" and $cloth["timeout-minutes"]==15 and
+    $cloth["runs-on"]=="macos-15" and $cloth["timeout-minutes"]==15 and
     ($cloth|keys)==["if","name","needs","runs-on","steps","strategy","timeout-minutes"] and
     $cloth.strategy=={"fail-fast":false,matrix:{mode:["off","on","drape","both"]}} and
     ($cloth.steps|length)==5 and

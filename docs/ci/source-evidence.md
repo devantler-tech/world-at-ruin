@@ -1,7 +1,9 @@
 # Native source-frame evidence
 
 The required `Frame capture (evidence)` check joins three independent native
-macOS captures. The `world` group renders the complete default world, all
+macOS captures. All native capture and client-export workers use the standard
+Apple-silicon `macos-15` image, keeping HEAD, BASE, exported-client and cloth
+evidence on the same supported OS and architecture. The `world` group renders the complete default world, all
 registered opt-in previews and the selected first-run UI. The `activity` group
 renders moving-light response, replicated population, authoritative mob chase,
 breathing, walking, running, the gait transition and controller-driven gait.
@@ -46,6 +48,11 @@ The Go controls exercise complete collection,
 observed BASE failure and refusal of incomplete or mismatched artifacts.
 `tools/cloth-capture.test.sh` also exercises the shipping path detector against
 real commits changing each source-capture helper.
+
+Runner selection does not guarantee available capacity. Record queue delay
+separately from capture execution and compare repeated complete runs before
+claiming a feedback-time improvement. The runner image and version are recorded
+in GitHub's job setup logs.
 
 Hosted macOS captures, complete artifact inspection and whole-run timings remain
 required evidence. Synthetic files and job timeout settings alone establish

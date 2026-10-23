@@ -12,8 +12,11 @@ admit() {
     def safe: (.permissions // {contents:"read"})=={contents:"read"} and
       (has("continue-on-error")|not) and (has("container")|not);
     .jobs as $jobs |
+    all(["client-export-macos","frame-capture-head","frame-capture-base",
+      "frame-capture-cloth","frame-capture-exported-head","frame-capture-exported-base"][];
+      . as $job | $jobs[$job]."runs-on"=="macos-15") and
     ($jobs["frame-capture-head"] | safe and checkout and
-      .needs==["detect-visual-changes"] and ."runs-on"=="macos-latest" and ."timeout-minutes"==15 and
+      .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
       .strategy=={"fail-fast":false,matrix:{group:["world","activity"]}} and
       all(.steps[]; (has("continue-on-error")|not)) and
@@ -31,7 +34,7 @@ admit() {
         ]|map(. as $dir|["png","txt"][]|"${{ runner.temp }}/shots/"+$dir+"*."+.)|
         .+["${{ runner.temp }}/shots/evidence.json","${{ runner.temp }}/shots/logs/*.log"]|sort)) and
     ($jobs["frame-capture-base"] | safe and checkout and
-      .needs==["detect-visual-changes"] and ."runs-on"=="macos-latest" and ."timeout-minutes"==15 and
+      .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
       .steps[1]["timeout-minutes"]==1 and
       any(.steps[];.id?=="install" and ."timeout-minutes"==2 and ."continue-on-error"==true) and
@@ -68,6 +71,10 @@ admit "$work/workflow.json" || {
 for mutation in \
   '.jobs["frame-capture-head"].strategy.matrix.group=["world"]' \
   '.jobs["frame-capture-head"]["runs-on"]="ubuntu-latest"' \
+  '.jobs["client-export-macos"]["runs-on"]="macos-latest"' \
+  '.jobs["frame-capture-cloth"]["runs-on"]="macos-26"' \
+  '.jobs["frame-capture-exported-head"]["runs-on"]="macos-15-intel"' \
+  '.jobs["frame-capture-exported-base"]["runs-on"]="ubuntu-latest"' \
   '.jobs["frame-capture-head"].steps[2]["continue-on-error"]=true' \
   'del(.jobs["frame-capture-base"].steps[3]["timeout-minutes"])' \
   '.jobs["frame-capture-base"].needs += ["frame-capture-head"]' \
