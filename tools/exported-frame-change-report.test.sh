@@ -268,7 +268,7 @@ parallel_contract() {
 		$base.needs==["detect-visual-changes"] and
 		$head.if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
 		$base.if==$head.if and $head.env.EXPORTED_CAPTURE_RESOLUTION=="1024x576" and $base.env==$head.env and
-		$head["runs-on"]=="macos-latest" and $base["runs-on"]=="macos-latest" and
+		$head["runs-on"]=="macos-15" and $base["runs-on"]=="macos-15" and
 		all($head.steps[];(has("continue-on-error") or has("if"))|not) and
 		$head.steps[-1].with.name=="exported-head-${{ github.sha }}-${{ github.run_attempt }}" and
 		$head.steps[-1].with["if-no-files-found"]=="error" and
