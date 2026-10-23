@@ -1,0 +1,27 @@
+name: Retired repository links
+description: Validate active documentation and require the validator's refusal controls.
+author: devantler-tech
+runs:
+  using: composite
+  steps:
+    - name: Check active documentation
+      id: links
+      uses: devantler-tech/.github/actions/validate-retired-repo-links@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
+      with:
+        enabled: "true"
+    - name: Require a completed scan
+      shell: bash
+      env:
+        VALIDATED: ${{ steps.links.outputs.validated }}
+      run: test "$VALIDATED" = true
+    - name: Prove retired links and incomplete scans fail
+      shell: bash
+      env:
+        GOWORK: "off"
+        GOFLAGS: ""
+        GOTOOLCHAIN: local
+        VALIDATOR_SOURCE: ${{ steps.links.outputs.source-directory }}
+      run: bash tools/retired-repo-links-controls.sh
+    - name: Guard routing and credential boundary cannot be bypassed
+      shell: bash
+      run: bash tools/retired-repo-links-workflow.test.sh

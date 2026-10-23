@@ -3256,9 +3256,17 @@ jobs:
 
   retired-repo-links:
     name: Retired repository links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
-    uses: ./.github/workflows/retired-repo-links.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate retired repository links
+        uses: $/.github/actions/retired-repo-links
 
   ci-required-checks:
     name: CI - Required Checks

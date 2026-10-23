@@ -1,9 +1,8 @@
 name: Retired repository links
 
-# Share the same guard with proposed-change CI and independently verify every
+# Independently verify every
 # main push without running the application build or changing publication.
 on:
-  workflow_call:
   push:
     branches: [main]
 
@@ -20,22 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Check active documentation
-        id: links
-        uses: devantler-tech/.github/actions/validate-retired-repo-links@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
-        with:
-          enabled: "true"
-      - name: Require a completed scan
-        env:
-          VALIDATED: ${{ steps.links.outputs.validated }}
-        run: test "$VALIDATED" = true
-      - name: Prove retired links and incomplete scans fail
-        env:
-          GOWORK: "off"
-          GOFLAGS: ""
-          GOTOOLCHAIN: local
-          VALIDATOR_SOURCE: ${{ steps.links.outputs.source-directory }}
-        run: bash tools/retired-repo-links-controls.sh
-      - name: Guard routing and credential boundary cannot be bypassed
-        run: bash tools/retired-repo-links-workflow.test.sh
+      - name: Validate retired repository links
+        uses: $/.github/actions/retired-repo-links
