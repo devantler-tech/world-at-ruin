@@ -411,6 +411,14 @@ selector/workflow tests after changes. Preserve all capture views, settling,
 renderer and image guards; measured complete native runs establish performance,
 not an installer setting or synthetic package fixture.
 
+The product-owned PR admission action accepts only the canonical shared
+reviewed-base invocation and an exact GitHub integration identity. Candidate
+bytes remain anonymous data for the complete contained regression controller.
+Run `bash tools/shared-product-admission.test.sh` with the trusted workflow,
+lifecycle and deadline tests after changes. Source preparation does not activate
+enforcement or retire the existing required source; see
+[the action interface](.github/actions/pr-admission/README.md).
+
 Ordinary discovered client scenes run on three isolated workers with an
 integration/run/attempt-bound complete-union receipt. The six dedicated
 product-law guards stay separate and non-skippable; the historical sandbox
