@@ -158,9 +158,6 @@ func snapshot(group, root string) ([]evidenceFile, error) {
 		if n != before.Size() || n != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 			return fmt.Errorf("evidence changed while reading: %s", rel)
 		}
-		if strings.HasSuffix(rel, ".png") && n <= 10240 {
-			return fmt.Errorf("trivial PNG: %s", rel)
-		}
 		files = append(files, evidenceFile{Path: rel, Size: n, SHA256: hex.EncodeToString(hash.Sum(nil))})
 		return nil
 	})
@@ -200,6 +197,9 @@ func complete(ctx evidenceContext, group string, success bool, files []evidenceF
 	if group == "world" {
 		required = append(required, "opt-in-previews")
 		logs = []string{"logs/capture.log"}
+		if !paths["opt-in-previews/enabled-flags.txt"] {
+			return errors.New("missing preview flag record")
+		}
 		for _, dir := range []string{"", "opt-in-previews/"} {
 			for _, view := range []string{"sunward", "crossfield", "shrine", "bonepale", "cinderreach", "cave-chamber", "cave-walkout", "cave-mouth"} {
 				if !paths[dir+view+".png"] {

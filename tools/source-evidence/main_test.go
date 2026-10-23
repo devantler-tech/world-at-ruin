@@ -33,6 +33,7 @@ func fixture(t *testing.T, group string) string {
 			put(name+".txt", "caption")
 		}
 		if group == "world" {
+			put("opt-in-previews/enabled-flags.txt", "WAR_FIXTURE_PREVIEW=1\n")
 			for _, name := range []string{"sunward", "crossfield", "shrine", "bonepale", "cinderreach", "cave-chamber", "cave-walkout", "cave-mouth"} {
 				put("opt-in-previews/"+name+".png", strings.Repeat("p", 12000))
 				put("opt-in-previews/"+name+".txt", "caption")
@@ -210,6 +211,25 @@ func TestSealAllowsAnEmptyRegisteredPreviewFlagList(t *testing.T) {
 	if err := seal(testContext(t), "world", root, true); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSealRequiresThePreviewFlagRecord(t *testing.T) {
+	root := fixture(t, "world")
+	mustTest(t, os.Remove(filepath.Join(root, "opt-in-previews/enabled-flags.txt")))
+	if err := seal(testContext(t), "world", root, true); err == nil {
+		t.Fatal("accepted preview frames without their actual flag record")
+	}
+}
+
+func TestTransportDoesNotRejudgePNGCompression(t *testing.T) {
+	root := fixture(t, "world")
+	mustTest(t, os.WriteFile(filepath.Join(root, "first_run_small.png"), []byte("small nonempty transport fixture"), 0644))
+	mustTest(t, os.WriteFile(filepath.Join(root, "first_run_small.txt"), []byte("caption"), 0644))
+	if err := seal(testContext(t), "world", root, true); err != nil {
+		t.Fatal(err)
+	}
+	// The native capture keeps its own image/boot/luminance and nontrivial-PNG
+	// guards. The transport layer must not impose a new per-image size policy.
 }
 
 func TestCLISealsAndCollectsBoundEvidence(t *testing.T) {
