@@ -73,6 +73,13 @@ jobs:
         run: ./tools/preview-flags.test.sh
       - name: Cloth evidence is complete and independently required
         run: bash tools/cloth-capture.test.sh
+      - name: Source capture preserves every scenario and joins complete evidence
+        run: |
+          bash tools/source-capture-inputs.test.sh
+          bash tools/source-evidence-component.test.sh
+          bash tools/source-evidence-conditions.test.sh
+          bash tools/source-evidence-workflow.test.sh
+          go test -race tools/source-evidence/main.go tools/source-evidence/main_test.go
       - name: Manifest sequence is monotonic in release order and fail-closed
         run: ./tools/manifest-sequence.test.sh
       - name: Update-manifest shape guard refuses drift and never passes vacuously
@@ -1162,7 +1169,7 @@ jobs:
     # macOS host, and an unsigned arm64 .app is killed by macOS before it can
     # launch — a Linux-exported unsigned zip would be dead on arrival on the
     # maintainer's Apple-Silicon machine.
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1743,10 +1750,14 @@ jobs:
           fi
           git diff --name-only "$BASE_SHA" HEAD > gate_machinery.txt
           if grep -qE '^tools/pr-diff-base\.sh$' gate_machinery.txt; then
-            echo "This PR changes the gate's own base resolver — capturing everything."
+            echo "This PR changes the base resolver — capturing everything."
             # Do not execute the PR's resolver here, even for diagnostics. It is
             # untrusted in this branch and inherits GITHUB_OUTPUT, so it could
             # corrupt the output file before these fail-open values are written.
+            capture_everything
+            exit 0
+          elif grep -qE '^tools/source-(capture|evidence)|^tools/(render-source-base|report-source-frames)\.sh$' gate_machinery.txt; then
+            echo "This PR changes source capture machinery — capturing everything."
             capture_everything
             exit 0
           fi
@@ -1896,51 +1907,103 @@ jobs:
 
   frame-capture:
     name: Frame capture (evidence)
-    # The quality bar judges player-visible work on the rendered frame, so CI
-    # produces frames a reviewer can open instead of trusting a written claim.
-    #
-    # macOS runner on purpose: rendering needs a real GPU surface — a headless
-    # Linux run renders NOTHING (the capture tool refuses to run headless rather
-    # than emit a blank frame).
-    #
-    # REQUIRED as of #142: the hosted macOS runner has demonstrably given the
-    # windowed Godot process a usable Metal surface — 18 consecutive successful
-    # runs, and 77 of 79 overall, with both failures deterministic and diagnosed
-    # (neither was runner flake). The reliability record is on #142.
-    #
-    # This job is path-gated, so it is SKIPPED on PRs that touch nothing a player
-    # can see. That is safe here only because aggregate-job-checks treats a
-    # skipped result as acceptable — verify that before adding any other
-    # conditional job to the required set, or every unrelated PR blocks.
-    needs: [detect-visual-changes]
-    if: needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: macos-latest
-    # Bounded because the aggregate now WAITS for this job. A GDScript compile
-    # error makes a Godot scene hang instead of reaching quit() (a failure mode
-    # this repo has hit), and without a timeout the default 360 minutes would
-    # leave `CI - Required Checks` pending for six hours rather than failing.
-    # Same bound as the exported capture, which already carries one.
-    timeout-minutes: 30
+    needs: [detect-visual-changes, frame-capture-head, frame-capture-base]
+    if: always() && needs.detect-visual-changes.result == 'success' && needs.detect-visual-changes.outputs.visual == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history: the change report at the end of this job renders the
-          # MERGE BASE from a git worktree of this same clone, which a depth-1
-          # checkout cannot reach. The ledger jobs already take it for the same
-          # kind of reason.
+          ref: ${{ github.sha }}
           fetch-depth: 0
-          # This job uploads an artifact — never let the checked-out token ride
-          # along in it (zizmor artipacked).
           persist-credentials: false
+      - name: Require every source capture job
+        env:
+          HEAD_RESULT: ${{ needs.frame-capture-head.result }}
+          BASE_RESULT: ${{ needs.frame-capture-base.result }}
+        run: '[[ "$HEAD_RESULT" == success && "$BASE_RESULT" == success ]]'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-world
+          path: ${{ runner.temp }}/source-world
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-activity
+          path: ${{ runner.temp }}/source-activity
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-base-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/source-base
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Verify the complete source-bound evidence union
+        run: go run tools/source-evidence/main.go collect "$RUNNER_TEMP/source-world" "$RUNNER_TEMP/source-activity" "$RUNNER_TEMP/source-base" "$RUNNER_TEMP/source-joined"
+      - name: Record what these frames can evidence
+        env:
+          CAPTURE_RUNNER_OS: macOS
+          SOURCE_EVIDENCE_DIR: ${{ runner.temp }}/source-joined
+        run: bash tools/source-evidence-conditions.sh
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Import the actual comparison classes
+        run: godot --headless --editor --quit --path client
+      - name: Report what changed against the base
+        continue-on-error: true
+        env:
+          SOURCE_EVIDENCE_DIR: ${{ runner.temp }}/source-joined
+        run: bash tools/report-source-frames.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: frames-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/source-joined/shots/
+          if-no-files-found: error
+
+  frame-capture-head:
+    name: Source capture (${{ matrix.group }})
+    needs: [detect-visual-changes]
+    if: needs.detect-visual-changes.outputs.visual == 'true'
+    runs-on: macos-15
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [world, activity]
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - env:
+          CAPTURE_GROUP: ${{ matrix.group }}
+          FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+          GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
+          VISUAL: ${{ needs.detect-visual-changes.outputs.visual }}
+        name: Validate source capture inputs
+        run: bash tools/source-capture-inputs.sh
+        shell: bash
       - name: Install Godot (pinned, checksum-verified)
         run: bash tools/install-ci-macos-godot.sh
+        shell: bash
       - name: Headless import + class-name scan
-        # Only the headless editor pass writes global_script_class_cache.cfg;
-        # without it a scene-arg run cannot resolve class_name types and HANGS.
         run: godot --headless --editor --quit --path client 2>&1 | tee import.log
-      - name: Capture frames
-        # A seeded save is required: with none present the first-run character
-        # creator opens and its panel covers a third of every frame.
+        shell: bash
+      - if: matrix.group == 'world'
+        name: Capture frames
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots"
@@ -1997,15 +2060,9 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
             exit 1
           fi
-      - name: Capture the moving-key material response
-        # #346. Ordinary evidence holds the SUN fixed and moves the camera,
-        # which cannot prove a material follows a moving light. This scenario
-        # does the inverse: one broad foliage view and one hollow-ash close-up
-        # each keep the camera/world fixed while the shipping DirectionalLight3D
-        # moves through equal-and-opposite source-side and far-side directions.
-        #
-        # Into a subdirectory so frame_diff cannot mistake these deliberately
-        # relit views for ordinary merge-base comparisons.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the moving-key material response
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/light-response"
@@ -2031,22 +2088,9 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture-light-response.filtered.log | head -20
             exit 1
           fi
-      - name: Capture the replicated population
-        # #325. Every other capture in this job boots the client with no zone
-        # configured, so ZoneConnection never opens, the ReplicaStore stays
-        # empty and ReplicaView correctly draws nothing — the published frames
-        # are byte-comparable to a build with no replication at all. A reviewer
-        # of any replication-visual change therefore receives evidence that
-        # structurally cannot contain the change. This scenario stands up a
-        # COMMITTED population against the shipped connection's own store, so
-        # the frames depict the real render path.
-        #
-        # No server, and no network: the scenario forces an empty zone token,
-        # which ZoneConnection refuses before it builds a socket, and then
-        # asserts that refusal. So this step needs nothing beyond the runner.
-        #
-        # Into a subdirectory so frame_diff cannot mistake this fixed-fixture
-        # view for one of the ordinary world vantages.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the replicated population
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/replication"
@@ -2088,12 +2132,9 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" capture-replication.log | head -20
             exit 1
           fi
-      - name: Capture the authoritative mob chase
-        # #357. The committed sequence is generated from the real Go World.Step
-        # and wire encoder, then folded through ZoneConnection before
-        # ReplicaView draws it. Seven fixed-camera frames show the approach,
-        # cast-range arrival and two held-cast ticks; a still cannot evidence
-        # motion, so the whole sequence travels in the artifact.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the authoritative mob chase
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/mob-chase"
@@ -2124,197 +2165,9 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture-mob-chase.filtered.log | head -20
             exit 1
           fi
-      - name: Record what these frames can evidence
-        # #232. Volumetric fog is gated on an R32_Uint atomic storage image and
-        # this runner's virtualised Apple adapter does not support it, so every
-        # frame published here depicts the height-fog FALLBACK. That was true
-        # before this step existed — the difference is that it was only ever
-        # stated in a CI log nobody downloads, so the artifact was silent about
-        # which path it showed and a green required check read as evidence for
-        # a change it structurally could not contain.
-        #
-        # This step does not change what is captured. It makes the capture
-        # CONDITIONS travel with the frames, and fails when they are unknown.
-        env:
-          GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
-        run: |
-          set -o pipefail
-          # FAIL CLOSED on an unknown verdict. main.gd prints this line through
-          # Volumetrics.marker() and volumetrics_test pins its shape, so a drift
-          # that breaks this parse fails the unit test first — but if the print
-          # is removed outright, the degradation would become UNKNOWABLE rather
-          # than merely invisible, and a green capture would go straight back to
-          # reading as volumetric evidence. Unknown is a failure, not a default.
-          # Read each gated feature's verdict, and fail closed on ANYTHING
-          # ambiguous. `head -1` on a multi-verdict log is not a tiebreak, it is
-          # a coin toss that silently suppresses the warning — so require
-          # exactly one DISTINCT verdict per marker rather than taking the
-          # first. (A boundary alone stops "VOLUMETRICS onward …" from matching;
-          # it does not stop two genuine contradictory markers.)
-          read_verdict() {
-            marker="$1"; log="$2"
-            distinct="$(grep -oE "^${marker} (on|off)([[:space:]]|\$)" "$log" \
-              | sed -E "s/^${marker} //; s/[[:space:]]*\$//" | sort -u)"
-            # `|| true`: grep -c exits 1 on a zero count, and under `bash -e` a
-            # failing command substitution in an assignment kills the step —
-            # which would bypass the explicit no-verdict error below.
-            n="$(printf '%s\n' "$distinct" | grep -c . || true)"
-            if [ "$n" -eq 0 ]; then
-              echo "::error::no ${marker} verdict in ${log} — cannot tell what these frames depict (see the marker() helper and its pinning test)" >&2
-              return 1
-            fi
-            if [ "$n" -gt 1 ]; then
-              echo "::error::contradictory ${marker} verdicts in ${log} ($(printf '%s' "$distinct" | tr '\n' '/')) — refusing to guess which one the frames depict" >&2
-              return 1
-            fi
-            printf '%s' "$distinct"
-          }
-          probe="$(read_verdict VOLUMETRICS capture.log)" || exit 1
-          pools="$(read_verdict 'HOLLOW FOG' capture.log)" || exit 1
-          # #325. The world frames carry no replicated entity — no zone is
-          # configured for them — and that fact now travels with the artifact
-          # instead of being something a reviewer has to know. Read through the
-          # same fail-closed parse: an absent verdict means the capture stopped
-          # printing it, which would put the artifact straight back to being
-          # silent about what it contains.
-          world_replication="$(read_verdict REPLICATION capture.log)" || exit 1
-          replication="$(read_verdict REPLICATION capture-replication.log)" || exit 1
-          mob_chase="$(read_verdict 'MOB CHASE' capture-mob-chase.log)" || exit 1
-          echo "volumetric fog path: ${probe}; hollow ash pools: ${pools}"
-          echo "replication — world frames: ${world_replication}; replication scenario: ${replication}"
-          echo "authoritative mob chase: ${mob_chase}"
-
-          # The replication scenario exists ONLY to publish frames containing a
-          # replicated population. An 'off' there is not a degraded runner or a
-          # missing GPU feature, as it is for the two verdicts above — it means
-          # the scenario photographed an empty table and would be publishing
-          # evidence of the exact absence it was built to end. Fail, loudly.
-          if [ "${replication}" != "on" ]; then
-            echo "::error::the replication scenario reported REPLICATION ${replication} — its frames contain no replicated entity, which is the failure #325 exists to close" >&2
-            exit 1
-          fi
-          if [ "${mob_chase}" != "on" ]; then
-            echo "::error::the mob-chase scenario reported ${mob_chase} — its sequence cannot evidence the default chase" >&2
-            exit 1
-          fi
-          # And the world frames must NOT claim a population: they are captured
-          # with no zone, so an 'on' here means the verdict is being printed
-          # from somewhere that does not know what the frames contain.
-          if [ "${world_replication}" != "off" ]; then
-            echo "::error::the world capture reported REPLICATION ${world_replication} despite booting with no zone — the verdict does not track what the frames depict" >&2
-            exit 1
-          fi
-
-          # Travels INSIDE the artifact, beside the PNGs, so a reviewer who
-          # downloads frames a week later still knows what they are looking at.
-          {
-            echo "# Capture conditions"
-            echo
-            echo "runner: ${RUNNER_OS} (hosted)"
-            echo "volumetric_fog: ${probe}"
-            echo "hollow_ash_pools: ${pools}"
-            echo "replicated_entities_in_world_frames: ${world_replication}"
-            echo "replicated_entities_in_replication_frames: ${replication}"
-            echo "authoritative_mob_chase: ${mob_chase}"
-            echo
-            echo "Only the frames under replication/ and mob-chase/ contain replicated entities."
-            echo "Every other frame here was captured with no zone configured, so"
-            echo "its replica table is empty by construction and it evidences"
-            echo "nothing about remote-entity appearance, interpolation or culling."
-            if [ "${probe}" = "off" ]; then
-              echo
-              echo "These frames show the HEIGHT-FOG FALLBACK, not the volumetric"
-              echo "path: this runner's GPU lacks R32_Uint atomic storage image"
-              echo "support, so Godot's froxel volumetrics never initialise here."
-              echo "Nothing in this artifact evidences a change to volumetric fog."
-            fi
-            if [ "${pools}" = "off" ]; then
-              echo
-              echo "This world contains ZERO ash pools. #233 retired the opt-in"
-              echo "that used to gate them, so pools now build wherever the GPU"
-              echo "probe passes — meaning this verdict normally follows the"
-              echo "volumetric one above, and an 'off' here with the probe ON"
-              echo "would instead mean no hollow was deep enough to qualify."
-              echo "Nothing in this artifact evidences a change to the pools."
-            fi
-          } > "${RUNNER_TEMP}/shots/capture-conditions.txt"
-
-          {
-            echo "### Frame capture conditions"
-            echo
-            echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # The case #232 is actually about: a PR changing probe-gated code,
-          # captured on a runner that cannot run it. Say so loudly rather than
-          # letting the green check imply coverage. Not a hard failure — the
-          # frames are still valid evidence for everything else in the diff, and
-          # blocking here would block the whole volumetric lane on a runner
-          # limitation. The obligation it raises is the one AGENTS.md already
-          # makes a P1 review blocker: attach a frame of the actual change.
-          # Keyed on what was ACTUALLY RENDERED, not on the GPU verdict alone.
-          # Pools need the probe AND the opt-in, so keying this on `probe` would
-          # go quiet — and imply the frames show the pools — the moment a
-          # capable runner arrives (the lavapipe lane, #314) while the capture
-          # still sets no opt-in. The condition has to track every gate that can
-          # empty the frame, or it decays into a claim the frames do not support.
-          # `if` blocks, NOT `[ … ] && var=…`: this step runs under `bash -e`,
-          # where a bare test-and-assign whose test is FALSE makes the list
-          # return non-zero and kills the step. The failure would land only on
-          # runs where the feature rendered correctly — the green path — so it
-          # would look like a flake in the capture rather than a shell bug.
-          # Each item carries its own "no", so the joined phrase reads correctly
-          # for one item AND for both: "no volumetric fog and no hollow ash
-          # pools", never "no volumetric fog and hollow ash pools" — which
-          # scans as though the pools WERE rendered.
-          missing=""
-          if [ "${probe}" = "off" ]; then
-            missing="no volumetric fog"
-          fi
-          if [ "${pools}" = "off" ]; then
-            missing="${missing:+${missing} and }no hollow ash pools"
-          fi
-          if [ "${GPU_GATED}" = "true" ] && [ -n "${missing}" ]; then
-            echo "::warning::this PR touches gated rendering, but the capture rendered ${missing} — these frames CANNOT evidence that change. Attach a locally-rendered frame of the enabled path (AGENTS.md: a player-visible PR with no inspectable frame evidence is a P1 blocker)."
-            {
-              echo
-              echo "> [!WARNING]"
-              echo "> This PR touches gated rendering, but the captured frames"
-              echo "> contain ${missing}. They cannot evidence that change."
-              echo "> Attach a locally-rendered frame of the enabled path."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-      - name: Capture the opted-in ground previews
-        # A default-off treatment — #261's plates today — means the ordinary
-        # capture above photographs the FALLBACK surface, so the artifact would
-        # show everything except the change under review. The quality bar wants
-        # a frame of the actual player-visible change, so capture the opted-in
-        # state too.
-        #
-        # WHICH treatments is DATA, not text in this step: tools/preview-flags.txt
-        # lists them and tools/preview-flags.sh validates the list, so adding a
-        # preview is one line there rather than a workflow edit, and the set
-        # cannot drift between the places that consume it (#528).
-        #
-        # The resolver FAILS CLOSED, and that is load-bearing: a missing,
-        # malformed or empty list stops this step instead of exporting nothing,
-        # photographing the default surface and still printing CAPTURE PASS —
-        # frames a reviewer would read as evidence for a treatment they do not
-        # show. tools/preview-flags.test.sh pins that refusal.
-        #
-        # The resolved set is written INTO the artifact and then sourced from
-        # that same file, so the record a reviewer opens is the bytes that
-        # configured this run rather than a second description that can disagree.
-        # Sourcing under `set -a` exports into THIS step's shell only, so the
-        # default-path captures in the other steps are untouched.
-        #
-        # Into a SUBDIRECTORY on purpose: frame_diff enumerates with
-        # DirAccess.get_files(), which ignores directories, so these frames
-        # cannot be mistaken for the default surface by the base comparison —
-        # they are evidence to look at, not a regression baseline.
-        #
-        # Retire an entry from the list in the same change that flips its
-        # treatment default-on; this step goes when the list would empty.
+        shell: bash
+      - if: matrix.group == 'world'
+        name: Capture the opted-in ground previews
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/opt-in-previews"
@@ -2365,12 +2218,9 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture-previews.filtered.log | head -20
             exit 1
           fi
-
-      - name: Capture the first-run UI
-        # Only when the PR touches it. The ordinary capture deliberately seeds a
-        # save so the creator is NOT in frame, so without this a creator change
-        # ships with evidence that does not depict it (#145).
-        if: needs.detect-visual-changes.outputs.first_run == 'true'
+        shell: bash
+      - if: matrix.group == 'world' && needs.detect-visual-changes.outputs.first_run == 'true'
+        name: Capture the first-run UI
         run: |
           set -o pipefail
           # The save must be ABSENT here — its absence is precisely what makes
@@ -2468,19 +2318,9 @@ jobs:
             exit 1
           fi
           echo "breath pinned on all $pin_lines first-run frames"
-      - name: Capture the breathing idle
-        # A STILL CANNOT SHOW AN IDLE (#243). Every other capture here
-        # photographs one instant, which is the right evidence for a material
-        # and worthless for motion — a reviewer cannot tell a breathing body
-        # from a frozen one in a single frame. This walks one character through
-        # fixed phases of the breath so the SEQUENCE is the evidence, and the
-        # tool fails when opposite phases come out identical.
-        #
-        # Run on every visual PR rather than behind its own gate: the
-        # frames-must-differ guard is also the regression test for the idle
-        # itself, so an animation that silently stops reddens a build instead
-        # of waiting for someone to notice a village of statues.
-        if: needs.detect-visual-changes.outputs.visual == 'true'
+        shell: bash
+      - if: matrix.group == 'activity' && needs.detect-visual-changes.outputs.visual == 'true'
+        name: Capture the breathing idle
         run: |
           set -o pipefail
           # Seed a save, exactly as the world capture does — with NO save the
@@ -2525,11 +2365,9 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" breath.log | head -20
             exit 1
           fi
-      - name: Capture the opt-in grounded walk
-        # A still cannot show locomotion. Drive fixed phases through the same
-        # WalkLocomotion method the Player uses, with the flag explicitly on,
-        # and keep the sequence in its own directory so ordinary world-frame
-        # base comparisons do not mistake it for a static vantage.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the opt-in grounded walk
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/walk"
@@ -2552,13 +2390,9 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" walk.log | head -20
             exit 1
           fi
-      - name: Capture the opt-in grounded run
-        # Sprint is the state a player holds most, so it gets the same evidence
-        # treatment as the walk rather than being taken on trust. Its own
-        # directory for the same base-comparison reason, and the RUN marker is
-        # required specifically: the walk scenario prints "CAPTURE PASS" too, so
-        # a dispatch regression that silently fell back to the walk would
-        # otherwise pass while photographing the wrong gait.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the opt-in grounded run
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/run"
@@ -2601,11 +2435,9 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" run.filtered.log | head -20
             exit 1
           fi
-      - name: Capture the walk-to-run transition
-        # #496. The settled walk and run sequences above cannot show the input
-        # edge that used to replace the whole pose in one physics frame. Drive
-        # a real sprint press and release through WalkLocomotion with both
-        # existing opt-ins enabled, and publish every transition step.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the walk-to-run transition
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/gait-transition"
@@ -2643,15 +2475,9 @@ jobs:
             grep -nE "SHADER ERROR|Shader compilation failed" gait-transition.log | head -20
             exit 1
           fi
-      - name: Capture the controller-driven gait
-        # #516. The three sequences above pose WalkLocomotion with the body
-        # pinned, so they cannot show cadence, foot slide or the follow camera
-        # at speed. This one holds real input and steps the shipped controller
-        # at the fixed physics step: a walk, the sprint press and a run, with
-        # frames at distance marks and the measured cadence, slide and lift in
-        # gait_drive_summary.txt. The tool fails itself if the photographed
-        # drive does not reproduce its rehearsal exactly. Its own directory, so
-        # the world-frame base comparison never mistakes it for a vantage.
+        shell: bash
+      - if: matrix.group == 'activity'
+        name: Capture the controller-driven gait
         run: |
           set -o pipefail
           mkdir -p "${RUNNER_TEMP}/shots/gait-drive"
@@ -2696,167 +2522,22 @@ jobs:
             echo
             grep -E "^GAIT DRIVE" gait-drive.log | sed 's/^GAIT DRIVE /- /'
           } >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
       - name: Frames actually exist
-        # The tool fails closed on a uniform frame, but never trust a single
-        # signal: confirm real files landed before advertising an artifact.
         run: |
           count=$(find "${RUNNER_TEMP}/shots" -name '*.png' -size +10k | wc -l | tr -d ' ')
           if [ "$count" -lt 1 ]; then
             echo "::error::no non-trivial PNGs produced"; ls -la "${RUNNER_TEMP}/shots" || true; exit 1
           fi
           echo "captured $count frame(s)"
-      - name: Render the merge base for comparison
-        # #231: every guard above answers "did something render?" — none of them
-        # answers "is the change under review present?". The spread check is a
-        # min/max over a 16x12 grid, so a localized effect that lands between
-        # those 192 points is worth nothing to it. Measured on three captures
-        # off one checkout (fog off / off / ON): sunward read a spread of 0.541
-        # for ALL THREE, while a per-pixel comparison against the base moved
-        # 0.01% and 21.01%. The only way to report the CHANGE is to render what
-        # the change was made against.
-        #
-        # A git worktree of this clone, not a second checkout: the history is
-        # already here from fetch-depth: 0, so this costs no network and cannot
-        # drift from what the diff step is comparing.
-        #
-        # 🔑 base.sha, NOT the merge base — and the reason is the head side, not
-        # the base side. For a pull_request event actions/checkout checks out
-        # GitHub's synthetic MERGE RESULT (base tip + this PR), so the frames
-        # captured above are "base tip plus my change". The commit that pairs
-        # with that is therefore the base tip itself: merge-result minus
-        # base.sha is exactly this PR. Rendering the older branch-point merge
-        # base instead would put every sibling PR merged since the fork on the
-        # wrong side of the subtraction and report their work as this PR's.
-        #
-        # (An earlier revision here used the merge base for exactly the opposite
-        # reason and was wrong. It went unnoticed because main did not move
-        # during the run that measured it, which makes the two identical —
-        # the failure only appears on a PR whose base advanced.)
-        #
-        # continue-on-error: this is a REPORT, and a required check must not go
-        # red because an old base fails to render. Its honesty is held up
-        # elsewhere: frame_diff's own arithmetic is pinned by
-        # tests/frame_diff_test.gd in the gated suite, and the diff step below
-        # shouts a ::warning:: rather than passing quietly when it compares
-        # nothing.
-        continue-on-error: true
+        shell: bash
+      - name: Seal the complete native capture
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
-        run: |
-          set -o pipefail
-          base="$BASE_SHA"
-          echo "base (pairs with the checked-out merge result): $base"
-          git worktree add --detach "${RUNNER_TEMP}/base" "$base"
-          godot --headless --editor --quit --path "${RUNNER_TEMP}/base/client" 2>&1 | tail -5
-          mkdir -p "${RUNNER_TEMP}/shots-base"
-          # Seed from the BASE's own recipe, not the head's: a PR that edits the
-          # recipe would otherwise render the base world wearing the head's
-          # character, and every frame would differ for that reason alone.
-          if ! cp "${RUNNER_TEMP}/base/client/recipes/wanderer.json" "${RUNNER_TEMP}/probe_save_base.json"; then
-            echo "::warning::could not seed the base capture's save — skipping the change report"
-            exit 1
-          fi
-          WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
-          WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save_base.json" \
-          WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_base_vault.json" \
-          WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/probe_save_base_recovery.json" \
-            godot --path "${RUNNER_TEMP}/base/client" res://tools/frame_capture.tscn 2>&1 | tee base-capture.log
-          if ! grep -q "CAPTURE PASS" base-capture.log; then
-            echo "::warning::the merge base did not render cleanly — the change report will be incomplete"
-            tail -20 base-capture.log
-            exit 1
-          fi
-          # The head captures the first-run UI into the SAME shots dir when the
-          # PR touches the creator, so without a matching base render every
-          # first_run*.png is reported "no base frame" — and a character-creator
-          # PR would get a change report covering only the world vantages it did
-          # NOT touch, while the UI it actually changed carries no measurement.
-          # That is the #145 shape all over again, one level up.
-          #
-          # The save must be ABSENT for the creator to open, exactly as the head
-          # step does it; point at a path that was never created.
-          #
-          # A warning rather than exit 1: the world frames above already compared
-          # successfully, and discarding their measurement because the base's
-          # creator failed to render would throw away the evidence we have.
-          if [ "$FIRST_RUN" = "true" ]; then
-            WAR_SHOT_DIR="${RUNNER_TEMP}/shots-base" \
-            WAR_SCENARIO=first_run \
-            WAR_LAYERED_OUTFIT_PICKERS=1 \
-            WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save_base.json" \
-            WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_base_vault.json" \
-            WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_base_recovery.json" \
-              godot --path "${RUNNER_TEMP}/base/client" res://tools/frame_capture.tscn 2>&1 \
-              | tee base-first-run.log || true
-            # The world scenario prints "CAPTURE PASS" too, so require the
-            # first-run marker: a base that silently fell back to the world path
-            # would leave first_run frames unmatched while looking like a success.
-            if ! grep -qE "[0-9]+ first-run vantages? written" base-first-run.log; then
-              echo "::warning::the base did not render the first-run UI — creator frames will carry no change measurement"
-              tail -20 base-first-run.log || true
-            fi
-          fi
-      - name: Report what changed against the base
-        # Reporting only — no threshold, by #231's own acceptance criteria. A
-        # docs or server-only PR that reaches here legitimately changes nothing
-        # visible, and picking a pass/fail band needs a measured per-vantage
-        # distribution first (the cave's animated torches already move 9% of
-        # that frame between two runs of the SAME build, which is more than a
-        # real change moves at the shrine).
-        #
-        # The numbers land in the job log AND in each frame's .txt note, so a
-        # reviewer opening the artifact sees them without the log beside them.
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          if [ ! -d "${RUNNER_TEMP}/shots-base" ]; then
-            echo "::warning::no base frames — the merge base did not render, so this PR's frames carry no change measurement"
-            exit 0
-          fi
-          # `|| true` is load-bearing, not sloppiness. The tool EXITS NONZERO
-          # when it can compare nothing, and this shell runs with -e and
-          # pipefail — so without it the step dies at the pipeline and the
-          # warning below, which is the entire point of that exit code, never
-          # runs. continue-on-error would keep the job green but leave only a
-          # failed step and no annotation saying the artifact has no comparison.
-          WAR_DIFF_BASE="${RUNNER_TEMP}/shots-base" \
-          WAR_DIFF_HEAD="${RUNNER_TEMP}/shots" \
-            godot --headless --path client res://tools/frame_diff.tscn 2>&1 | tee diff.log || true
-          # The tool fails closed when it compares nothing. Surface that as a
-          # warning rather than swallowing it: a silent empty report is the
-          # exact self-attestation #231 was filed about.
-          if ! grep -q "DIFF PASS" diff.log; then
-            echo "::warning::the change report did not complete — this PR's frames carry no comparison against the base"
-          fi
-          # A vantage the base captured and the head did not is a REMOVED
-          # vantage. The tool names each one; surface it as an annotation too,
-          # since client/tools/ changes trigger this job precisely so a capture
-          # regression cannot pass quietly.
-          if grep -q "REMOVED:" diff.log; then
-            echo "::warning::a committed vantage present in the base is missing from this PR's capture — see the REMOVED lines"
-          fi
-          # A frame that produced no measurement is UNMEASURED, and until now
-          # nothing said so above the fold: the per-frame lines sit inside a
-          # 25-row table under a PASS verdict, and the only grep here was the
-          # one above. Measured on #455 — 6 of 25 frames carried no comparison
-          # and the job raised no annotation about them.
-          #
-          # Covers both classes, since the consequence is the same and a reader
-          # cannot act on the difference: a frame the base never produced, and a
-          # pair that exists but could not be read or was refused. frame_diff
-          # emits the marker only when that set is non-empty, so a fully-compared
-          # run stays quiet — which is what keeps this warning meaningful rather
-          # than a permanent fixture of every visual PR.
-          if grep -q "UNCOMPARED:" diff.log; then
-            echo "::warning::some captured frames carry no base comparison and are NOT evidence for this PR — see the UNCOMPARED line"
-          fi
+          CAPTURE_GROUP: ${{ matrix.group }}
+        run: bash tools/source-evidence-package.sh head
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: frames-${{ github.event.pull_request.head.sha }}
-          # .txt too: each frame's note travels with it, so a reviewer opening
-          # a clamped capture can see it was the runner's display and not the
-          # change under review that clipped the layout.
+          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.group }}
           path: |
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/shots/*.txt
@@ -2878,6 +2559,53 @@ jobs:
             ${{ runner.temp }}/shots/replication/*.txt
             ${{ runner.temp }}/shots/mob-chase/*.png
             ${{ runner.temp }}/shots/mob-chase/*.txt
+            ${{ runner.temp }}/shots/evidence.json
+            ${{ runner.temp }}/shots/logs/*.log
+          if-no-files-found: error
+
+  frame-capture-base:
+    name: Source capture (BASE)
+    needs: [detect-visual-changes]
+    if: needs.detect-visual-changes.outputs.visual == 'true'
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 1
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - id: install
+        name: Install Godot (pinned, checksum-verified)
+        timeout-minutes: 2
+        continue-on-error: true
+        run: bash tools/install-ci-macos-godot.sh
+      - id: base
+        name: Render the merge base for comparison
+        if: steps.install.outcome == 'success'
+        timeout-minutes: 8
+        continue-on-error: true
+        run: bash tools/render-source-base.sh
+      - name: Seal the known BASE outcome
+        timeout-minutes: 1
+        env:
+          INSTALL_RESULT: ${{ steps.install.outcome }}
+          RENDER_RESULT: ${{ steps.base.outcome }}
+        run: bash tools/source-evidence-package.sh base
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: 1
+        with:
+          name: source-base-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/source-base/
           if-no-files-found: error
 
   frame-capture-cloth:
@@ -2886,7 +2614,7 @@ jobs:
     # runner. No cloth mode or camera is exchanged for a shorter verdict.
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -2952,7 +2680,7 @@ jobs:
     # because this job runs a different entry path and a different scene.
     needs: [detect-visual-changes, client-export-macos]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       # The hosted display cannot realise the shipped 1600x900 window and has
@@ -3218,7 +2946,7 @@ jobs:
     # its own recipe, real macOS renderer and advisory installation/render result.
     needs: [detect-visual-changes]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 15
     env:
       EXPORTED_CAPTURE_RESOLUTION: 1024x576
@@ -3289,7 +3017,12 @@ jobs:
 
   frame-capture-exported:
     name: Frame capture (exported client)
-    needs: [detect-visual-changes, frame-capture-exported-head, frame-capture-exported-base]
+    needs:
+      [
+        detect-visual-changes,
+        frame-capture-exported-head,
+        frame-capture-exported-base,
+      ]
     if: always() && needs.detect-visual-changes.result == 'success' && needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
