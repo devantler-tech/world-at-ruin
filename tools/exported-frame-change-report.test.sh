@@ -274,6 +274,10 @@ parallel_contract() {
 		$head.steps[-1].with["if-no-files-found"]=="error" and
 		$base.steps[1].id=="base-engine" and $base.steps[1]["continue-on-error"]==true and
 		$base.steps[2].id=="base-capture" and $base.steps[2]["continue-on-error"]==true and
+		$base["timeout-minutes"]==15 and
+		$base.steps[1]["timeout-minutes"]==2 and $base.steps[2]["timeout-minutes"]==9 and
+		$base.steps[2].if=="steps.base-engine.outcome == '\''success'\''" and
+		$base.steps[3]["timeout-minutes"]==1 and $base.steps[4]["timeout-minutes"]==1 and
 		$base.steps[2].env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}"} and
 		$base.steps[3].env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}",ENGINE_OUTCOME:"${{ steps.base-engine.outcome }}",CAPTURE_OUTCOME:"${{ steps.base-capture.outcome }}"} and
 		($base.steps[3].run|contains(" record-source ")) and
@@ -302,6 +306,11 @@ else
     '.jobs["frame-capture-exported-head"].steps[1]["continue-on-error"]=true' \
     '.jobs["frame-capture-exported-head"].steps[-1].with.name="unbound-head"' \
     '.jobs["frame-capture-exported-base"].steps[2].env.BASE_SHA="wrong"' \
+    'del(.jobs["frame-capture-exported-base"].steps[1]["timeout-minutes"])' \
+    '.jobs["frame-capture-exported-base"].steps[2]["timeout-minutes"]=15' \
+    'del(.jobs["frame-capture-exported-base"].steps[2].if)' \
+    'del(.jobs["frame-capture-exported-base"].steps[3]["timeout-minutes"])' \
+    'del(.jobs["frame-capture-exported-base"].steps[4]["timeout-minutes"])' \
     '.jobs["frame-capture-exported-base"].steps[4].with.name="unbound-base"' \
     '.jobs["frame-capture-exported"].if="true"' \
     '.jobs["frame-capture-exported"].needs |= .[:-1]' \

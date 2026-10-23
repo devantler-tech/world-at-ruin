@@ -3230,6 +3230,7 @@ jobs:
           persist-credentials: false
       - name: Install Godot and templates for the exported base comparison
         id: base-engine
+        timeout-minutes: 2
         # Advisory with the base render below. A transient download or old-base
         # export failure must not turn this required evidence job red; the
         # report step names the missing comparison explicitly instead.
@@ -3255,6 +3256,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Render the PR base through the exported client
         id: base-capture
+        if: steps.base-engine.outcome == 'success'
+        # Leave time for the advisory failure record and artifact upload even
+        # when a healthy old base exceeds this comparison's feedback budget.
+        timeout-minutes: 9
         continue-on-error: true
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -3262,6 +3267,7 @@ jobs:
           tools/exported-frame-change-report.sh render-base \
             "$BASE_SHA" "${RUNNER_TEMP}/exported-frame-report"
       - name: Bind the advisory result to this source and attempt
+        timeout-minutes: 1
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ENGINE_OUTCOME: ${{ steps.base-engine.outcome }}
@@ -3270,6 +3276,7 @@ jobs:
           tools/exported-frame-change-report.sh record-source \
             "${RUNNER_TEMP}/exported-frame-report" "$ENGINE_OUTCOME" "$CAPTURE_OUTCOME"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: 1
         with:
           name: exported-base-${{ github.sha }}-${{ github.run_attempt }}
           # Never upload the temporary Git checkout, source tree or app bundle.

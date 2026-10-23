@@ -1587,8 +1587,10 @@ the permanent blocking policy.
     Exported HEAD and BASE frame captures run on independent macOS workers. The HEAD retains
     the default-world, opt-in-preview and first-run evidence. A stable terminal job requires both
     workers and source/run/attempt-bound comparison data before publishing the complete artifact.
-    A known BASE installation/render failure remains advisory; missing or stale transport evidence
-    is not. Run `tools/exported-frame-change-report.test.sh` and `tools/preview-flags.test.sh`.
+    BASE installation and rendering have two- and nine-minute step bounds inside the 15-minute
+    worker budget, reserving time to record and upload their actual outcome. A known BASE failure
+    remains advisory; missing or stale transport evidence is not. Run
+    `tools/exported-frame-change-report.test.sh` and `tools/preview-flags.test.sh`.
   - `lavapipe-capture.yaml` owns advisory volumetric evidence independently of required CI.
     Eight isolated 15-minute view jobs retain full warmup/settling, llvmpipe/fog verdicts
     and visible failures; a source-bound collector requires every view before publication.
