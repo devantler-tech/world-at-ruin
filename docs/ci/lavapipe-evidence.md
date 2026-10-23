@@ -38,8 +38,10 @@ Linux baseline and do not establish a macOS pixel comparison.
 one exact `mesa-vulkan-drivers` amd64 archive with SHA-256. The recognized Ubuntu
 source and bounded package filename determine the canonical Ubuntu HTTPS-origin
 download; metadata cannot supply an arbitrary download destination. The complete
-byte size and digest must match before APT can execute the archive. Normal APT
-resolution still installs Vulkan tools, X authentication and the virtual display.
+byte size and digest must match before APT can execute the archive. A private APT
+archive cache retains that exact package under its canonical filename. Normal APT
+resolution downloads Vulkan tools, X authentication and virtual-display dependencies;
+the Mesa bytes are rechecked before a download-disabled installation phase.
 No installed-package state, test verdict or rendered image is cached.
 
 Failed or ambiguous planning, partial downloads, unsupported origins/architecture,

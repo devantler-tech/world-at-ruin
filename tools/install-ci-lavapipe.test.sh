@@ -50,10 +50,21 @@ case "$*" in
   exit "${PLAN_EXIT:-0}"
   ;;
 *)
-  [[ $# == 7 && $1 == install && $2 == --yes && $3 == --no-install-recommends &&
-    $4 == "$RUNNER_TEMP"/*/mesa.deb && $5 == vulkan-tools && $6 == xauth && $7 == xvfb ]] || exit 91
-  echo install >>"$TRACE"
-  cmp "$ARCHIVE_GOOD" "$4"
+  [[ $# == 10 && $1 == -o && $2 == Dir::Cache::archives="$RUNNER_TEMP"/* &&
+    $3 == install && $4 == --yes && $5 == --no-install-recommends &&
+    $7 == "$RUNNER_TEMP"/*/mesa-vulkan-drivers_25.2.8-0ubuntu0.24.04.4_amd64.deb &&
+    $8 == vulkan-tools && $9 == xauth && ${10} == xvfb ]] || exit 91
+  [[ ${2#Dir::Cache::archives=} == "${7%/*}" ]] || exit 94
+  cmp "$ARCHIVE_GOOD" "$7"
+  case $6 in
+    --download-only)
+      echo dependencies >>"$TRACE"
+      if [[ ${CORRUPT_CACHE:-false} == true ]]; then cp "$ARCHIVE_BAD" "$7"; fi
+      exit "${DEPENDENCIES_EXIT:-0}"
+      ;;
+    --no-download) echo install >>"$TRACE" ;;
+    *) exit 95 ;;
+  esac
   ;;
 esac
 APT
@@ -76,7 +87,7 @@ while [[ $# != 0 ]]; do
   esac
 done
 [[ $url == https://archive.ubuntu.com/ubuntu/pool/main/m/mesa/mesa-vulkan-drivers_25.2.8-0ubuntu0.24.04.4_amd64.deb &&
-  $output == "$RUNNER_TEMP"/*/mesa.deb ]] || exit 93
+  $output == "$RUNNER_TEMP"/*/mesa-vulkan-drivers_25.2.8-0ubuntu0.24.04.4_amd64.deb ]] || exit 93
 if [[ ${CORRUPT_ARCHIVE:-false} == true ]]; then cp "$ARCHIVE_BAD" "$output"; else cp "$ARCHIVE_GOOD" "$output"; fi
 exit "${DOWNLOAD_EXIT:-0}"
 CURL
@@ -91,11 +102,11 @@ run() {
     "$@" bash "$installer" >"$dir/output" 2>&1
 }
 run
-[[ $(paste -sd, "$dir/trace") == update,plan,download,install ]] || {
+[[ $(paste -sd, "$dir/trace") == update,plan,download,dependencies,install ]] || {
   echo 'FAIL: valid authenticated bytes were not installed' >&2
   exit 1
 }
-for refused in UPDATE_EXIT=17 PLAN_EXIT=17 DOWNLOAD_EXIT=17 CORRUPT_ARCHIVE=true \
+for refused in UPDATE_EXIT=17 PLAN_EXIT=17 DOWNLOAD_EXIT=17 DEPENDENCIES_EXIT=17 CORRUPT_ARCHIVE=true CORRUPT_CACHE=true \
   PLAN_KIND=wrong-size PLAN_KIND=wrong-package PLAN_KIND=wrong-arch PLAN_KIND=unknown-origin \
   PLAN_KIND=unsafe-path PLAN_KIND=encoded-path PLAN_KIND=weak-hash PLAN_KIND=malformed-hash PLAN_KIND=missing-hash PLAN_KIND=invalid-size \
   PLAN_KIND=huge-size PLAN_KIND=empty PLAN_KIND=multiple; do
@@ -108,7 +119,7 @@ for refused in UPDATE_EXIT=17 PLAN_EXIT=17 DOWNLOAD_EXIT=17 CORRUPT_ARCHIVE=true
     exit 1
   fi
   case $refused in
-  PLAN_KIND=wrong-size | DOWNLOAD_EXIT=17 | CORRUPT_ARCHIVE=true) ;;
+  PLAN_KIND=wrong-size | DOWNLOAD_EXIT=17 | DEPENDENCIES_EXIT=17 | CORRUPT_ARCHIVE=true | CORRUPT_CACHE=true) ;;
   *) if grep -Fxq download "$dir/trace"; then
     echo "FAIL: $refused reached download" >&2
     exit 1
