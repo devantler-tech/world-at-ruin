@@ -10,8 +10,9 @@ The selector runs on pull requests. Merge-group events produce no capture,
 matching the visual-selection policy in CI. It verifies that the checkout is
 the exact `GITHUB_SHA` integration commit and that its second parent is the
 event's PR head. Missing or conflicting source identity fails the selection.
-The render job checks out that same immutable integration SHA and repeats the
-identity verification before installing its runtime.
+Every worker checks out GitHub's immutable event SHA directly, never a candidate
+job output. The render and collection jobs repeat identity verification against
+the selector's recorded SHA before accepting results or installing the runtime.
 
 The source paths are `client/scripts/{volumetrics,hollow_fog,main}.gd` and
 `.github/workflows/ci.yaml`. Changes to the independent workflow, its selector,

@@ -41,7 +41,7 @@ admit() {
       and .strategy=={"fail-fast":false,matrix:{vantage:["sunward","crossfield","shrine","bonepale","cinderreach","cave-chamber","cave-walkout","cave-mouth"]}}
       and all(.steps[]; (has("if") or has("continue-on-error"))|not)
       and (.steps[0]|keys==["uses","with"] and (.uses|pinned("actions/checkout"))
-        and .with=={ref:"${{ needs.select.outputs.tested-sha }}","fetch-depth":0,"persist-credentials":false})
+        and .with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false})
       and (.steps[1]|.run=="bash tools/select-lavapipe-capture.sh verify"
         and .env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}",HEAD_SHA:"${{ github.event.pull_request.head.sha }}"})
       and any(.steps[];.run?=="bash tools/install-ci-godot.sh")
@@ -58,9 +58,11 @@ admit() {
       and ."runs-on"=="ubuntu-latest" and ."timeout-minutes"==5
       and all(.steps[]; (has("if") or has("continue-on-error"))|not)
       and (.steps[0]|keys==["uses","with"] and (.uses|pinned("actions/checkout"))
-        and .with=={ref:"${{ needs.select.outputs.tested-sha }}","fetch-depth":0,"persist-credentials":false})
+        and .with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false})
       and (.steps[1]|.env.MATRIX_RESULT=="${{ needs.frame-capture-lavapipe.result }}"
+        and .env.SELECTED_SHA=="${{ needs.select.outputs.tested-sha }}"
         and (.run|contains("[[ \"$MATRIX_RESULT\" == success ]]"))
+        and (.run|contains("[[ \"$SELECTED_SHA\" == \"$GITHUB_SHA\" ]]"))
         and (.run|contains("bash tools/select-lavapipe-capture.sh verify")))
       and (.steps[2]|(.uses|pinned("actions/download-artifact"))
         and .with.pattern=="lavapipe-volumetric-frames-${{ github.sha }}-*"
@@ -89,6 +91,7 @@ for mutation in \
   ".capture.jobs.select.steps[0].with.ref=\"\${{ github.event.pull_request.head.sha }}\"" \
   '.capture.jobs.select.steps[0].with["persist-credentials"]=true' \
   '.capture.jobs["frame-capture-lavapipe"].if="true"' \
+  ".capture.jobs[\"frame-capture-lavapipe\"].steps[0].with.ref=\"\${{ needs.select.outputs.tested-sha }}\"" \
   '.capture.jobs["frame-capture-lavapipe"]["timeout-minutes"]=90' \
   '.capture.jobs["frame-capture-lavapipe"].strategy.matrix.vantage |= .[:-1]' \
   '.capture.jobs["frame-capture-lavapipe"].strategy.matrix.vantage += ["sunward"]' \
@@ -98,7 +101,9 @@ for mutation in \
   '.capture.jobs["frame-capture-lavapipe"].steps[-1].with["if-no-files-found"]="ignore"' \
   '.capture.jobs["frame-capture-lavapipe"].steps[-1].with.name="unbound-frames"' \
   '.capture.jobs["collect-lavapipe"].if="true"' \
+  ".capture.jobs[\"collect-lavapipe\"].steps[0].with.ref=\"\${{ needs.select.outputs.tested-sha }}\"" \
   '.capture.jobs["collect-lavapipe"].steps[1].env.MATRIX_RESULT="success"' \
+  ".capture.jobs[\"collect-lavapipe\"].steps[1].env.SELECTED_SHA=\"\${{ github.sha }}\"" \
   '.capture.jobs["collect-lavapipe"].steps[2].with["merge-multiple"]=true' \
   '.capture.jobs["collect-lavapipe"].steps[3].run="true"' \
   '.ci.jobs["ci-required-checks"].needs += ["frame-capture-lavapipe"]' \
