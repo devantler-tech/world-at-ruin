@@ -1591,8 +1591,15 @@ the permanent blocking policy.
     and validates workflow/helper changes. Run `tools/select-lavapipe-capture.test.sh`,
     `tools/lavapipe-workflow.test.sh` and the existing capture-guard controls. Required CI
     aggregation is unchanged. See [the workflow contract](docs/ci/lavapipe-evidence.md).
-  - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active
-    `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
+  - The CI job and main-only `retired-repo-links.yaml` wrapper both execute
+    this repository's `.github/actions/retired-repository-links` at the same immutable full SHA.
+    GitHub fetches the owner-local action independently of workspace state. Its first step requires
+    the fetched declaration to match the regular, non-symlinked declaration in the explicit
+    event-SHA checkout, so a stale component pin cannot claim new implementation coverage.
+    Update both owner-local component pins after changing that action; its first published revision
+    includes this closure check. This full-reference form is understood by the released actionlint
+    and zizmor; no checker suppression is needed. That local action
+    checks active `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
     scan, and proves seeded retired links and missing configuration fail using the exact source
     returned by that scan. The validator revision is declared once, so routine pin updates need
     no separate source-checkout edit. The fixed `tools/retired-repo-links-controls.sh` invocation

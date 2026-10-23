@@ -3256,9 +3256,19 @@ jobs:
 
   retired-repo-links:
     name: Retired repository links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
-    uses: ./.github/workflows/retired-repo-links.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate retired repository links
+        # Owner-local step composition, fetched independently of workspace state.
+        # The action itself requires its declaration to match the exact checkout.
+        uses: devantler-tech/world-at-ruin/.github/actions/retired-repository-links@ec86d98f9d49fdb1c1ae05a4d00fd8213d40e270 # owned source
 
   ci-required-checks:
     name: CI - Required Checks
