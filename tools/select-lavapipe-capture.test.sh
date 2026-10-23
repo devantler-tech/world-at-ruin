@@ -54,6 +54,7 @@ for changed in docs/readme.md client/scripts/main.gd client/scripts/volumetrics.
   client/scripts/hollow_fog.gd .github/workflows/ci.yaml \
   .github/workflows/lavapipe-capture.yaml tools/select-lavapipe-capture.sh \
   tools/lavapipe-capture-guard.sh tools/install-ci-godot.sh \
+  tools/install-ci-lavapipe.sh tools/install-ci-lavapipe.test.sh \
   tools/collect-lavapipe-captures.sh tools/lavapipe-partitions.test.sh \
   client/tools/frame_capture.gd client/tools/frame_capture.tscn; do
   fixture "$changed"

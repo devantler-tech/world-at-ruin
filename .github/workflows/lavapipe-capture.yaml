@@ -72,9 +72,7 @@ jobs:
         run: bash tools/select-lavapipe-capture.sh verify
       - name: Install and select lavapipe
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            mesa-vulkan-drivers vulkan-tools xauth xvfb
+          bash tools/install-ci-lavapipe.sh
 
           shopt -s nullglob
           icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
