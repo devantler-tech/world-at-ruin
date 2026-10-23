@@ -1592,8 +1592,10 @@ the permanent blocking policy.
     `tools/lavapipe-workflow.test.sh` and the existing capture-guard controls. Required CI
     aggregation is unchanged. See [the workflow contract](docs/ci/lavapipe-evidence.md).
   - The CI job and main-only `retired-repo-links.yaml` wrapper both execute
-    `.github/actions/retired-repo-links` with GitHub's commit-bound `$/` reference. Each wrapper also
-    checks out the explicit event-integration SHA for the fixed control scripts. That local action
+    `.github/actions/retired-repo-links` immediately after a credential-free checkout of the
+    explicit event-integration SHA. The closed two-step wrapper permits no intervening mutation.
+    Workspace-relative references retain compatibility with the released actionlint used by
+    MegaLinter; native `$/` references are not yet understood by that parser. That local action
     checks active `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
     scan, and proves seeded retired links and missing configuration fail using the exact source
     returned by that scan. The validator revision is declared once, so routine pin updates need

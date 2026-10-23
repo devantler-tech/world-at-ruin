@@ -40,7 +40,7 @@ admit() {
       and (.steps[0] | keys == ["uses","with"] and .uses == $checkout
         and .with == {ref:"${{ github.sha }}","persist-credentials":false})
       and (.steps[1] | keys == ["name","uses"]
-        and .uses == "$/.github/actions/retired-repo-links");
+        and .uses == "./.github/actions/retired-repo-links");
     (.guard.jobs["retired-repo-links"].steps[0].uses | pinned("actions/checkout")) as $checkout_sha
     | ("actions/checkout@" + $checkout_sha) as $checkout
     | (.action.runs.steps[0].uses
@@ -128,9 +128,13 @@ for mutation in \
   '.guard.jobs["retired-repo-links"].if="false"' \
   '.guard.jobs["retired-repo-links"].steps[0].with["persist-credentials"]=true' \
   '.ci.jobs["retired-repo-links"].steps[0].with["persist-credentials"]=true' \
+  '.ci.jobs["retired-repo-links"].steps[0].with.ref="main"' \
+  '.guard.jobs["retired-repo-links"].steps[0].with.ref="main"' \
+  '.ci.jobs["retired-repo-links"].steps |= [.[0],{run:"echo changed > .github/actions/retired-repo-links/action.yaml"},.[1]]' \
+  '.guard.jobs["retired-repo-links"].steps |= [.[0],{run:"echo changed > .github/actions/retired-repo-links/action.yaml"},.[1]]' \
   '.ci.jobs["retired-repo-links"].steps[1]["continue-on-error"]=true' \
   '.guard.jobs["retired-repo-links"].steps[1].uses="$/actions/other"' \
-  '.guard.jobs["retired-repo-links"].steps[1].uses="./.github/actions/retired-repo-links"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses="$/.github/actions/retired-repo-links"' \
   '.guard.jobs["retired-repo-links"].steps[1].if="false"' \
   '.action.runs.steps[0].with.enabled="false"' \
   '.action.runs.steps[0].if="false"' \
