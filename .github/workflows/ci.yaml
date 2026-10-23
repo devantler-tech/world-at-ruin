@@ -1905,6 +1905,65 @@ jobs:
             echo "gpu_gated=false" >> "$GITHUB_OUTPUT"
           fi
 
+  frame-capture:
+    name: Frame capture (evidence)
+    needs: [detect-visual-changes, frame-capture-head, frame-capture-base]
+    if: always() && needs.detect-visual-changes.result == 'success' && needs.detect-visual-changes.outputs.visual == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require every source capture job
+        env:
+          HEAD_RESULT: ${{ needs.frame-capture-head.result }}
+          BASE_RESULT: ${{ needs.frame-capture-base.result }}
+        run: '[[ "$HEAD_RESULT" == success && "$BASE_RESULT" == success ]]'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-world
+          path: ${{ runner.temp }}/source-world
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-activity
+          path: ${{ runner.temp }}/source-activity
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-base-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/source-base
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Verify the complete source-bound evidence union
+        run: go run tools/source-evidence/main.go collect "$RUNNER_TEMP/source-world" "$RUNNER_TEMP/source-activity" "$RUNNER_TEMP/source-base" "$RUNNER_TEMP/source-joined"
+      - name: Record what these frames can evidence
+        env:
+          CAPTURE_RUNNER_OS: macOS
+          SOURCE_EVIDENCE_DIR: ${{ runner.temp }}/source-joined
+        run: bash tools/source-evidence-conditions.sh
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Import the actual comparison classes
+        run: godot --headless --editor --quit --path client
+      - name: Report what changed against the base
+        continue-on-error: true
+        env:
+          SOURCE_EVIDENCE_DIR: ${{ runner.temp }}/source-joined
+        run: bash tools/report-source-frames.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: frames-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/source-joined/shots/
+          if-no-files-found: error
+
   frame-capture-head:
     name: Source capture (${{ matrix.group }})
     needs: [detect-visual-changes]
@@ -2547,65 +2606,6 @@ jobs:
         with:
           name: source-base-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/source-base/
-          if-no-files-found: error
-
-  frame-capture:
-    name: Frame capture (evidence)
-    needs: [detect-visual-changes, frame-capture-head, frame-capture-base]
-    if: always() && needs.detect-visual-changes.result == 'success' && needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
-      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require every source capture job
-        env:
-          HEAD_RESULT: ${{ needs.frame-capture-head.result }}
-          BASE_RESULT: ${{ needs.frame-capture-base.result }}
-        run: '[[ "$HEAD_RESULT" == success && "$BASE_RESULT" == success ]]'
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-world
-          path: ${{ runner.temp }}/source-world
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: source-head-${{ github.sha }}-${{ github.run_attempt }}-activity
-          path: ${{ runner.temp }}/source-activity
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: source-base-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/source-base
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: server/go.mod
-          cache: false
-      - name: Verify the complete source-bound evidence union
-        run: go run tools/source-evidence/main.go collect "$RUNNER_TEMP/source-world" "$RUNNER_TEMP/source-activity" "$RUNNER_TEMP/source-base" "$RUNNER_TEMP/source-joined"
-      - name: Record what these frames can evidence
-        env:
-          CAPTURE_RUNNER_OS: macOS
-          SOURCE_EVIDENCE_DIR: ${{ runner.temp }}/source-joined
-        run: bash tools/source-evidence-conditions.sh
-      - name: Install Godot (pinned, checksum-verified)
-        run: bash tools/install-ci-godot.sh
-      - name: Import the actual comparison classes
-        run: godot --headless --editor --quit --path client
-      - name: Report what changed against the base
-        continue-on-error: true
-        env:
-          SOURCE_EVIDENCE_DIR: ${{ runner.temp }}/source-joined
-        run: bash tools/report-source-frames.sh
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: frames-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/source-joined/shots/
           if-no-files-found: error
 
   frame-capture-cloth:
