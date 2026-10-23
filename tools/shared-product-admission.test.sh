@@ -11,7 +11,7 @@ work=$(mktemp -d)
 work=$(cd "$work" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/trusted/tools" "$work/temp"
-cp "$driver" "$root/tools/trusted-regression-lifecycle.sh" "$work/trusted/tools/"
+cp "$driver" "$root/tools/trusted-regression-lifecycle.sh" "$root/tools/resolve-trusted-regression-event.sh" "$work/trusted/tools/"
 cat >"$work/trusted/tools/fetch-trusted-regression-data.sh" <<'FETCH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -53,6 +53,7 @@ invoke
 invoke GITHUB_EVENT_NAME=merge_group
 for mode in check run; do
   for invalid in GITHUB_REPOSITORY=other/repository GITHUB_WORKFLOW_REF=untrusted \
+    GITHUB_WORKFLOW_REF=devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main \
     GITHUB_WORKFLOW_SHA=main GITHUB_SHA=main CANDIDATE_SHA=0000000000000000000000000000000000000000 \
     GITHUB_EVENT_NAME=workflow_run GITHUB_EVENT_PATH=/missing; do
     if invoke "$invalid" >"$work/log" 2>&1; then

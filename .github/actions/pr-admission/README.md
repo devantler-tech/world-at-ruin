@@ -5,9 +5,9 @@ runner. It accepts one input, `candidate-sha`: GitHub's immutable PR integration
 or merge-group commit, never a branch name. The shared workflow checks out the
 product base before loading this action.
 
-The entrypoint verifies the canonical shared workflow origin, event identities
-and unchanged reviewed-base files. Candidate bytes are fetched anonymously into
-private state and executed only by the existing complete contained regression
+The entrypoint verifies the canonical shared workflow origin and uses the existing
+reviewed event resolver, then verifies unchanged reviewed-base files. Candidate
+bytes are fetched anonymously into private state and executed only by the existing complete contained regression
 controller. The pinned host Go toolchain builds the controller; Godot and its
 package/archive checks belong to the reviewed contained runtime. Cleanup and
 unknown outcomes retain their existing fail-closed behavior.

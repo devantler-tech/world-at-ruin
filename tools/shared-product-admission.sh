@@ -12,22 +12,11 @@ fail() {
   ${GITHUB_WORKFLOW_SHA:-} =~ ^[0-9a-f]{40}$ &&
   ${GITHUB_SHA:-} =~ ^[0-9a-f]{40}$ && ${CANDIDATE_SHA:-} == "$GITHUB_SHA" ]] ||
   fail 'requires canonical shared source and matching integration identity'
-case ${GITHUB_EVENT_NAME:-} in pull_request | merge_group) ;; *) fail 'unsupported event' ;; esac
-[[ -f ${GITHUB_EVENT_PATH:-} && ! -L $GITHUB_EVENT_PATH ]] || fail 'event is unavailable'
-base=$(jq -ser --arg event "$GITHUB_EVENT_NAME" --arg candidate "$CANDIDATE_SHA" '
-  def sha: type=="string" and test("^[0-9a-f]{40}$");
+context=$(bash "$root/tools/resolve-trusted-regression-event.sh" --json) || fail 'event has no matching immutable product identities'
+base=$(jq -ser --arg candidate "$CANDIDATE_SHA" '
   select(length==1) | .[0] |
-  select(.repository.full_name=="devantler-tech/world-at-ruin" and .repository.default_branch=="main") |
-  if $event=="pull_request" then
-    select(.pull_request.base.repo.full_name=="devantler-tech/world-at-ruin" and
-      .pull_request.base.ref=="main" and (.pull_request.base.sha|sha) and
-      (.pull_request.head.sha|sha) and .pull_request.merge_commit_sha==$candidate) |
-    .pull_request.base.sha
-  else
-    select(.merge_group.base_ref=="refs/heads/main" and (.merge_group.base_sha|sha) and
-      .merge_group.head_sha==$candidate) | .merge_group.base_sha
-  end
-' "$GITHUB_EVENT_PATH") || fail 'event has no matching immutable product identities'
+  select(keys==["candidate_sha","trusted_sha"] and .candidate_sha==$candidate) | .trusted_sha
+' <<<"$context") || fail 'event resolution is incomplete'
 actual=$(git --no-replace-objects -C "$root" rev-parse --verify HEAD) || fail 'reviewed checkout unavailable'
 [[ $actual == "$base" ]] || fail 'action checkout is not the GitHub-supplied product base'
 git --no-replace-objects -C "$root" diff --quiet HEAD -- || fail 'reviewed product files changed'
