@@ -5,6 +5,13 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 guard=$root/tools/native-acceptance-workflow-guard.sh
 bash "$guard"
+# The fixture's test and executable share one cold compilation graph. A test
+# without the executable's path flags recompiles its large Kubernetes graph.
+if ! grep -Fxq "    && go -C /source/tools/gameserver-commit-trial test -mod=readonly -trimpath -buildvcs=false ./cmd/nativefixture \\" "$root/server/Dockerfile.nakama-native" ||
+  ! grep -Fxq '    && go -C /source/tools/gameserver-commit-trial build -mod=readonly -trimpath -buildvcs=false -o /out/gameserver-fixture ./cmd/nativefixture' "$root/server/Dockerfile.nakama-native"; then
+  echo 'FAIL: native fixture test and build must share their reproducible compilation flags' >&2
+  exit 1
+fi
 yq -o=json '.' "$root/.github/workflows/ci.yaml" >"$scratch/base.json"
 # shellcheck disable=SC2016 # Mutation expressions, not shell interpolation.
 mutations=(
@@ -31,7 +38,13 @@ mutations=(
 )
 for mutation in "${mutations[@]}"; do
   jq "$mutation" "$scratch/base.json" >"$scratch/mutated.json"
-  if cmp -s "$scratch/base.json" "$scratch/mutated.json"; then echo 'FAIL: no-op native workflow mutation' >&2; exit 1; fi
-  if bash "$guard" "$scratch/mutated.json"; then echo "FAIL: accepted native workflow mutation $mutation" >&2; exit 1; fi
+  if cmp -s "$scratch/base.json" "$scratch/mutated.json"; then
+    echo 'FAIL: no-op native workflow mutation' >&2
+    exit 1
+  fi
+  if bash "$guard" "$scratch/mutated.json"; then
+    echo "FAIL: accepted native workflow mutation $mutation" >&2
+    exit 1
+  fi
 done
 echo "TEST PASS: complete native workflow rejects ${#mutations[@]} omissions, stale images and masked execution"
