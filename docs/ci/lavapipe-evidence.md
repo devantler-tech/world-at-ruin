@@ -1,8 +1,8 @@
 # Advisory volumetric evidence
 
 `.github/workflows/lavapipe-capture.yaml` owns the Linux/llvmpipe volumetric
-capture. It runs independently of `CI`, so its 45-minute render budget does not
-keep a required CI run open. Its failures remain visible on the pull request;
+capture. It runs independently of `CI`, with eight isolated view jobs and a
+complete-union collector. Each view has a 15-minute job budget. Its failures remain visible on the pull request;
 it is absent from `CI - Required Checks`. The required macOS frame captures,
 their selection job and the independent trusted regressions retain their gates.
 
@@ -15,7 +15,8 @@ identity verification before installing its runtime.
 
 The source paths are `client/scripts/{volumetrics,hollow_fog,main}.gd` and
 `.github/workflows/ci.yaml`. Changes to the independent workflow, its selector,
-base resolver, engine installer or capture guard also select a capture. The
+base resolver, engine installer, frame-capture implementation, capture guard or
+union collector also select a capture. The
 base resolver uses the integration's current main parent, avoiding unrelated
 main changes in a PR's visual diff. Changes to selection machinery are checked
 against the frozen event base before executing the resolver. An unavailable or
@@ -30,9 +31,31 @@ PNG/conditions artifact. The artifact name is
 integration, rather than only the PR branch tip. Its pixels are an independent
 Linux baseline and do not establish a macOS pixel comparison.
 
+The five fixed outdoor views and three derived cave views run on independent
+standard hosted runners. `WAR_WORLD_VANTAGE` selects one exact view; an unknown
+or ambiguous value refuses to capture. An unset value retains the complete
+ordinary capture used by the macOS jobs. Every cell keeps the 150-frame warmup,
+120-frame camera settling, image/luminance checks and applicable contribution
+controls. Even the mouth-only cell validates both interior ray/cull directions
+before accepting the inverse exterior check; it does not silently assume them.
+
+Per-view artifacts bind the integration SHA, exact view and measured capture
+duration, preserving separate PNG, note, conditions and log files. The collector
+requires every successful matrix result and exactly the eight source-bound
+artifacts. Missing, duplicated, mixed-source, symlinked, empty or failed evidence
+cannot produce the final artifact. The established complete-artifact name remains
+unchanged; each per-view log and conditions file keeps its own name.
+
+A 15-minute timeout is a refusal bound, not performance proof. Record full native
+run/queue timings and representative repeats before declaring the whole-feedback
+target in #1495 met.
+
 Use `bash tools/select-lavapipe-capture.test.sh` for real-history and failed-read
 controls, `bash tools/lavapipe-workflow.test.sh` for parsed routing/permission
-mutations, and `bash tools/lavapipe-capture-guard.test.sh` for render refusals.
+mutations, `bash tools/lavapipe-capture-guard.test.sh` for render refusals, and
+`bash tools/lavapipe-partitions.test.sh` for complete-union refusal controls.
+The real Godot scene `tests/world_capture_plan_test.tscn` checks the complete
+plan, every disjoint partition and invalid selections.
 Run ShellCheck and actionlint for the affected shell and workflow files.
 
 To verify independent retry admission, retain both runs' IDs, workflow paths,

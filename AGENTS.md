@@ -1585,11 +1585,13 @@ the permanent blocking policy.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
   - `lavapipe-capture.yaml` owns advisory volumetric evidence independently of required CI.
-    It preserves the 45-minute capture, explicit llvmpipe/fog verdicts and visible failures.
+    Eight isolated 15-minute view jobs retain full warmup/settling, llvmpipe/fog verdicts
+    and visible failures; a source-bound collector requires every view before publication.
     Selector and render checkouts bind the same event integration SHA; artifacts name that SHA.
     Its selector runs only on pull requests, conservatively captures failed diff observations
     and validates workflow/helper changes. Run `tools/select-lavapipe-capture.test.sh`,
-    `tools/lavapipe-workflow.test.sh` and the existing capture-guard controls. Required CI
+    `tools/lavapipe-workflow.test.sh`, `tools/lavapipe-partitions.test.sh`, the real Godot
+    `world_capture_plan_test` scene and the existing capture-guard controls. Required CI
     aggregation is unchanged. See [the workflow contract](docs/ci/lavapipe-evidence.md).
   - The CI job and main-only `retired-repo-links.yaml` wrapper both execute
     this repository's `.github/actions/retired-repository-links` at the same immutable full SHA.

@@ -85,6 +85,7 @@ jobs:
         run: |
           bash tools/select-lavapipe-capture.test.sh
           bash tools/lavapipe-workflow.test.sh
+          bash tools/lavapipe-partitions.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
       - name: Ordinary entry cancellation retires nested engine groups
