@@ -12,6 +12,18 @@ trap 'rm -rf "$work"' EXIT
 git -C "$root" --no-replace-objects show ecfc21a687d0dc4e8eff9d807728d386544a453d:.github/workflows/ci.yaml >"$work/reviewed.yaml"
 yq -o=json '.' "$work/reviewed.yaml" >"$work/reviewed.json"
 yq -o=json '.' "$action" >"$work/action.json"
+yq -o=json '.jobs."frame-capture-head".steps' "$root/.github/workflows/ci.yaml" >"$work/callers.json"
+pin=$(jq -er '[.[] | .uses? // "" | select(startswith("devantler-tech/world-at-ruin/.github/actions/capture-source@"))] |
+  if length==1 then .[0] | split("@")[1] else error("expected exactly one pinned source action") end' "$work/callers.json")
+[[ $pin =~ ^[0-9a-f]{40}$ ]] || {
+  echo 'FAIL: owner-local capture action is not fully pinned' >&2
+  exit 1
+}
+git -C "$root" --no-replace-objects show "$pin:.github/actions/capture-source/action.yaml" >"$work/pinned-action.yaml"
+cmp -s "$action" "$work/pinned-action.yaml" || {
+  echo 'FAIL: workflow does not execute the current owner-local capture action' >&2
+  exit 1
+}
 jq -n --slurpfile old "$work/reviewed.json" --slurpfile action "$work/action.json" '{old:$old[0],action:$action[0]}' >"$work/contract.json"
 admit() {
   # shellcheck disable=SC2016 # Literal GitHub expressions and jq variables.

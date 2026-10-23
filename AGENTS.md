@@ -404,6 +404,13 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+Native source-frame evidence runs in isolated `world`, `activity` and BASE jobs.
+The stable required collector accepts only the complete source/run/attempt-bound
+PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
+Run the source-input, component-preservation, source-workflow and Go evidence
+tests after changes; hosted capture and complete feedback timing remain separate
+proof. See [source evidence](docs/ci/source-evidence.md).
+
 Ordinary discovered client scenes run on three isolated workers with an
 integration/run/attempt-bound complete-union receipt. The six dedicated
 product-law guards stay separate and non-skippable; the historical sandbox

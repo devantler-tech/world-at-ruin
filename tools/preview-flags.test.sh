@@ -7,7 +7,7 @@
 # by sourcing the real output under `set -a` and reading the environment back,
 # because the shape the capture depends on is "these variables are set in the
 # child process" — not "this text looks right". And the WIRING is asserted against
-# ci.yaml, since a resolver that is correct but unwired passes every one of its
+# ci.yaml and its owner-local action, since an unwired resolver passes every one of its
 # own tests while the capture silently photographs the default path.
 #
 # The refusals matter more than the acceptance here. A list this script cannot
@@ -25,12 +25,12 @@ failures=0
 SCRATCH_DIR=''
 
 t_fail() {
-	printf 'preview flags test: FAIL — %s\n' "$1" >&2
-	failures=$((failures + 1))
+  printf 'preview flags test: FAIL — %s\n' "$1" >&2
+  failures=$((failures + 1))
 }
 
 cleanup() {
-	[ -n "$SCRATCH_DIR" ] && rm -rf "$SCRATCH_DIR"
+  [ -n "$SCRATCH_DIR" ] && rm -rf "$SCRATCH_DIR"
 }
 trap cleanup EXIT
 
@@ -39,8 +39,8 @@ SCRATCH_DIR="$(mktemp -d)"
 # Runs the resolver against a fixture list. Prints stdout; stderr is kept out of
 # the way so a refusal's message does not look like test output.
 run_flags() {
-	local list="$1" mode="$2"
-	WAR_PREVIEW_FLAGS_FILE="$list" "$SCRIPT" "$mode" 2>"$SCRATCH_DIR/stderr"
+  local list="$1" mode="$2"
+  WAR_PREVIEW_FLAGS_FILE="$list" "$SCRIPT" "$mode" 2>"$SCRATCH_DIR/stderr"
 }
 
 # --- Layer 1: the parser accepts a well-formed list --------------------------
@@ -53,38 +53,38 @@ WAR_GROUND_PLATES
 EOF
 
 if out="$(run_flags "$SCRATCH_DIR/good.txt" --names)"; then
-	expected="$(printf 'WAR_GROUND_PLATES\nWAR_ASH_DRIFT')"
-	if [ "$out" != "$expected" ]; then
-		t_fail "--names dropped or reordered entries: got [$out]"
-	fi
+  expected="$(printf 'WAR_GROUND_PLATES\nWAR_ASH_DRIFT')"
+  if [ "$out" != "$expected" ]; then
+    t_fail "--names dropped or reordered entries: got [$out]"
+  fi
 else
-	t_fail "a well-formed list was refused: $(cat "$SCRATCH_DIR/stderr")"
+  t_fail "a well-formed list was refused: $(cat "$SCRATCH_DIR/stderr")"
 fi
 
 if out="$(run_flags "$SCRATCH_DIR/good.txt" --env)"; then
-	expected="$(printf 'WAR_GROUND_PLATES=1\nWAR_ASH_DRIFT=1')"
-	if [ "$out" != "$expected" ]; then
-		t_fail "--env did not emit NAME=1 per flag: got [$out]"
-	fi
+  expected="$(printf 'WAR_GROUND_PLATES=1\nWAR_ASH_DRIFT=1')"
+  if [ "$out" != "$expected" ]; then
+    t_fail "--env did not emit NAME=1 per flag: got [$out]"
+  fi
 else
-	t_fail "--env refused a well-formed list"
+  t_fail "--env refused a well-formed list"
 fi
 
 # A list with no trailing newline must not lose its last entry — a truncated set
 # is a silent capture of the default path for whatever fell off the end.
 printf '# c\nWAR_GROUND_PLATES' >"$SCRATCH_DIR/no-newline.txt"
 if out="$(run_flags "$SCRATCH_DIR/no-newline.txt" --names)"; then
-	[ "$out" = "WAR_GROUND_PLATES" ] || t_fail "a final line with no trailing newline was dropped: got [$out]"
+  [ "$out" = "WAR_GROUND_PLATES" ] || t_fail "a final line with no trailing newline was dropped: got [$out]"
 else
-	t_fail "a list with no trailing newline was refused"
+  t_fail "a list with no trailing newline was refused"
 fi
 
 # CRLF must not turn every name into WAR_FOO\r and fail for an invisible reason.
 printf 'WAR_GROUND_PLATES\r\n' >"$SCRATCH_DIR/crlf.txt"
 if out="$(run_flags "$SCRATCH_DIR/crlf.txt" --names)"; then
-	[ "$out" = "WAR_GROUND_PLATES" ] || t_fail "a CRLF list was mangled: got [$out]"
+  [ "$out" = "WAR_GROUND_PLATES" ] || t_fail "a CRLF list was mangled: got [$out]"
 else
-	t_fail "a CRLF list was refused: $(cat "$SCRATCH_DIR/stderr")"
+  t_fail "a CRLF list was refused: $(cat "$SCRATCH_DIR/stderr")"
 fi
 
 # --- Layer 2: every untrustworthy list is REFUSED, with no output ------------
@@ -92,21 +92,21 @@ fi
 # Each of these would otherwise reach the capture as "no flags exported".
 
 refuses() {
-	local label="$1" list="$2"
-	local out status=0
-	out="$(run_flags "$list" --env)" || status=$?
-	if [ "$status" -eq 0 ]; then
-		t_fail "$label was accepted — the capture would photograph the default path"
-		return
-	fi
-	# A refusal must emit NOTHING on stdout: the caller redirects this straight
-	# into the file it sources and ships, so a partial set is worse than none.
-	if [ -n "$out" ]; then
-		t_fail "$label was refused but still printed [$out] — a truncated set would be exported"
-	fi
-	if [ ! -s "$SCRATCH_DIR/stderr" ]; then
-		t_fail "$label was refused with no reason on stderr"
-	fi
+  local label="$1" list="$2"
+  local out status=0
+  out="$(run_flags "$list" --env)" || status=$?
+  if [ "$status" -eq 0 ]; then
+    t_fail "$label was accepted — the capture would photograph the default path"
+    return
+  fi
+  # A refusal must emit NOTHING on stdout: the caller redirects this straight
+  # into the file it sources and ships, so a partial set is worse than none.
+  if [ -n "$out" ]; then
+    t_fail "$label was refused but still printed [$out] — a truncated set would be exported"
+  fi
+  if [ ! -s "$SCRATCH_DIR/stderr" ]; then
+    t_fail "$label was refused with no reason on stderr"
+  fi
 }
 
 : >"$SCRATCH_DIR/empty.txt"
@@ -139,7 +139,7 @@ printf 'WAR_A WAR_B\n' >"$SCRATCH_DIR/two-per-line.txt"
 refuses "two names on one line" "$SCRATCH_DIR/two-per-line.txt"
 
 if [ -e "$SCRATCH_DIR/pwned" ]; then
-	t_fail "a rejected list still executed its payload — validation runs too late"
+  t_fail "a rejected list still executed its payload — validation runs too late"
 fi
 
 # --- Layer 3: the emitted text actually EXPORTS ------------------------------
@@ -149,11 +149,11 @@ fi
 
 run_flags "$SCRATCH_DIR/good.txt" --env >"$SCRATCH_DIR/flags.env"
 observed="$(
-	set -a
-	# shellcheck source=/dev/null
-	. "$SCRATCH_DIR/flags.env"
-	set +a
-	printf '%s' "$(env | grep -cE '^WAR_(GROUND_PLATES|ASH_DRIFT)=1$' || true)"
+  set -a
+  # shellcheck source=/dev/null
+  . "$SCRATCH_DIR/flags.env"
+  set +a
+  printf '%s' "$(env | grep -cE '^WAR_(GROUND_PLATES|ASH_DRIFT)=1$' || true)"
 )"
 [ "$observed" = "2" ] || t_fail "sourcing the emitted file under 'set -a' exported $observed of 2 flags"
 
@@ -165,7 +165,7 @@ observed_control="$(env | grep -cE '^WAR_(GROUND_PLATES|ASH_DRIFT)=1$' || true)"
 # --- Layer 4: the SHIPPED list, and the wiring that consumes it --------------
 
 if ! "$SCRIPT" --check 2>"$SCRATCH_DIR/stderr"; then
-	t_fail "the shipped tools/preview-flags.txt is not valid: $(cat "$SCRATCH_DIR/stderr")"
+  t_fail "the shipped tools/preview-flags.txt is not valid: $(cat "$SCRATCH_DIR/stderr")"
 fi
 
 # Buffered to a file once, and every check below reads that file. Piping into
@@ -177,16 +177,16 @@ fi
 # The plate treatment is the reason this pass exists. Losing it from the list
 # would leave the capture green while #261 lost its only evidence.
 if ! grep -qx 'WAR_GROUND_PLATES' "$SCRATCH_DIR/shipped-flags"; then
-	t_fail "the shipped list no longer contains WAR_GROUND_PLATES — #261 would have no frame evidence"
+  t_fail "the shipped list no longer contains WAR_GROUND_PLATES — #261 would have no frame evidence"
 fi
 
 # Scenario-gated flags must NOT be here: they drive their own captures with their
 # own cameras, so forcing them on globally changes those frames instead of adding
 # evidence.
 for scenario_flag in WAR_LAYERED_OUTFIT_PICKERS WAR_WALK_CYCLE WAR_RUN_CYCLE; do
-	if grep -qx "$scenario_flag" "$SCRATCH_DIR/shipped-flags"; then
-		t_fail "$scenario_flag is scenario-gated and must not be in the global preview list"
-	fi
+  if grep -qx "$scenario_flag" "$SCRATCH_DIR/shipped-flags"; then
+    t_fail "$scenario_flag is scenario-gated and must not be in the global preview list"
+  fi
 done
 
 # Every listed flag must be READ by the client. A shape-valid typo like
@@ -194,20 +194,20 @@ done
 # still satisfy CAPTURE PASS / BOOT_OK / the error sweep — publishing frames
 # without the treatment the PR enabled, with every check green.
 if ! "$SCRIPT" --check-consumers 2>"$SCRATCH_DIR/stderr"; then
-	t_fail "a shipped preview flag has no client consumer: $(cat "$SCRATCH_DIR/stderr")"
+  t_fail "a shipped preview flag has no client consumer: $(cat "$SCRATCH_DIR/stderr")"
 fi
 
 # The control: the check must REJECT a plausible typo, or it proves nothing.
 printf 'WAR_GROUND_PLATE\n' >"$SCRATCH_DIR/typo.txt"
 if WAR_PREVIEW_FLAGS_FILE="$SCRATCH_DIR/typo.txt" "$SCRIPT" --check-consumers 2>/dev/null; then
-	t_fail "WAR_GROUND_PLATE (a typo for WAR_GROUND_PLATES) was accepted — nothing reads it, so the capture would photograph the default world"
+  t_fail "WAR_GROUND_PLATE (a typo for WAR_GROUND_PLATES) was accepted — nothing reads it, so the capture would photograph the default world"
 fi
 
 # And it must not be satisfied by a mere MENTION: the flag names appear in
 # client/devlog/*.json prose, so a name-only search would bless the typo's
 # real sibling for the wrong reason.
 if ! grep -rqF 'OS.get_environment("WAR_GROUND_PLATES")' "$ROOT/client" --include='*.gd'; then
-	t_fail "WAR_GROUND_PLATES has no OS.get_environment call in client/*.gd — the consumer check is matching something else"
+  t_fail "WAR_GROUND_PLATES has no OS.get_environment call in client/*.gd — the consumer check is matching something else"
 fi
 
 # A COMMENTED-OUT consumer must not satisfy the check. A consumer commented out
@@ -219,118 +219,119 @@ fi
 . "$SCRIPT"
 
 mk_client() {
-	local dir="$1" line="$2"
-	rm -rf "$dir"
-	mkdir -p "$dir/scripts"
-	printf 'func _ready():\n\t%s\n' "$line" >"$dir/scripts/probe.gd"
+  local dir="$1" line="$2"
+  rm -rf "$dir"
+  mkdir -p "$dir/scripts"
+  printf 'func _ready():\n\t%s\n' "$line" >"$dir/scripts/probe.gd"
 }
 
 mk_client "$SCRATCH_DIR/client-real" 'var e = OS.get_environment("WAR_PROBE")'
 if ! check_preview_flag_consumers "$SCRATCH_DIR/client-real" WAR_PROBE 2>/dev/null; then
-	t_fail "a real OS.get_environment consumer was not recognised — the check rejects valid code"
+  t_fail "a real OS.get_environment consumer was not recognised — the check rejects valid code"
 fi
 
 mk_client "$SCRATCH_DIR/client-commented" '# var e = OS.get_environment("WAR_PROBE")'
 if check_preview_flag_consumers "$SCRATCH_DIR/client-commented" WAR_PROBE 2>/dev/null; then
-	t_fail "a COMMENTED-OUT consumer satisfied the check — a refactored-out reader would keep the gate green"
+  t_fail "a COMMENTED-OUT consumer satisfied the check — a refactored-out reader would keep the gate green"
 fi
 
 mk_client "$SCRATCH_DIR/client-trailing" 'pass # OS.get_environment("WAR_PROBE")'
 if check_preview_flag_consumers "$SCRATCH_DIR/client-trailing" WAR_PROBE 2>/dev/null; then
-	t_fail "a consumer inside a TRAILING comment satisfied the check"
+  t_fail "a consumer inside a TRAILING comment satisfied the check"
 fi
 
 if check_preview_flag_consumers "$SCRATCH_DIR/does-not-exist" WAR_PROBE 2>/dev/null; then
-	t_fail "a missing client tree was accepted — the check must fail closed"
+  t_fail "a missing client tree was accepted — the check must fail closed"
 fi
 
 if [ ! -f "$WORKFLOW" ]; then
-	t_fail "ci.yaml not found — the wiring layer proves nothing"
+  t_fail "ci.yaml not found — the wiring layer proves nothing"
 else
-	# Registering a preview is one line in the list and touches no client path,
-	# so the visual gate must treat the list (and its resolver) as visual — or
-	# the PR that enables a treatment skips the capture that would render it.
-	# Buffered, then the first line is taken off the FILE. Piping into `head -1`
-	# SIGPIPEs the grep once head has its line, and under `pipefail` that aborts
-	# the run — the same hazard this file warns about below.
-	grep -oE "grep -qE '\^client/\(scripts\|shaders[^']*'" "$WORKFLOW" >"$SCRATCH_DIR/visual-raw" || true
-	visual_pattern="$(sed -E -n "1{s/^grep -qE '//; s/'\$//; p; q;}" "$SCRATCH_DIR/visual-raw")"
-	if [ -z "$visual_pattern" ]; then
-		t_fail "could not extract the visual path pattern from ci.yaml — the gate assertion below proves nothing"
-	else
-		for gated in tools/preview-flags.txt tools/preview-flags.sh; do
-			if ! printf '%s\n' "$gated" | grep -qE "$visual_pattern"; then
-				t_fail "$gated does not classify as visual — a PR that only registers a preview would skip the frame capture that renders it"
-			fi
-		done
-		# Control: the pattern must still REJECT a genuinely non-visual path,
-		# or the assertion above passes on an over-broad gate.
-		if printf '%s\n' "README.md" | grep -qE "$visual_pattern"; then
-			t_fail "the visual pattern matches README.md — it is too broad to prove anything"
-		fi
-	fi
-	# These three match COMMAND SHAPE, never a bare mention. An earlier draft
-	# grepped for the plain path and passed with the step deleted, because this
-	# file is also named in a comment two screens above — a guard a comment can
-	# satisfy is not a guard. Anchoring on the line shape is what makes deleting
-	# the wiring detectable.
-	#
-	# The editor capture must OBTAIN its flags from this resolver...
-	sed -n '/^  frame-capture:/,/^  frame-capture-exported:/p' \
-		"$WORKFLOW" >"$SCRATCH_DIR/editor-capture-job"
-	if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
-		"$SCRATCH_DIR/editor-capture-job"; then
-		t_fail "the editor capture does not resolve its flags from tools/preview-flags.sh --env — its opt-in evidence can only show the default world"
-	fi
-	# The shipped artifact has its own capture job and must resolve the same
-	# source of truth there. A resolver call in the editor-only job cannot prove
-	# an exported build ever rendered the treatments.
-	sed -n '/^  frame-capture-exported:/,/^  ci-required-checks:/p' \
-		"$WORKFLOW" >"$SCRATCH_DIR/exported-capture-job"
-	# shellcheck disable=SC2016 # workflow variables are matched as literal source
-	if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
-		"$SCRATCH_DIR/exported-capture-job"; then
-		t_fail "the exported-client capture does not resolve tools/preview-flags.txt — its artifact can only show the default world"
-	elif ! grep -qF '. "$flags_file"' "$SCRATCH_DIR/exported-capture-job" \
-		|| ! grep -qF 'WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots/opt-in-previews"' \
-			"$SCRATCH_DIR/exported-capture-job"; then
-		t_fail "the exported-client capture resolves preview flags but does not source them into an isolated opt-in run"
-	fi
-	# shellcheck disable=SC2016 # GitHub expression is a literal artifact path
-	for preview_artifact in \
-		'${{ runner.temp }}/exported-shots/opt-in-previews/*.png' \
-		'${{ runner.temp }}/exported-shots/opt-in-previews/*.txt'; do
-		if ! grep -qF "$preview_artifact" "$SCRATCH_DIR/exported-capture-job"; then
-			t_fail "the exported opt-in artifact omits $preview_artifact — reviewers cannot inspect the enabled treatment and its exact flag record"
-		fi
-	done
-	# ...and the workflow must RUN this test, or the guard above is unenforced.
-	if ! grep -qE '^[[:space:]]+run: \./tools/preview-flags\.test\.sh[[:space:]]*$' "$WORKFLOW"; then
-		t_fail "ci.yaml has no 'run:' step invoking preview-flags.test.sh — this guard would not fire in CI"
-	fi
-	# No capture step may hard-code a flag the list owns, or the list is
-	# decorative and the two can disagree. Checked over the WHOLE workflow, not
-	# just the opt-in step: a copy of the assignment anywhere else is the same
-	# drift, and a name-anchored search needs no fragile YAML-indentation regex.
-	# Comments are stripped first: prose is allowed to NAME a flag while
-	# explaining the mechanism, and only an actual assignment is drift.
-	#
-	# Into a FILE, never `grep -v … | grep -q …`. Under `pipefail` the downstream
-	# `grep -q` exits on its first match, the upstream takes SIGPIPE, and the
-	# pipeline reports FAILURE — so the match reads as "no hard-coded flag found"
-	# and this guard silently stops firing. ci.yaml carries the same warning
-	# about the same shape; this file reproduced the bug before adopting it.
-	grep -vE '^[[:space:]]*#' "$WORKFLOW" >"$SCRATCH_DIR/workflow-nocomments" || true
-	while IFS= read -r listed_flag; do
-		if grep -q "${listed_flag}=1" "$SCRATCH_DIR/workflow-nocomments"; then
-			t_fail "ci.yaml hard-codes ${listed_flag}=1 — tools/preview-flags.txt is not the source of truth"
-		fi
-	done <"$SCRATCH_DIR/shipped-flags"
+  # Registering a preview is one line in the list and touches no client path,
+  # so the visual gate must treat the list (and its resolver) as visual — or
+  # the PR that enables a treatment skips the capture that would render it.
+  # Buffered, then the first line is taken off the FILE. Piping into `head -1`
+  # SIGPIPEs the grep once head has its line, and under `pipefail` that aborts
+  # the run — the same hazard this file warns about below.
+  grep -oE "grep -qE '\^client/\(scripts\|shaders[^']*'" "$WORKFLOW" >"$SCRATCH_DIR/visual-raw" || true
+  visual_pattern="$(sed -E -n "1{s/^grep -qE '//; s/'\$//; p; q;}" "$SCRATCH_DIR/visual-raw")"
+  if [ -z "$visual_pattern" ]; then
+    t_fail "could not extract the visual path pattern from ci.yaml — the gate assertion below proves nothing"
+  else
+    for gated in tools/preview-flags.txt tools/preview-flags.sh; do
+      if ! printf '%s\n' "$gated" | grep -qE "$visual_pattern"; then
+        t_fail "$gated does not classify as visual — a PR that only registers a preview would skip the frame capture that renders it"
+      fi
+    done
+    # Control: the pattern must still REJECT a genuinely non-visual path,
+    # or the assertion above passes on an over-broad gate.
+    if printf '%s\n' "README.md" | grep -qE "$visual_pattern"; then
+      t_fail "the visual pattern matches README.md — it is too broad to prove anything"
+    fi
+  fi
+  # These three match COMMAND SHAPE, never a bare mention. An earlier draft
+  # grepped for the plain path and passed with the step deleted, because this
+  # file is also named in a comment two screens above — a guard a comment can
+  # satisfy is not a guard. Anchoring on the line shape is what makes deleting
+  # the wiring detectable.
+  #
+  # The editor capture must OBTAIN its flags from this resolver...
+  yq -o=json '.runs.steps' "$ROOT/.github/actions/capture-source/action.yaml" |
+    jq -er '.[] | select(.name=="Capture the opted-in ground previews") | .run' \
+      >"$SCRATCH_DIR/editor-capture-job"
+  if ! grep -qE '^[[:space:]]*tools/preview-flags\.sh --env[[:space:]]*>' \
+    "$SCRATCH_DIR/editor-capture-job"; then
+    t_fail "the editor capture does not resolve its flags from tools/preview-flags.sh --env — its opt-in evidence can only show the default world"
+  fi
+  # The shipped artifact has its own capture job and must resolve the same
+  # source of truth there. A resolver call in the editor-only job cannot prove
+  # an exported build ever rendered the treatments.
+  sed -n '/^  frame-capture-exported:/,/^  ci-required-checks:/p' \
+    "$WORKFLOW" >"$SCRATCH_DIR/exported-capture-job"
+  # shellcheck disable=SC2016 # workflow variables are matched as literal source
+  if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
+    "$SCRATCH_DIR/exported-capture-job"; then
+    t_fail "the exported-client capture does not resolve tools/preview-flags.txt — its artifact can only show the default world"
+  elif ! grep -qF '. "$flags_file"' "$SCRATCH_DIR/exported-capture-job" ||
+    ! grep -qF 'WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots/opt-in-previews"' \
+      "$SCRATCH_DIR/exported-capture-job"; then
+    t_fail "the exported-client capture resolves preview flags but does not source them into an isolated opt-in run"
+  fi
+  # shellcheck disable=SC2016 # GitHub expression is a literal artifact path
+  for preview_artifact in \
+    '${{ runner.temp }}/exported-shots/opt-in-previews/*.png' \
+    '${{ runner.temp }}/exported-shots/opt-in-previews/*.txt'; do
+    if ! grep -qF "$preview_artifact" "$SCRATCH_DIR/exported-capture-job"; then
+      t_fail "the exported opt-in artifact omits $preview_artifact — reviewers cannot inspect the enabled treatment and its exact flag record"
+    fi
+  done
+  # ...and the workflow must RUN this test, or the guard above is unenforced.
+  if ! grep -qE '^[[:space:]]+run: \./tools/preview-flags\.test\.sh[[:space:]]*$' "$WORKFLOW"; then
+    t_fail "ci.yaml has no 'run:' step invoking preview-flags.test.sh — this guard would not fire in CI"
+  fi
+  # No capture step may hard-code a flag the list owns, or the list is
+  # decorative and the two can disagree. Checked over the WHOLE workflow, not
+  # just the opt-in step: a copy of the assignment anywhere else is the same
+  # drift, and a name-anchored search needs no fragile YAML-indentation regex.
+  # Comments are stripped first: prose is allowed to NAME a flag while
+  # explaining the mechanism, and only an actual assignment is drift.
+  #
+  # Into a FILE, never `grep -v … | grep -q …`. Under `pipefail` the downstream
+  # `grep -q` exits on its first match, the upstream takes SIGPIPE, and the
+  # pipeline reports FAILURE — so the match reads as "no hard-coded flag found"
+  # and this guard silently stops firing. ci.yaml carries the same warning
+  # about the same shape; this file reproduced the bug before adopting it.
+  grep -vE '^[[:space:]]*#' "$WORKFLOW" >"$SCRATCH_DIR/workflow-nocomments" || true
+  while IFS= read -r listed_flag; do
+    if grep -q "${listed_flag}=1" "$SCRATCH_DIR/workflow-nocomments"; then
+      t_fail "ci.yaml hard-codes ${listed_flag}=1 — tools/preview-flags.txt is not the source of truth"
+    fi
+  done <"$SCRATCH_DIR/shipped-flags"
 fi
 
 if [ "$failures" -ne 0 ]; then
-	printf 'preview flags test: %d failure(s)\n' "$failures" >&2
-	exit 1
+  printf 'preview flags test: %d failure(s)\n' "$failures" >&2
+  exit 1
 fi
 
 printf 'preview flags test: OK\n'
