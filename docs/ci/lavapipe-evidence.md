@@ -32,6 +32,25 @@ PNG/conditions artifact. The artifact name is
 integration, rather than only the PR branch tip. Its pixels are an independent
 Linux baseline and do not establish a macOS pixel comparison.
 
+## Runtime preparation
+
+`tools/install-ci-lavapipe.sh` refreshes authenticated APT metadata and resolves
+one exact `mesa-vulkan-drivers` amd64 archive with SHA-256. The recognized Ubuntu
+source and bounded package filename determine the canonical Ubuntu HTTPS-origin
+download; metadata cannot supply an arbitrary download destination. The complete
+byte size and digest must match before APT can execute the archive. A private APT
+archive cache retains that exact package under its canonical filename. Normal APT
+resolution downloads Vulkan tools, X authentication and virtual-display dependencies;
+the Mesa bytes are rechecked before a download-disabled installation phase.
+No installed-package state, test verdict or rendered image is cached.
+
+Failed or ambiguous planning, partial downloads, unsupported origins/architecture,
+weak hashes and wrong bytes refuse before package execution. Logs record archive
+identity, download time and total preparation time. The workflow then retains its
+independent ICD selection and real llvmpipe-device proof.
+
+## Complete rendered evidence
+
 The five fixed outdoor views and three derived cave views run on independent
 standard hosted runners. `WAR_WORLD_VANTAGE` selects one exact view; an unknown
 or ambiguous value refuses to capture. An unset value retains the complete
@@ -55,6 +74,9 @@ Use `bash tools/select-lavapipe-capture.test.sh` for real-history and failed-rea
 controls, `bash tools/lavapipe-workflow.test.sh` for parsed routing/permission
 mutations, `bash tools/lavapipe-capture-guard.test.sh` for render refusals, and
 `bash tools/lavapipe-partitions.test.sh` for complete-union refusal controls.
+`bash tools/install-ci-lavapipe.test.sh` exercises real-byte archive refusal and
+failed-producer controls without installing host packages; the workflow test
+also runs it and rejects a missing installer callsite.
 The real Godot scene `tests/world_capture_plan_test.tscn` checks the complete
 plan, every disjoint partition and invalid selections.
 Run ShellCheck and actionlint for the affected shell and workflow files.

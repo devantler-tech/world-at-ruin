@@ -404,6 +404,13 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+Volumetric capture installs the exact Mesa archive selected by fresh APT
+metadata from Ubuntu's HTTPS origin, verifying its size and SHA-256 before
+package execution. Run `bash tools/install-ci-lavapipe.test.sh` and the lavapipe
+selector/workflow tests after changes. Preserve all capture views, settling,
+renderer and image guards; measured complete native runs establish performance,
+not an installer setting or synthetic package fixture.
+
 The product-owned PR admission action accepts only the canonical shared
 reviewed-base invocation and an exact GitHub integration identity. Candidate
 bytes remain anonymous data for the complete contained regression controller.
