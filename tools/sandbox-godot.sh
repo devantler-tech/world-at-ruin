@@ -96,6 +96,10 @@ if [ ! -d "$records" ] || [ -L "$records" ]; then
   echo '::error::sandbox container records must be a private real directory' >&2
   exit 2
 fi
+# The controller's flat ledger retains every outstanding container for final
+# recovery. This wrapper must retire only its own record, never a sibling's.
+invocation_records="$(mktemp -d "${TMPDIR:-/tmp}/sandbox-container.XXXXXX")"
+: >"$invocation_records/$container"
 : >"$records/$container"
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 # Join the sandbox client and verify owned-container removal before releasing records.
@@ -104,10 +108,11 @@ cleanup() {
   trap - EXIT
   trap ':' INT TERM
   trusted_stop_child || result=2
-  if ! bash "$phase_runner" "sandbox cleanup" bash "$phase_runner" --cleanup-containers "$records"; then
+  if ! bash "$phase_runner" "sandbox cleanup" bash "$phase_runner" --cleanup-containers "$invocation_records"; then
     result=2
-  elif [ "$private_records" = true ] && [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then
-    rmdir "$records"
+  elif [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then
+    if ! rm "$records/$container" || ! rmdir "$invocation_records"; then result=2; fi
+    if [ "$private_records" = true ] && ! rmdir "$records"; then result=2; fi
   fi
   exit "$result"
 }

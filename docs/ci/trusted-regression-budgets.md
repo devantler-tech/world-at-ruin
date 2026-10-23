@@ -15,10 +15,35 @@ before exec without moving the child out of the owned process group.
 | Sandbox execution | 180 seconds | Bound engine and isolation probes. |
 | Owned container cleanup | 30 seconds total | Remove only privately recorded names and verify their absence. |
 | Sandbox CI step | 45 minutes | Include setup, containment controls and every base-selected scene. |
-| Ordinary client proof job | 75 minutes | Structural guards, ordinary regressions, interoperability and concurrent-save controls. |
+| Ordinary client proof job | 15 minutes | Structural guards, product-law guards, interoperability and concurrent-save controls. |
+| Ordinary scene shard | 15 minutes each | Three disjoint workers execute the complete ordinary scene set, then an independent reducer verifies their union. |
 | Ordinary client step | 45 minutes maximum | Own the step process group; existing inner import and scene deadlines also apply. |
 | Trusted sandbox client proof job | 75 minutes | Independent checkout, verified engine and the complete sandbox step. |
 | Client validation and required aggregation | 5 minutes | Require both successful, cleaned proofs of the event integration SHA, then aggregate all required dependencies in the same job. |
+
+## Trusted scene concurrency
+
+The reviewed controller imports the candidate once, then executes its complete base-selected scene
+inventory through at most two slots. Each slot has its own copied project and private data, cache
+and configuration directories; scene logs have distinct names. It invokes the same trusted verdict
+runner once per selected scene and counts only successful joined executions. It does not reuse a
+cached verdict, change a fixture, or lower the required scene set. Captured runner output is replayed
+one completed log at a time, so parallel candidate output cannot interleave workflow-command fences.
+
+Sandbox slots retain the existing non-root, read-only, network-isolated containers and each
+container's existing resource limits. One wrapper removes only its own container record; the
+controller retains a complete flat ledger for final recovery. Cancellation reaches every owned
+scene before any wait, with one common eight-second join allowance rather than a separate allowance
+per slot. A refused, unknown or forced join retains private state and fails the proof. These are
+execution bounds, not evidence that complete feedback has already met 15 minutes; repeated native
+timings and queue observations remain part of #1495.
+
+Run the required-controller, sandbox-wrapper, lifecycle and deadline `.test.sh` suites after changing
+this boundary. Their controls cover overlapping scenes with distinct writable state, a three-scene
+complete union capped at two active scenes, sibling cancellation, cleanup refusal, unknown joins and
+preservation of an independently owned container.
+
+## Phase and completion ownership
 
 Each host phase forwards termination to its child process group, then polls the entire group every
 100 milliseconds for up to five seconds. It returns earlier when the group is absent; resistant
@@ -45,17 +70,18 @@ The existing scene verdict runner still uses its 180-second watchdog and require
 fixtures, read-only mounts, non-root execution, credential exclusion and network isolation stay with
 the reviewed controller. Setup budgets do not change which scenes run.
 
-The two candidate proof jobs use separate checkouts and job-private save seams. Both participants
+The ordinary and sandbox proof jobs use separate checkouts and job-private save seams. Both participants
 in each ordinary parallel-save pair share that same seam; their distinct resolved probes still
 prove concurrent isolation. Every ordinary shell step has an outer group owner, and scene runners
 retain their shorter two-second termination grace so nested cleanup finishes before the outer
 five-second force limit. Host group ownership does not claim control of arbitrary processes that
 escape into a separate session; candidate sandbox containment remains a separate proof.
 
-Only each worker's final step removes its own save seam and publishes completion with the actual
-checked-out integration SHA. `CI - Required Checks` directly depends on both workers and every
-other required dependency. It requires literal success and matching completion from both workers
-before aggregating their results in the same runner job. Skipped, canceled, failed, incomplete or
+Only each proof's final step removes its own save seam and publishes completion with the actual
+checked-out integration SHA. Ordinary scene shards also have a separate exact-union reducer.
+`CI - Required Checks` directly depends on the ordinary proof, sandbox proof, scene union and every
+other required dependency. It requires literal success and matching completion before aggregating
+their results in the same runner job. Skipped, canceled, failed, incomplete or
 mismatched client proofs fail the required job. Its five-minute execution budget begins after runner
 allocation; queueing is separate. Measure queue eligibility from the last of all its dependencies,
 including conditional frame evidence. The independently required trusted workflow stays enforced.
