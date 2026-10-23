@@ -38,7 +38,7 @@ capture() {
 if ! git diff --name-only "$BASE_SHA" HEAD >"$scratch/machinery"; then
   capture
 fi
-machinery='^tools/(pr-diff-base\.sh|select-lavapipe-capture(\.test)?\.sh|lavapipe-capture-guard(\.test)?\.sh|collect-lavapipe-captures\.sh|lavapipe-partitions\.test\.sh|install-ci-godot\.sh)$|^\.github/workflows/lavapipe-capture\.yaml$|^client/tools/frame_capture\.(gd|tscn)$'
+machinery='^tools/(pr-diff-base\.sh|select-lavapipe-capture(\.test)?\.sh|lavapipe-capture-guard(\.test)?\.sh|collect-lavapipe-captures\.sh|lavapipe-partitions\.test\.sh|install-ci-godot\.sh|install-ci-lavapipe(\.test)?\.sh)$|^\.github/workflows/lavapipe-capture\.yaml$|^client/tools/frame_capture\.(gd|tscn)$'
 status=0
 grep -qE "$machinery" "$scratch/machinery" || status=$?
 case $status in 0) capture ;; 1) ;; *) capture ;; esac
