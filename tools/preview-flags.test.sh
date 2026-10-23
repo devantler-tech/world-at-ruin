@@ -286,8 +286,7 @@ else
   # The shipped artifact has its own capture job and must resolve the same
   # source of truth there. A resolver call in the editor-only job cannot prove
   # an exported build ever rendered the treatments.
-  sed -n '/^  frame-capture-exported:/,/^  ci-required-checks:/p' \
-    "$WORKFLOW" >"$SCRATCH_DIR/exported-capture-job"
+  yq '.jobs."frame-capture-exported-head"' "$WORKFLOW" >"$SCRATCH_DIR/exported-capture-job"
   # shellcheck disable=SC2016 # workflow variables are matched as literal source
   if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
     "$SCRATCH_DIR/exported-capture-job"; then
