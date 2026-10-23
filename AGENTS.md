@@ -404,6 +404,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+Ordinary discovered client scenes run on three isolated workers with an
+integration/run/attempt-bound complete-union receipt. The six dedicated
+product-law guards stay separate and non-skippable; the historical sandbox
+evaluation is unchanged. Preserve owned process groups and private-state
+cleanup before completion. Run the scene worker/workflow tests and both
+client-proof gate/guard tests after changes. A retry must rerun the complete CI
+workflow, not only failed jobs. See [scene proof](docs/ci/client-scene-proof.md).
+
 The sandbox isolation probe passes its own verified image ID to the full
 historical suite through a private terminal host function; it must not cold-build
 the same runtime twice. Public trusted-suite invocations still build from their
@@ -411,6 +419,15 @@ reviewed sources and accept no image override. Preserve containment, package
 refusal, complete scene selection and cleanup acknowledgments. Run
 `bash tools/sandbox-runtime-handoff.test.sh` and the deadline/lifecycle suites
 after changes. See [runtime inventory](docs/ci/trusted-runtime-inventory.md).
+
+Cloth capture runs in its own required native macOS job, in parallel with the
+remaining source frames. Preserve all four modes, four views, ten comparison
+arms and both image/caption files; never exchange evidence for a shorter job.
+Run `bash tools/cloth-capture.test.sh` and
+`bash tools/client-proof-workflow-guard.test.sh` after changing its capture,
+verified installer, routing or required-result wiring. Local synthetic controls
+do not replace hosted Metal capture or measured run time. See
+[cloth evidence](docs/ci/cloth-evidence.md).
 
 Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
