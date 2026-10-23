@@ -17,20 +17,22 @@ bin_dir="${tmp_dir}/bin"
 run_log="${tmp_dir}/runs.log"
 
 mkdir -p \
-	"${workflow_source}/tools" \
-	"${trusted}/client/tests" \
-	"${trusted}/tools" \
-	"${candidate}/client/tests" \
-	"${candidate}/tools" \
-	"${empty_trusted}/client/tests" \
-	"${empty_trusted}/tools" \
-	"${bin_dir}"
+  "${workflow_source}/tools" \
+  "${trusted}/client/tests" \
+  "${trusted}/tools" \
+  "${candidate}/client/tests" \
+  "${candidate}/tools" \
+  "${empty_trusted}/client/tests" \
+  "${empty_trusted}/tools" \
+  "${bin_dir}"
 
 cp "${control_source}" "${control}"
 cp "$repo_root/tools/trusted-regression-phase.sh" "$repo_root/tools/trusted-phase-command.sh" "$repo_root/tools/trusted-regression-lifecycle.sh" "$repo_root/tools/process-group-lifecycle.sh" "$workflow_source/tools/"
 # Neither historical data nor candidate content may supply a host helper.
-printf 'echo candidate-helper-was-sourced >&2; exit 99\n' > "$candidate/tools/process-group-lifecycle.sh"
-printf 'echo historical-helper-was-sourced >&2; exit 99\n' > "$trusted/tools/process-group-lifecycle.sh"
+printf 'echo candidate-helper-was-sourced >&2; exit 99\n' >"$candidate/tools/process-group-lifecycle.sh"
+printf 'echo historical-helper-was-sourced >&2; exit 99\n' >"$trusted/tools/process-group-lifecycle.sh"
+printf 'echo candidate-context-was-sourced >&2; exit 99\n' >"$candidate/tools/sandbox-regression-context.sh"
+printf 'echo historical-context-was-sourced >&2; exit 99\n' >"$trusted/tools/sandbox-regression-context.sh"
 printf '%s\n' 'trusted alpha harness' >"${trusted}/client/tests/alpha_test.tscn"
 printf '%s\n' 'trusted beta harness' >"${trusted}/client/tests/beta_test.tscn"
 printf '%s\n' 'candidate-weakened alpha harness' >"${candidate}/client/tests/alpha_test.tscn"
@@ -65,6 +67,43 @@ set -euo pipefail
 
 name="${1:?test name required}"
 : "${REQUIRED_REGRESSION_RUN_LOG:?run log required}"
+
+# The trusted controller must overlap two scenes, but never share their
+# writable project or save directories. The old serial loop times out here.
+if [[ -n ${REQUIRED_REGRESSION_PARALLEL_PROBE:-} ]]; then
+  probe=$REQUIRED_REGRESSION_PARALLEL_PROBE
+  [[ -n ${XDG_DATA_HOME:-} && $XDG_DATA_HOME == /* ]] || exit 88
+  mkdir -p "$probe/active"
+  mkdir "$probe/active/$name"
+  if [[ $(find "$probe/active" -mindepth 1 -maxdepth 1 -type d | wc -l) -gt 2 ]]; then
+    echo 'trusted scene concurrency exceeded two' >&2
+    exit 87
+  fi
+  printf '%s\n%s\n' "$PWD" "$XDG_DATA_HOME" >"$probe/$name.identity"
+  touch "$probe/$name.ready"
+  for ((i=0;i<40;i++)); do
+    [[ -f $probe/alpha_test.ready && -f $probe/beta_test.ready ]] && break
+    sleep 0.05
+  done
+  [[ -f $probe/alpha_test.ready && -f $probe/beta_test.ready ]] || {
+    echo 'trusted scene workers did not overlap' >&2
+    exit 89
+  }
+  if [[ -n ${REQUIRED_REGRESSION_CANCEL_STATUS:-} ]]; then
+    if [[ $name == alpha_test ]]; then
+      printf '%s\n' "$$" >"$probe/alpha.pid"
+      trap 'touch "$probe/alpha.cleaned"; exit "$REQUIRED_REGRESSION_CANCEL_STATUS"' TERM
+      touch "$probe/alpha.armed"
+      while :; do sleep 0.05; done
+    fi
+    for ((i=0;i<40;i++)); do [[ -f $probe/alpha.armed ]] && break; sleep 0.05; done
+    [[ -f $probe/alpha.armed ]] || exit 90
+    echo 'deliberate parallel sibling failure' >&2
+    exit 93
+  fi
+  sleep 0.1
+  rmdir "$probe/active/$name"
+fi
 
 if [ ! -f client/product.marker ]; then
 	echo "candidate product was not evaluated" >&2
@@ -124,62 +163,106 @@ failures=0
 
 # Accumulate every independently observed control failure before reporting.
 fail() {
-	printf 'required-regression-control regression: FAIL -- %s\n' "$1" >&2
-	failures=$((failures + 1))
+  printf 'required-regression-control regression: FAIL -- %s\n' "$1" >&2
+  failures=$((failures + 1))
 }
 
 # Locate every local workflow caller, including renamed definitions.
 find_local_controller_workflows() {
-	local workflows_dir="$1"
-	local workflow_file
-	for workflow_file in "${workflows_dir}"/*.yaml "${workflows_dir}"/*.yml; do
-		[ -f "${workflow_file}" ] || continue
-		if grep -Eq 'tools/(required-regression-control|run-sandboxed-trusted-regressions)[.]sh' "${workflow_file}"; then
-			basename "${workflow_file}"
-		fi
-	done
+  local workflows_dir="$1"
+  local workflow_file
+  for workflow_file in "${workflows_dir}"/*.yaml "${workflows_dir}"/*.yml; do
+    [ -f "${workflow_file}" ] || continue
+    if grep -Eq 'tools/(required-regression-control|run-sandboxed-trusted-regressions)[.]sh' "${workflow_file}"; then
+      basename "${workflow_file}"
+    fi
+  done
 }
 
 if [ ! -x "${control}" ]; then
-	fail "the required-regression control is missing or not executable"
+  fail "the required-regression control is missing or not executable"
 else
-	control_output="${tmp_dir}/control.log"
-	if ! PATH="${bin_dir}:${PATH}" \
-		REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
-		/bin/bash "${control}" "${trusted}" "${candidate}" \
-		>"${control_output}" 2>&1; then
-		fail "the trusted suite did not accept a passing candidate: $(<"${control_output}")"
-	fi
+  control_output="${tmp_dir}/control.log"
+  if ! PATH="${bin_dir}:${PATH}" \
+    REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" \
+    >"${control_output}" 2>&1; then
+    fail "the trusted suite did not accept a passing candidate: $(<"${control_output}")"
+  fi
 
-	if [ ! -f "${run_log}" ]; then
-		fail "no trusted regression scene was executed"
-	else
-		expected_runs=$'alpha_test\nbeta_test'
-		actual_runs="$(<"${run_log}")"
-		if [ "${actual_runs}" != "${expected_runs}" ]; then
-			fail "candidate deletion or ci-skip changed the trusted selection: ${actual_runs}"
-		fi
-	fi
+  if [ ! -f "${run_log}" ]; then
+    fail "no trusted regression scene was executed"
+  else
+    expected_runs=$'alpha_test\nbeta_test'
+    actual_runs="$(sort "${run_log}")"
+    if [ "${actual_runs}" != "${expected_runs}" ]; then
+      fail "candidate deletion or ci-skip changed the trusted selection: ${actual_runs}"
+    fi
+  fi
 
-	: >"${run_log}"
-	if PATH="${bin_dir}:${PATH}" \
-		REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
-		REQUIRED_REGRESSION_FAIL_TEST="beta_test" \
-		/bin/bash "${control}" "${trusted}" "${candidate}" \
-		>"${control_output}" 2>&1; then
-		fail "the aggregate accepted a failing trusted regression"
-	elif ! grep -q 'deliberate beta_test failure' "${control_output}"; then
-		fail "the aggregate did not preserve the trusted runner failure: $(<"${control_output}")"
-	fi
+  mkdir "$tmp_dir/parallel-probe"
+  : >"$run_log"
+  if ! PATH="$bin_dir:$PATH" REQUIRED_REGRESSION_RUN_LOG="$run_log" \
+    REQUIRED_REGRESSION_PARALLEL_PROBE="$tmp_dir/parallel-probe" \
+    /bin/bash "$control" "$trusted" "$candidate" >"$control_output" 2>&1; then
+    fail "trusted scenes were not parallel and isolated: $(<"$control_output")"
+  else
+    for line in 1 2; do
+      alpha=$(sed -n "${line}p" "$tmp_dir/parallel-probe/alpha_test.identity")
+      beta=$(sed -n "${line}p" "$tmp_dir/parallel-probe/beta_test.identity")
+      [[ -n $alpha && -n $beta && $alpha != "$beta" ]] || fail 'parallel scenes shared writable state'
+    done
+    [[ $(sort "$run_log") == "$expected_runs" ]] || fail 'parallel execution changed exact trusted coverage'
+  fi
 
-	if PATH="${bin_dir}:${PATH}" \
-		REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
-		/bin/bash "${control}" "${empty_trusted}" "${candidate}" \
-		>"${control_output}" 2>&1; then
-		fail "an empty trusted regression selection passed vacuously"
-	elif ! grep -q 'no trusted regression test scenes' "${control_output}"; then
-		fail "the empty-selection refusal was not explicit: $(<"${control_output}")"
-	fi
+  printf '%s\n' 'trusted gamma harness' >"$trusted/client/tests/gamma_test.tscn"
+  mkdir "$tmp_dir/three-scene-probe"
+  : >"$run_log"
+  if ! PATH="$bin_dir:$PATH" REQUIRED_REGRESSION_RUN_LOG="$run_log" \
+    REQUIRED_REGRESSION_PARALLEL_PROBE="$tmp_dir/three-scene-probe" \
+    /bin/bash "$control" "$trusted" "$candidate" >"$control_output" 2>&1; then
+    fail "trusted concurrency was not bounded at two: $(<"$control_output")"
+  elif [[ $(sort "$run_log") != $'alpha_test\nbeta_test\ngamma_test' ]]; then
+    fail 'three-scene execution omitted or replayed a trusted scene'
+  fi
+  rm "$trusted/client/tests/gamma_test.tscn"
+
+  for cleanup_verdict in 130 2; do
+    probe="$tmp_dir/cancel-$cleanup_verdict"
+    mkdir "$probe"
+    status=0
+    PATH="$bin_dir:$PATH" REQUIRED_REGRESSION_RUN_LOG="$run_log" \
+      REQUIRED_REGRESSION_PARALLEL_PROBE="$probe" REQUIRED_REGRESSION_CANCEL_STATUS="$cleanup_verdict" \
+      /bin/bash "$control" "$trusted" "$candidate" >"$control_output" 2>&1 || status=$?
+    expected=1
+    [[ $cleanup_verdict == 2 ]] && expected=2
+    [[ $status == "$expected" ]] || fail 'parallel sibling failure lost its cleanup verdict'
+    [[ -f $probe/alpha.cleaned ]] || fail 'parallel failure did not cancel the other owned scene'
+    if [[ -f $probe/alpha.pid ]] && kill -0 "$(<"$probe/alpha.pid")" 2>/dev/null; then
+      fail 'parallel cancellation returned with an owned scene still running'
+    fi
+    grep -q 'deliberate parallel sibling failure' "$control_output" || fail 'parallel failure lost the actual runner diagnostic'
+  done
+
+  : >"${run_log}"
+  if PATH="${bin_dir}:${PATH}" \
+    REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    REQUIRED_REGRESSION_FAIL_TEST="beta_test" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" \
+    >"${control_output}" 2>&1; then
+    fail "the aggregate accepted a failing trusted regression"
+  elif ! grep -q 'deliberate beta_test failure' "${control_output}"; then
+    fail "the aggregate did not preserve the trusted runner failure: $(<"${control_output}")"
+  fi
+
+  if PATH="${bin_dir}:${PATH}" \
+    REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    /bin/bash "${control}" "${empty_trusted}" "${candidate}" \
+    >"${control_output}" 2>&1; then
+    fail "an empty trusted regression selection passed vacuously"
+  elif ! grep -q 'no trusted regression test scenes' "${control_output}"; then
+    fail "the empty-selection refusal was not explicit: $(<"${control_output}")"
+  fi
 fi
 
 # Candidate log links must never redirect host capture into unrelated files.
@@ -215,7 +298,7 @@ cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot"
 # Execute the real launcher/controller with a divergent event-base helper pair.
 # Only the external compiler/container runtime are stubs in this ownership test.
 cp "${repo_root}/tools/run-client-test.sh" "${workflow_source}/tools/run-client-test.sh"
-for helper in run-sandboxed-trusted-regressions build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory observe-runtime-transaction verify-trusted-runtime-packages sandbox-godot; do
+for helper in run-sandboxed-trusted-regressions sandbox-regression-context build-trusted-regression-runtime build-locked-trusted-runtime capture-trusted-runtime-inventory observe-runtime-transaction verify-trusted-runtime-packages sandbox-godot; do
   cp "${repo_root}/tools/${helper}.sh" "${workflow_source}/tools/${helper}.sh"
 done
 cp "${repo_root}/tools/trusted-regression-cache.go" "${workflow_source}/tools/"
@@ -279,7 +362,7 @@ if ! PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_REAL_GO="$real_go" REQUIRED_R
   >"${control_output}" 2>&1; then
   fail "workflow-source launcher did not evaluate base-owned data: $(<"${control_output}")"
 fi
-if [ "$(<"${run_log}")" != $'alpha_test\nbeta_test' ]; then
+if [ "$(sort "${run_log}")" != $'alpha_test\nbeta_test' ]; then
   fail 'launcher did not execute both scenes through workflow-source host helpers'
 fi
 if [ -s "${REQUIRED_REGRESSION_LEGACY_LOG}" ]; then
@@ -290,38 +373,47 @@ cp "${tmp_dir}/fixture-runner" "${workflow_source}/tools/run-client-test.sh"
 
 # Missing inputs and import failures refuse before any trusted scene can run.
 for broken in project trusted_project trusted_project_link runner import; do
-	: >"${run_log}"
-	case "$broken" in
-	project) mv "${candidate}/client/project.godot" "${tmp_dir}/project.godot" ;;
-	trusted_project) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot" ;;
-	trusted_project_link) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot"; ln -s "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
-	runner) chmod -x "${workflow_source}/tools/run-client-test.sh" ;;
-	import) printf '#!/bin/bash\necho "ERROR: deliberate import failure"\nexit 1\n' >"${bin_dir}/godot" ;;
-	esac
-	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
-		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
-		fail "missing $broken input or failed import was accepted"
-	fi
-	[ ! -s "${run_log}" ] || fail "$broken refusal executed a regression scene"
-	case "$broken" in
-	project) mv "${tmp_dir}/project.godot" "${candidate}/client/project.godot" ;;
-	trusted_project) mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
-	trusted_project_link) rm "${trusted}/client/project.godot"; mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
-	runner) chmod +x "${workflow_source}/tools/run-client-test.sh" ;;
-	import) cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot" ;;
-	esac
+  : >"${run_log}"
+  case "$broken" in
+  project) mv "${candidate}/client/project.godot" "${tmp_dir}/project.godot" ;;
+  trusted_project) mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot" ;;
+  trusted_project_link)
+    mv "${trusted}/client/project.godot" "${tmp_dir}/trusted-project.godot"
+    ln -s "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot"
+    ;;
+  runner) chmod -x "${workflow_source}/tools/run-client-test.sh" ;;
+  import) printf '#!/bin/bash\necho "ERROR: deliberate import failure"\nexit 1\n' >"${bin_dir}/godot" ;;
+  esac
+  if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+    fail "missing $broken input or failed import was accepted"
+  fi
+  [ ! -s "${run_log}" ] || fail "$broken refusal executed a regression scene"
+  case "$broken" in
+  project) mv "${tmp_dir}/project.godot" "${candidate}/client/project.godot" ;;
+  trusted_project) mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot" ;;
+  trusted_project_link)
+    rm "${trusted}/client/project.godot"
+    mv "${tmp_dir}/trusted-project.godot" "${trusted}/client/project.godot"
+    ;;
+  runner) chmod +x "${workflow_source}/tools/run-client-test.sh" ;;
+  import) cp "${tmp_dir}/godot-import-stub" "${bin_dir}/godot" ;;
+  esac
 done
 
 # Unsupported startup configuration is refused before importing candidate code.
 for setting in autoload editor_plugins override symlink binary binary_link; do
   cp "${candidate}/client/project.godot" "${tmp_dir}/clean-project"
   case "$setting" in
-    autoload) printf '\n[autoload]\n' >>"${candidate}/client/project.godot" ;;
-    editor_plugins) printf '\n[editor_plugins]\n' >>"${candidate}/client/project.godot" ;;
-    override) printf '[application]\n' >"${candidate}/client/override.cfg" ;;
-    symlink) rm "${candidate}/client/project.godot"; ln -s "${tmp_dir}/clean-project" "${candidate}/client/project.godot" ;;
-    binary) printf 'unsupported binary configuration\n' >"${candidate}/client/project.binary" ;;
-    binary_link) ln -s nonexistent "${candidate}/client/project.binary" ;;
+  autoload) printf '\n[autoload]\n' >>"${candidate}/client/project.godot" ;;
+  editor_plugins) printf '\n[editor_plugins]\n' >>"${candidate}/client/project.godot" ;;
+  override) printf '[application]\n' >"${candidate}/client/override.cfg" ;;
+  symlink)
+    rm "${candidate}/client/project.godot"
+    ln -s "${tmp_dir}/clean-project" "${candidate}/client/project.godot"
+    ;;
+  binary) printf 'unsupported binary configuration\n' >"${candidate}/client/project.binary" ;;
+  binary_link) ln -s nonexistent "${candidate}/client/project.binary" ;;
   esac
   : >"${run_log}.import"
   if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
@@ -341,26 +433,26 @@ ledger="${candidate}/client/tests/data/shipped_save_capability.txt"
 base_ledger="${trusted}/client/tests/data/shipped_save_capability.txt"
 # Check declaration acceptance, the installed capability, and refusal before import.
 run_capability_case() {
-	local label="$1" want="$2" capability="$3"
-	: >"${run_log}"
-	: >"${run_log}.import"
-	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
-		REQUIRED_REGRESSION_CAPABILITY="${capability}" \
-		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
-		[ "${want}" = pass ] || fail "${label}: invalid capability history passed"
-	else
-		if [ "${want}" = pass ]; then
-			fail "${label}: valid declaration refused: $(<"${control_output}")"
-		elif ! grep -q 'save-capability declaration' "${control_output}"; then
-			fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
-		fi
-	fi
-	if [ "${want}" = pass ] && [ ! -s "${run_log}.import" ]; then
-		fail "${label}: passing candidate did not record its import"
-	fi
-	if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
-		fail "${label}: candidate ran before declaration validation"
-	fi
+  local label="$1" want="$2" capability="$3"
+  : >"${run_log}"
+  : >"${run_log}.import"
+  if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    REQUIRED_REGRESSION_CAPABILITY="${capability}" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+    [ "${want}" = pass ] || fail "${label}: invalid capability history passed"
+  else
+    if [ "${want}" = pass ]; then
+      fail "${label}: valid declaration refused: $(<"${control_output}")"
+    elif ! grep -q 'save-capability declaration' "${control_output}"; then
+      fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
+    fi
+  fi
+  if [ "${want}" = pass ] && [ ! -s "${run_log}.import" ]; then
+    fail "${label}: passing candidate did not record its import"
+  fi
+  if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
+    fail "${label}: candidate ran before declaration validation"
+  fi
 }
 
 printf '7\n' >>"${ledger}"
@@ -426,27 +518,27 @@ base_recipe_ledger="${trusted}/client/tests/data/shipped_recipe_versions.txt"
 planned_recipe="${trusted}/client/tests/data/planned_recipe_v5.json"
 golden_recipe="${candidate}/client/tests/data/golden_recipe_v5.json"
 run_recipe_case() {
-	local label="$1" want="$2" version="$3"
-	: >"${run_log}"
-	: >"${run_log}.import"
-	if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
-		REQUIRED_REGRESSION_CAPABILITY=7 REQUIRED_REGRESSION_RECIPE_VERSION="${version}" \
-		/bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
-		[ "${want}" = pass ] || fail "${label}: invalid recipe declaration passed"
-	else
-		if [ "${want}" = pass ]; then
-			fail "${label}: approved recipe declaration refused: $(<"${control_output}")"
-		elif ! grep -q 'recipe declaration' "${control_output}"; then
-			fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
-		fi
-	fi
-	if [ "${want}" = pass ]; then
-		[ -s "${run_log}.import" ] || fail "${label}: passing candidate did not record its import"
-		[ "$(<"${run_log}")" = "${expected_runs}" ] || fail "${label}: passing candidate did not execute the exact trusted scenes"
-	fi
-	if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
-		fail "${label}: candidate ran before recipe validation"
-	fi
+  local label="$1" want="$2" version="$3"
+  : >"${run_log}"
+  : >"${run_log}.import"
+  if PATH="${bin_dir}:${PATH}" REQUIRED_REGRESSION_RUN_LOG="${run_log}" \
+    REQUIRED_REGRESSION_CAPABILITY=7 REQUIRED_REGRESSION_RECIPE_VERSION="${version}" \
+    /bin/bash "${control}" "${trusted}" "${candidate}" >"${control_output}" 2>&1; then
+    [ "${want}" = pass ] || fail "${label}: invalid recipe declaration passed"
+  else
+    if [ "${want}" = pass ]; then
+      fail "${label}: approved recipe declaration refused: $(<"${control_output}")"
+    elif ! grep -q 'recipe declaration' "${control_output}"; then
+      fail "${label}: refused for an unrelated reason: $(<"${control_output}")"
+    fi
+  fi
+  if [ "${want}" = pass ]; then
+    [ -s "${run_log}.import" ] || fail "${label}: passing candidate did not record its import"
+    [ "$(sort "${run_log}")" = "${expected_runs}" ] || fail "${label}: passing candidate did not execute the exact trusted scenes"
+  fi
+  if [ "${want}" = fail ] && { [ -s "${run_log}" ] || [ -s "${run_log}.import" ]; }; then
+    fail "${label}: candidate ran before recipe validation"
+  fi
 }
 cp "${tmp_dir}/trusted-ledger" "${base_ledger}"
 cp "${base_ledger}" "${ledger}"
@@ -492,35 +584,35 @@ run_recipe_case 'append after recipe5 ships' fail 6
 workflow_fixture_dir="${tmp_dir}/workflow-fixture"
 mkdir -p "${workflow_fixture_dir}"
 printf '%s\n' 'run: trusted/tools/required-regression-control.sh trusted candidate' \
-	>"${workflow_fixture_dir}/renamed-gate.yaml"
+  >"${workflow_fixture_dir}/renamed-gate.yaml"
 if ! find_local_controller_workflows "${workflow_fixture_dir}" |
-	grep -Fq 'renamed-gate.yaml'; then
-	fail "a renamed candidate-repository workflow can evade the source guard"
+  grep -Fq 'renamed-gate.yaml'; then
+  fail "a renamed candidate-repository workflow can evade the source guard"
 fi
 
 local_workflows="$(find_local_controller_workflows "${repo_root}/.github/workflows")"
 if [ "${local_workflows}" != $'repository-trusted-regressions.yaml\ntrusted-regressions.yaml' ]; then
-	fail "only the base-owned product workflow may invoke the controller: ${local_workflows}"
+  fail "only the base-owned product workflow may invoke the controller: ${local_workflows}"
 elif ! bash "${repo_root}/tools/trusted-regression-workflow-guard.sh"; then
-	fail "the product workflow does not preserve the base-owned controller boundary"
+  fail "the product workflow does not preserve the base-owned controller boundary"
 elif ! bash "${repo_root}/tools/repository-trusted-gate-workflow-guard.sh"; then
-	fail "the repository publisher workflow does not preserve the independent credential boundary"
+  fail "the repository publisher workflow does not preserve the independent credential boundary"
 fi
 
 external_workflow='.github/workflows/world-at-ruin-required-regressions.yaml'
 for contract in "${repo_root}/AGENTS.md" \
-	"${repo_root}/docs/adr/0003-pin-required-regressions-outside-candidate-control.md"; do
-	if ! grep -Fq 'devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml' "${contract}" ||
-		! grep -Fq "${external_workflow}" "${contract}" ||
-		! grep -Fq 'refs/heads/main' "${contract}"; then
-		fail "$(basename "${contract}") does not name the live external workflow source contract"
-	fi
+  "${repo_root}/docs/adr/0003-pin-required-regressions-outside-candidate-control.md"; do
+  if ! grep -Fq 'devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml' "${contract}" ||
+    ! grep -Fq "${external_workflow}" "${contract}" ||
+    ! grep -Fq 'refs/heads/main' "${contract}"; then
+    fail "$(basename "${contract}") does not name the live external workflow source contract"
+  fi
 done
 
 if [ "${failures}" -ne 0 ]; then
-	printf 'required-regression-control regression: %d failure(s)\n' "${failures}" >&2
-	exit 1
+  printf 'required-regression-control regression: %d failure(s)\n' "${failures}" >&2
+  exit 1
 fi
 
 printf '%s\n' \
-	'TEST PASS -- required regressions use trusted selection and harness bytes and fail closed as one aggregate'
+  'TEST PASS -- required regressions use trusted selection and harness bytes and fail closed as one aggregate'

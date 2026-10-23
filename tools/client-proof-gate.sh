@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The stable check accepts only two fully cleaned proofs of one integration.
+# The stable check joins dedicated, sandbox and complete-scene proofs.
 set -euo pipefail
 if [[ ! ${EXPECTED_SHA:-} =~ ^[0-9a-f]{40}$ ]]; then
   echo '::error::client proofs have no valid expected integration SHA' >&2
   exit 1
 fi
-for participant in ORDINARY SANDBOX; do
+for participant in ORDINARY SANDBOX SCENES; do
   result="${participant}_RESULT"
   complete="${participant}_COMPLETE"
   observed="${participant}_SHA"
@@ -14,4 +14,17 @@ for participant in ORDINARY SANDBOX; do
     exit 1
   fi
 done
-echo "CLIENT PROOFS PASS: both complete at $EXPECTED_SHA"
+if [[ ! ${EXPECTED_RUN:-} =~ ^[1-9][0-9]{0,19}$ ||
+  ! ${EXPECTED_ATTEMPT:-} =~ ^[1-9][0-9]{0,19}$ ||
+  ${SCENES_RUN:-} != "$EXPECTED_RUN" || ${SCENES_ATTEMPT:-} != "$EXPECTED_ATTEMPT" ]]; then
+  echo '::error::scene union proof does not belong to this run and attempt' >&2
+  exit 1
+fi
+case "${EVENT_NAME:-}:${CLOTH_SELECTED:-}:${CLOTH_RESULT:-}" in
+  pull_request:true:success | pull_request:false:skipped | merge_group:true:success | merge_group:false:skipped | merge_group::skipped) ;;
+  *)
+    echo '::error::selected cloth evidence lacks successful completion' >&2
+    exit 1
+    ;;
+esac
+echo "CLIENT PROOFS PASS: all three complete at $EXPECTED_SHA"

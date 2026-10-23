@@ -404,6 +404,46 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+The product-owned PR admission action accepts only the canonical shared
+reviewed-base invocation and an exact GitHub integration identity. Candidate
+bytes remain anonymous data for the complete contained regression controller.
+Run `bash tools/shared-product-admission.test.sh` with the trusted workflow,
+lifecycle and deadline tests after changes. Source preparation does not activate
+enforcement or retire the existing required source; see
+[the action interface](.github/actions/pr-admission/README.md).
+
+Ordinary discovered client scenes run on three isolated workers with an
+integration/run/attempt-bound complete-union receipt. The six dedicated
+product-law guards stay separate and non-skippable; the historical sandbox
+evaluation is unchanged. Preserve owned process groups and private-state
+cleanup before completion. Run the scene worker/workflow tests and both
+client-proof gate/guard tests after changes. A retry must rerun the complete CI
+workflow, not only failed jobs. See [scene proof](docs/ci/client-scene-proof.md).
+
+The sandbox isolation probe passes its own verified image ID to the full
+historical suite through a private terminal host function; it must not cold-build
+the same runtime twice. Public trusted-suite invocations still build from their
+reviewed sources and accept no image override. Preserve containment, package
+refusal, complete scene selection and cleanup acknowledgments. Run
+`bash tools/sandbox-runtime-handoff.test.sh` and the deadline/lifecycle suites
+after changes. See [runtime inventory](docs/ci/trusted-runtime-inventory.md).
+
+Cloth capture runs in its own required native macOS job, in parallel with the
+remaining source frames. Preserve all four modes, four views, ten comparison
+arms and both image/caption files; never exchange evidence for a shorter job.
+Run `bash tools/cloth-capture.test.sh` and
+`bash tools/client-proof-workflow-guard.test.sh` after changing its capture,
+verified installer, routing or required-result wiring. Local synthetic controls
+do not replace hosted Metal capture or measured run time. See
+[cloth evidence](docs/ci/cloth-evidence.md).
+
+The native fixture's test and executable use the same read-only module graph,
+path trimming and version-control flags. Keep their compilation inputs aligned
+so a fresh job can reuse its own compiled dependencies. This is not a shared
+image cache or a cached test verdict. Run
+`bash tools/native-acceptance-workflow.test.sh` after changes; complete native
+CI on both architectures must still pass before claiming a runtime improvement.
+
 Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
 selection. Keep the exact base, snapshot and direct-pin joins, full successful
@@ -1295,6 +1335,14 @@ the permanent blocking policy.
   keeps journal writers and serving-reader/retained-artifact activation separate.
   [ADR 0035](docs/adr/0035-observe-journals-through-the-packaged-nakama-candidate.md)
   adds native candidate readback while preserving those activation gates.
+- **Complete native acceptance:** native and issued CI profiles opt into four isolated
+  same-image workers on both architectures. The real compiled inventory, exact disjoint
+  verdict union and owned container/database/network retirement must all complete before
+  success. Keep the one-worker default and the independent serial issued-SPIRE profile;
+  never cache a test verdict or shorten scenario deadlines to meet a feedback target.
+  Run `bash tools/nakama-native-harness.test.sh` and
+  `bash tools/native-acceptance-workflow.test.sh`; these hermetic controls do not replace
+  real hosted native timing and correctness evidence. See [ADR 0061](docs/adr/0061-partition-complete-native-acceptance.md).
 - **Durable admission experiment:** `server/internal/allocatoradmission/` uses one
   private generation-wide conditional document for registration and irreversible drain.
   Snapshots are diagnostic and cannot release quarantine or restore capabilities.
@@ -1553,15 +1601,31 @@ the permanent blocking policy.
     unrelated-canary survival. Unreadable process inspection is a refused cleanup verdict.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
+    Exported HEAD and BASE frame captures run on independent macOS workers. The HEAD retains
+    the default-world, opt-in-preview and first-run evidence. A stable terminal job requires both
+    workers and source/run/attempt-bound comparison data before publishing the complete artifact.
+    BASE installation and rendering have two- and nine-minute step bounds inside the 15-minute
+    worker budget, reserving time to record and upload their actual outcome. A known BASE failure
+    remains advisory; missing or stale transport evidence is not. Run
+    `tools/exported-frame-change-report.test.sh` and `tools/preview-flags.test.sh`.
   - `lavapipe-capture.yaml` owns advisory volumetric evidence independently of required CI.
-    It preserves the 45-minute capture, explicit llvmpipe/fog verdicts and visible failures.
+    Eight isolated 15-minute view jobs retain full warmup/settling, llvmpipe/fog verdicts
+    and visible failures; a source-bound collector requires every view before publication.
     Selector and render checkouts bind the same event integration SHA; artifacts name that SHA.
     Its selector runs only on pull requests, conservatively captures failed diff observations
     and validates workflow/helper changes. Run `tools/select-lavapipe-capture.test.sh`,
-    `tools/lavapipe-workflow.test.sh` and the existing capture-guard controls. Required CI
+    `tools/lavapipe-workflow.test.sh`, `tools/lavapipe-partitions.test.sh`, the real Godot
+    `world_capture_plan_test` scene and the existing capture-guard controls. Required CI
     aggregation is unchanged. See [the workflow contract](docs/ci/lavapipe-evidence.md).
-  - `retired-repo-links.yaml` (`workflow_call` from CI and `push` to `main`) checks active
-    `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
+  - The CI job and main-only `retired-repo-links.yaml` wrapper both execute
+    this repository's `.github/actions/retired-repository-links` at the same immutable full SHA.
+    GitHub fetches the owner-local action independently of workspace state. Its first step requires
+    the fetched declaration to match the regular, non-symlinked declaration in the explicit
+    event-SHA checkout, so a stale component pin cannot claim new implementation coverage.
+    Update both owner-local component pins after changing that action; its first published revision
+    includes this closure check. This full-reference form is understood by the released actionlint
+    and zizmor; no checker suppression is needed. That local action
+    checks active `README.md` and `AGENTS.md` links with the pinned canonical validator, requires a completed
     scan, and proves seeded retired links and missing configuration fail using the exact source
     returned by that scan. The validator revision is declared once, so routine pin updates need
     no separate source-checkout edit. The fixed `tools/retired-repo-links-controls.sh` invocation
