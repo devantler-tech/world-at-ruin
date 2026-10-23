@@ -407,7 +407,7 @@ everything shipped afterwards is held to.
 Native source-frame evidence runs in isolated `world`, `activity` and BASE jobs.
 The stable required collector accepts only the complete source/run/attempt-bound
 PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
-Run the source-input, component-preservation, source-workflow and Go evidence
+Run the source-input, component-contract, source-workflow and Go evidence
 tests after changes; hosted capture and complete feedback timing remain separate
 proof. See [source evidence](docs/ci/source-evidence.md).
 

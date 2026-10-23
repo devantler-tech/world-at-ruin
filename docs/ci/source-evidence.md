@@ -39,8 +39,11 @@ The advisory comparison may annotate captions after collection.
 
 Run the source-input, component-preservation and source-workflow tests, then
 `go test -race tools/source-evidence/main.go tools/source-evidence/main_test.go`.
-The component test compares every relocated command and conditional capture
-against its reviewed source. The Go controls exercise complete collection,
+Input tests verify the exact checkout and loaded-action metadata; this runtime
+comparison continues to work after source-branch cleanup without another fetch.
+The component test verifies the full action pin and selector routing, then
+executes the actual capture guard against successful and failed renderer logs.
+The Go controls exercise complete collection,
 observed BASE failure and refusal of incomplete or mismatched artifacts.
 `tools/cloth-capture.test.sh` also exercises the shipping path detector against
 real commits changing each source-capture helper and the local action.

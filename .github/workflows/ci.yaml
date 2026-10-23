@@ -1924,7 +1924,7 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache: false
-      - uses: devantler-tech/world-at-ruin/.github/actions/capture-source@bd64310c7f23f57d3fffdf4490fb21ccf18455b3 # owned source
+      - uses: devantler-tech/world-at-ruin/.github/actions/capture-source@e2c1a7c66ca6f4368b33c39408c59aad986a9ea7 # owned source
         with:
           group: ${{ matrix.group }}
           first-run: ${{ needs.detect-visual-changes.outputs.first_run }}

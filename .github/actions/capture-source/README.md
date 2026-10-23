@@ -13,7 +13,8 @@ evidence for the required collector.
 | `gpu-gated` | Exact GPU-selector decision, `true` or `false`.                        |
 
 The caller checks out the event integration SHA with full history and no
-persisted credentials. The action verifies that checkout and refuses existing
+persisted credentials. The action verifies that checkout, compares GitHub's
+loaded action metadata with the candidate component, and refuses existing
 or linked output state. It installs checksum-verified Godot, imports the actual
 project and runs the complete selected capture commands with their original
 renderer, flags and guards. Each group needs a separate native runner and
