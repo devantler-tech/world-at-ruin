@@ -444,6 +444,13 @@ verified installer, routing or required-result wiring. Local synthetic controls
 do not replace hosted Metal capture or measured run time. See
 [cloth evidence](docs/ci/cloth-evidence.md).
 
+The native fixture's test and executable use the same read-only module graph,
+path trimming and version-control flags. Keep their compilation inputs aligned
+so a fresh job can reuse its own compiled dependencies. This is not a shared
+image cache or a cached test verdict. Run
+`bash tools/native-acceptance-workflow.test.sh` after changes; complete native
+CI on both architectures must still pass before claiming a runtime improvement.
+
 Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
 selection. Keep the exact base, snapshot and direct-pin joins, full successful
