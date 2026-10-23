@@ -21,7 +21,7 @@ env:
 jobs:
   client-ordinary:
     name: Ordinary client proof
-    timeout-minutes: 75
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     outputs:
       complete: ${{ steps.proof.outputs.complete }}
@@ -71,6 +71,8 @@ jobs:
         run: ./tools/exported-frame-change-report.test.sh
       - name: Opt-in preview flag list is pinned and fail-closed
         run: ./tools/preview-flags.test.sh
+      - name: Cloth evidence is complete and independently required
+        run: bash tools/cloth-capture.test.sh
       - name: Manifest sequence is monotonic in release order and fail-closed
         run: ./tools/manifest-sequence.test.sh
       - name: Update-manifest shape guard refuses drift and never passes vacuously
@@ -1018,54 +1020,10 @@ jobs:
         # this scene and merge a same-class strict upgrade. Power inflation is
         # permanent, so this guard must not be skippable.
         run: ./tools/run-client-test.sh ability_registry_test "a combat product law is broken"
-      - name: Regression tests
-        # Auto-discover every client/tests/*_test.tscn scene, so adding a test
-        # needs ZERO ci.yaml edits (issue #50 — the hardcoded list forced every
-        # parallel test-adding PR to collide on this one line). Each scene is
-        # judged by tools/run-client-test.sh, the same runner the product-law
-        # steps above call, so the pass criterion is defined in exactly one
-        # place (issue #305).
-        #   - save_fixture_guard_test, creature_factory_test,
-        #     save_vault_guard_test, boot_recovery_guard_test,
-        #     vault_restore_boot_test and ability_registry_test are deliberately
-        #     excluded: each runs in its own named step above (the product-law
-        #     surfaces, kept loud, separate and NON-SKIPPABLE), so discovering
-        #     them here would both run them twice and expose them to ci-skip.
-        #   - A test can be temporarily excluded by adding its basename (no
-        #     .tscn) on its own line in client/tests/ci-skip.txt (edited rarely;
-        #     the RUN line stops changing per-test). Blank/`#`-comment lines are
-        #     ignored. The file is optional — absent means nothing is skipped.
+      - name: Client scene workers prove complete integration-bound selection
         run: |
-          set -o pipefail
-          shopt -s nullglob
-          skip_file=client/tests/ci-skip.txt
-          is_skipped() {
-            [ -f "$skip_file" ] || return 1
-            grep -vE '^[[:space:]]*(#|$)' "$skip_file" | grep -qxF "$1"
-          }
-          ran=0
-          for scene in $(printf '%s\n' client/tests/*_test.tscn | sort); do
-            t=$(basename "$scene" .tscn)
-            # Run in their own dedicated steps above — never twice, and never
-            # skippable via ci-skip.txt (they are the product-law surfaces).
-            case "$t" in save_fixture_guard_test|creature_factory_test|save_vault_guard_test|boot_recovery_guard_test|vault_restore_boot_test|ability_registry_test) continue ;; esac
-            if is_skipped "$t"; then
-              echo "::notice::skipping ${t} (listed in ${skip_file})"
-              continue
-            fi
-            # `|| exit 1` rather than relying on the step shell's `-e`: the rest
-            # of this workflow propagates failure explicitly, and a discovered
-            # test that fails must never be counted into `ran`.
-            ./tools/run-client-test.sh "$t" || exit 1
-            ran=$((ran + 1))
-          done
-          # A glob that silently matches nothing would let this step pass
-          # vacuously (the same trap the smoke-boot BOOT_OK marker guards against).
-          if [ "$ran" -eq 0 ]; then
-            echo "::error::no regression test scenes discovered under client/tests/*_test.tscn"
-            exit 1
-          fi
-          echo "Ran ${ran} discovered regression test scene(s)."
+          bash tools/client-scene-shards.test.sh
+          bash tools/client-scene-workflow-guard.test.sh
       - name: Parallel save-isolation guard
         # Git worktrees still share Godot's project-wide user:// directory on
         # one host. A serial scene pass cannot prove two agent sessions will not
@@ -1075,6 +1033,81 @@ jobs:
         id: proof
         shell: bash
         run: bash tools/client-proof-completion.sh ordinary
+
+  client-scene-shards:
+    name: Client scenes (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0", "1", "2"]
+    env:
+      SCENE_SHARD: ${{ matrix.shard }}
+    defaults:
+      run:
+        shell: bash --noprofile --norc tools/client-proof-step.sh {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Initialize the scene worker's private save seam
+        run: printf 'XDG_DATA_HOME=%s/war-client-scenes-%s\n' "$RUNNER_TEMP" "$SCENE_SHARD" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-godot.sh
+      - name: Prepare the isolated class-name cache
+        run: |
+          set -o pipefail
+          bash tools/trusted-regression-phase.sh "editor import" godot --headless --editor --quit --path client 2>&1 | tee import.log
+          if grep -qE 'SCRIPT ERROR|^ERROR' import.log; then exit 1; fi
+      - name: Build the scene planner
+        run: GOTOOLCHAIN=local GOWORK=off go build -o "$RUNNER_TEMP/client-scene-plan" tools/client-scene-plan/main.go
+      - name: Run every assigned scene and verify cleanup
+        run: bash tools/run-client-scene-shard.sh "$SCENE_SHARD"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: client-scenes-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/client-scene-${{ matrix.shard }}/receipt.json
+          if-no-files-found: error
+
+  client-scene-proof:
+    name: Complete client scene union
+    needs: [client-scene-shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      complete: ${{ steps.proof.outputs.complete }}
+      tested-sha: ${{ steps.proof.outputs.tested-sha }}
+      run-id: ${{ steps.proof.outputs.run-id }}
+      run-attempt: ${{ steps.proof.outputs.run-attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: client-scenes-*-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scene-proofs
+          merge-multiple: false
+      - name: Build the independent reducer
+        run: GOTOOLCHAIN=local GOWORK=off go build -o "$RUNNER_TEMP/client-scene-plan" tools/client-scene-plan/main.go
+      - name: Verify the complete scene set
+        id: proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/client-scene-plan" verify "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_TEMP/scene-proofs"
+          printf 'complete=true\ntested-sha=%s\nrun-id=%s\nrun-attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   client-sandbox:
     name: Trusted sandbox client proof
@@ -1770,7 +1803,7 @@ jobs:
           # promising evidence the gate then declines to produce. The resolver
           # is in the same clause because the capture's flag set comes through
           # it, and a change to it changes what every capture enables.
-          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$|^tools/preview-flags\.(txt|sh)$' changed.txt; then
+          if grep -qE '^client/(scripts|shaders|assets|scenes|recipes|abilities|tools)/|^client/(project\.godot|export_presets\.cfg)$|^\.github/workflows/ci\.yaml$|^tools/preview-flags\.(txt|sh)$|^tools/(capture-cloth-evidence|install-ci-macos-godot)\.sh$' changed.txt; then
             echo "visual=true" >> "$GITHUB_OUTPUT"
           else
             echo "visual=false" >> "$GITHUB_OUTPUT"
@@ -1895,12 +1928,7 @@ jobs:
           # along in it (zizmor artipacked).
           persist-credentials: false
       - name: Install Godot (pinned, checksum-verified)
-        run: |
-          curl -fsSL -o godot.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
-          echo "${GODOT_MACOS_SHA512}  godot.zip" | shasum -a 512 -c -
-          unzip -q godot.zip
-          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
-          sudo chmod +x /usr/local/bin/godot
+        run: bash tools/install-ci-macos-godot.sh
       - name: Headless import + class-name scan
         # Only the headless editor pass writes global_script_class_cache.cfg;
         # without it a scene-arg run cannot resolve class_name types and HANGS.
@@ -1964,38 +1992,6 @@ jobs:
             grep -nE "SCRIPT ERROR|^ERROR" capture.filtered.log | head -20
             exit 1
           fi
-      - name: Capture ragged cloth in all material and geometry states
-        # Dedicated garment cameras: ordinary world frames hide the base
-        # under trousers and cannot evidence its fibre detail.
-        run: |
-          set -o pipefail
-          for mode in off on drape both; do
-            value=0; verdict=false; drape=0; drape_verdict=false
-            if [ "$mode" = on ] || [ "$mode" = both ]; then value=1; verdict=true; fi
-            if [ "$mode" = drape ] || [ "$mode" = both ]; then drape=1; drape_verdict=true; fi
-            dir="${RUNNER_TEMP}/shots/ragged-cloth/$mode"
-            mkdir -p "$dir"
-            WAR_RAGGED_CLOTH_DETAIL="$value" WAR_RAGGED_CLOTH_DRAPE="$drape" WAR_RAGGED_WRAP_REFINEMENT="$drape" WAR_SCENARIO=ragged_cloth \
-            WAR_SHOT_DIR="$dir" \
-            WAR_SAVE_PATH="${RUNNER_TEMP}/cloth_${mode}_absent.json" \
-            WAR_VAULT_PATH="${RUNNER_TEMP}/cloth_${mode}_vault.json" \
-            WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/cloth_${mode}_recovery.json" \
-              godot --path client res://tools/frame_capture.tscn 2>&1 | tee "cloth-$mode.log"
-            grep -Fxq "CAPTURE PASS — ragged cloth: front, rear, profile and gameplay; detail=$verdict drape=$drape_verdict" "cloth-$mode.log"
-            grep -Fxq "WRAP REFINEMENT — enabled=$drape_verdict" "cloth-$mode.log"
-            grep -q 'BOOT_OK' "cloth-$mode.log"
-            grep -vE 'timeout waiting for fence|drivers/metal/rendering_device_driver_metal' \
-              "cloth-$mode.log" > "cloth-$mode.filtered.log" || true
-            if grep -qE 'SCRIPT ERROR|^ERROR|SHADER ERROR|Shader compilation failed' "cloth-$mode.filtered.log"; then
-              echo "::error::ragged cloth $mode capture encountered rendering errors"; exit 1
-            fi
-            for view in cloth_front cloth_rear cloth_profile cloth_gameplay; do
-              for arm in '' _repeat _fold_off _seam_off _flat _mask _geometry_flat _geometry_mask _unrefined _unrefined_mask; do
-                test -s "$dir/$view$arm.png"
-                test -s "$dir/$view$arm.txt"
-              done
-            done
-          done
       - name: Capture the moving-key material response
         # #346. Ordinary evidence holds the SUN fixed and moves the camera,
         # which cannot prove a material follows a moving light. This scenario
@@ -2877,18 +2873,40 @@ jobs:
             ${{ runner.temp }}/shots/replication/*.txt
             ${{ runner.temp }}/shots/mob-chase/*.png
             ${{ runner.temp }}/shots/mob-chase/*.txt
-            ${{ runner.temp }}/shots/ragged-cloth/off/*.png
-            ${{ runner.temp }}/shots/ragged-cloth/off/*.txt
-            ${{ runner.temp }}/shots/ragged-cloth/on/*.png
-            ${{ runner.temp }}/shots/ragged-cloth/on/*.txt
-            ${{ runner.temp }}/shots/ragged-cloth/drape/*.png
-            ${{ runner.temp }}/shots/ragged-cloth/drape/*.txt
-            ${{ runner.temp }}/shots/ragged-cloth/both/*.png
-            ${{ runner.temp }}/shots/ragged-cloth/both/*.txt
-            cloth-off.log
-            cloth-on.log
-            cloth-drape.log
-            cloth-both.log
+          if-no-files-found: error
+
+  frame-capture-cloth:
+    name: Frame capture (cloth evidence, ${{ matrix.mode }})
+    # Native Metal, identical selection and complete evidence in a parallel
+    # runner. No cloth mode or camera is exchanged for a shorter verdict.
+    needs: [detect-visual-changes]
+    if: needs.detect-visual-changes.outputs.visual == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [off, on, drape, both]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Godot (pinned, checksum-verified)
+        run: bash tools/install-ci-macos-godot.sh
+      - name: Headless import + class-name scan
+        run: godot --headless --editor --quit --path client 2>&1 | tee import.log
+      - name: Capture the complete cloth mode
+        env:
+          CLOTH_MODE: ${{ matrix.mode }}
+        run: bash tools/capture-cloth-evidence.sh "$CLOTH_MODE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: cloth-frames-${{ matrix.mode }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.png
+            ${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.txt
+            cloth-${{ matrix.mode }}.log
           if-no-files-found: error
 
   frame-capture-exported:
@@ -3252,6 +3270,8 @@ jobs:
         retired-repo-links,
         client-ordinary,
         client-sandbox,
+        client-scene-shards,
+        client-scene-proof,
         client-export-macos,
         license-guard,
         lint,
@@ -3266,6 +3286,7 @@ jobs:
         owned-child-native,
         detect-visual-changes,
         frame-capture,
+        frame-capture-cloth,
         frame-capture-exported,
       ]
     if: ${{ always() }}
@@ -3287,21 +3308,33 @@ jobs:
           SANDBOX_COMPLETE: ${{ needs.client-sandbox.outputs.complete }}
           ORDINARY_SHA: ${{ needs.client-ordinary.outputs.tested-sha }}
           SANDBOX_SHA: ${{ needs.client-sandbox.outputs.tested-sha }}
+          SCENES_RESULT: ${{ needs.client-scene-proof.result }}
+          SCENES_COMPLETE: ${{ needs.client-scene-proof.outputs.complete }}
+          SCENES_SHA: ${{ needs.client-scene-proof.outputs.tested-sha }}
+          EXPECTED_RUN: ${{ github.run_id }}
+          EXPECTED_ATTEMPT: ${{ github.run_attempt }}
+          SCENES_RUN: ${{ needs.client-scene-proof.outputs.run-id }}
+          SCENES_ATTEMPT: ${{ needs.client-scene-proof.outputs.run-attempt }}
+          CLOTH_SELECTED: ${{ needs.detect-visual-changes.outputs.visual }}
+          CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
+          EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
       - uses: devantler-tech/.github/actions/aggregate-job-checks@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
         with:
-          # frame-capture, frame-capture-exported and detect-visual-changes are
+          # The capture jobs and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible
           # change (and on merge_group). aggregate-job-checks treats skipped as
           # acceptable, so this does not block unrelated PRs — see the note on
-          # ci-required-checks' needs. The two capture jobs are gated on
-          # DIFFERENT outputs of that one gate (visual vs export_affecting), so
+          # ci-required-checks' needs. Source and cloth share the visual gate;
+          # exported capture uses the separate export_affecting output, so
           # each can skip while the other runs; requiring the shared gate is
           # what keeps a broken gate from silently dropping either.
           job-results: >-
             ${{ needs.retired-repo-links.result }}
             ${{ needs.client-ordinary.result == 'success' && 'success' || 'failure' }}
             ${{ needs.client-sandbox.result == 'success' && 'success' || 'failure' }}
+            ${{ needs.client-scene-shards.result == 'success' && 'success' || 'failure' }}
+            ${{ needs.client-scene-proof.result == 'success' && 'success' || 'failure' }}
             ${{ needs.client-export-macos.result }}
             ${{ needs.license-guard.result }}
             ${{ needs.lint.result }}
@@ -3316,4 +3349,5 @@ jobs:
             ${{ needs.owned-child-native.result == 'success' && 'success' || 'failure' }}
             ${{ needs.detect-visual-changes.result }}
             ${{ needs.frame-capture.result }}
+            ${{ needs.frame-capture-cloth.result }}
             ${{ needs.frame-capture-exported.result }}
