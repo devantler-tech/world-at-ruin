@@ -110,9 +110,15 @@ cleanup() {
   trusted_stop_child || result=2
   if ! bash "$phase_runner" "sandbox cleanup" bash "$phase_runner" --cleanup-containers "$invocation_records"; then
     result=2
-  elif [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then
-    if ! rm "$records/$container" || ! rmdir "$invocation_records"; then result=2; fi
-    if [ "$private_records" = true ] && ! rmdir "$records"; then result=2; fi
+  else
+    # Absence was positively verified even when the process join was refused.
+    # Do not leave a stale container in the shared recovery ledger; retain the
+    # invocation-private state when its separate cleanup acknowledgment is lost.
+    if ! rm "$records/$container"; then result=2; fi
+    if [ "$trusted_cleanup_uncertain" -eq 0 ] && [ "$result" -ne 2 ]; then
+      if ! rmdir "$invocation_records"; then result=2; fi
+      if [ "$private_records" = true ] && ! rmdir "$records"; then result=2; fi
+    fi
   fi
   exit "$result"
 }

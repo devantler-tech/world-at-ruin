@@ -73,6 +73,13 @@ status=$?
 set -e
 test "$status" -eq 17
 grep -Eq '^::[0-9a-f-]+::$' "$tmp/log"
+export SANDBOX_EXIT=2
+status=0
+PATH="$tmp/bin:$PATH" bash "$root/tools/sandbox-godot.sh" --headless --path client >"$tmp/log" || status=$?
+test "$status" -eq 2
+# A refused process join retains private state, but a positively observed
+# absent container must leave no stale entry in the shared recovery ledger.
+test -z "$(ls -A "$GODOT_SANDBOX_CONTAINERS")"
 export SANDBOX_EXIT=0
 rm -rf client/.godot
 ln -s tests client/.godot
