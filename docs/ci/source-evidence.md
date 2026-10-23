@@ -7,8 +7,8 @@ renders moving-light response, replicated population, authoritative mob chase,
 breathing, walking, running, the gait transition and controller-driven gait.
 The BASE worker renders the PR base using its own committed character recipe.
 
-The owner-local `capture-source` action keeps the same capture commands,
-warmup, image/caption checks and feature flags for both HEAD groups. Each worker
+The owning workflow runs the capture commands directly in the HEAD matrix,
+with the same warmup, image/caption checks and feature flags. Each worker
 uses its own checkout and runner temporary directory. Rendering remains on
 macOS; the Linux join only verifies files, imports the comparison classes and
 runs the image-change report. It does not replace a native capture.
@@ -37,16 +37,15 @@ The advisory comparison may annotate captions after collection.
 
 ## Validation
 
-Run the source-input, component-preservation and source-workflow tests, then
+Run the source-input, capture-contract and source-workflow tests, then
 `go test -race tools/source-evidence/main.go tools/source-evidence/main_test.go`.
-Input tests verify the exact checkout and loaded-action metadata; this runtime
-comparison continues to work after source-branch cleanup without another fetch.
-The component test verifies the full action pin and selector routing, then
+Input tests verify the exact checkout, closed flag decisions and fresh output
+directory. The component test verifies actual workflow selector routing, then
 executes the actual capture guard against successful and failed renderer logs.
 The Go controls exercise complete collection,
 observed BASE failure and refusal of incomplete or mismatched artifacts.
 `tools/cloth-capture.test.sh` also exercises the shipping path detector against
-real commits changing each source-capture helper and the local action.
+real commits changing each source-capture helper.
 
 Hosted macOS captures, complete artifact inspection and whole-run timings remain
 required evidence. Synthetic files and job timeout settings alone establish

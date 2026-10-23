@@ -16,13 +16,20 @@ admit() {
       .needs==["detect-visual-changes"] and ."runs-on"=="macos-latest" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
       .strategy=={"fail-fast":false,matrix:{group:["world","activity"]}} and
-      all(.steps[]; (has("continue-on-error") or has("if"))|not) and
-      any(.steps[];(.uses? // "" | test("^devantler-tech/world-at-ruin/\\.github/actions/capture-source@[0-9a-f]{40}$")) and .with=={
-        group:"${{ matrix.group }}","first-run":"${{ needs.detect-visual-changes.outputs.first_run }}",
-        visual:"${{ needs.detect-visual-changes.outputs.visual }}","gpu-gated":"${{ needs.detect-visual-changes.outputs.gpu_gated }}"}) and
+      all(.steps[]; (has("continue-on-error")|not)) and
+      all(.steps[]|select(has("if")); (.name|startswith("Capture "))) and
+      any(.steps[];.run?=="bash tools/source-capture-inputs.sh" and .env=={
+        CAPTURE_GROUP:"${{ matrix.group }}",FIRST_RUN:"${{ needs.detect-visual-changes.outputs.first_run }}",
+        VISUAL:"${{ needs.detect-visual-changes.outputs.visual }}",GPU_GATED:"${{ needs.detect-visual-changes.outputs.gpu_gated }}"}) and
+      any(.steps[];.run?=="bash tools/install-ci-macos-godot.sh" and (has("if")|not)) and
       any(.steps[];.run?=="bash tools/source-evidence-package.sh head" and .env.CAPTURE_GROUP=="${{ matrix.group }}") and
-      .steps[-1].with=={name:"source-head-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.group }}",
-        path:"${{ runner.temp }}/shots/","if-no-files-found":"error"}) and
+      .steps[-1].with.name=="source-head-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.group }}" and
+      .steps[-1].with["if-no-files-found"]=="error" and
+      (.steps[-1].with.path|split("\n")|map(select(length>0))|sort)==([
+        "","light-response/","opt-in-previews/","walk/","breath/","run/","gait-transition/",
+        "gait-drive/","replication/","mob-chase/"
+        ]|map(. as $dir|["png","txt"][]|"${{ runner.temp }}/shots/"+$dir+"*."+.)|
+        .+["${{ runner.temp }}/shots/evidence.json","${{ runner.temp }}/shots/logs/*.log"]|sort)) and
     ($jobs["frame-capture-base"] | safe and checkout and
       .needs==["detect-visual-changes"] and ."runs-on"=="macos-latest" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and

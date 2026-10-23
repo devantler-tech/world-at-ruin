@@ -7,7 +7,7 @@
 # by sourcing the real output under `set -a` and reading the environment back,
 # because the shape the capture depends on is "these variables are set in the
 # child process" — not "this text looks right". And the WIRING is asserted against
-# ci.yaml and its owner-local action, since an unwired resolver passes every one of its
+# ci.yaml, since an unwired resolver passes every one of its
 # own tests while the capture silently photographs the default path.
 #
 # The refusals matter more than the acceptance here. A list this script cannot
@@ -276,7 +276,7 @@ else
   # the wiring detectable.
   #
   # The editor capture must OBTAIN its flags from this resolver...
-  yq -o=json '.runs.steps' "$ROOT/.github/actions/capture-source/action.yaml" |
+  yq -o=json '.jobs."frame-capture-head".steps' "$WORKFLOW" |
     jq -er '.[] | select(.name=="Capture the opted-in ground previews") | .run' \
       >"$SCRATCH_DIR/editor-capture-job"
   if ! grep -qE '^[[:space:]]*tools/preview-flags\.sh --env[[:space:]]*>' \

@@ -12,11 +12,8 @@ trap 'rm -rf "$work"' EXIT
 git -C "$work" init -q
 git -C "$work" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm fixture --allow-empty
 sha=$(git -C "$work" rev-parse HEAD)
-mkdir -p "$work/.github/actions/capture-source" "$work/loaded-action"
-cp "$root/.github/actions/capture-source/action.yaml" "$work/.github/actions/capture-source/action.yaml"
-cp "$root/.github/actions/capture-source/action.yaml" "$work/loaded-action/action.yaml"
 run() {
-  (cd "$work" && env CAPTURE_GROUP=world FIRST_RUN=false VISUAL=true GPU_GATED=false GITHUB_SHA="$sha" RUNNER_TEMP="$work" GITHUB_ACTION_PATH="$work/loaded-action" "$@" bash "$script")
+  (cd "$work" && env CAPTURE_GROUP=world FIRST_RUN=false VISUAL=true GPU_GATED=false GITHUB_SHA="$sha" RUNNER_TEMP="$work" "$@" bash "$script")
 }
 run
 [[ -d $work/shots && ! -L $work/shots ]] || {
@@ -26,17 +23,9 @@ run
 rmdir "$work/shots"
 run CAPTURE_GROUP=activity FIRST_RUN=true GPU_GATED=true
 rmdir "$work/shots"
-printf '# stale action metadata\n' >>"$work/loaded-action/action.yaml"
-if run >"$work/output" 2>&1; then
-  echo 'FAIL: accepted different loaded-action metadata' >&2
-  exit 1
-fi
-[[ ! -e $work/shots ]] || {
-  echo 'FAIL: mismatched action created evidence state' >&2
-  exit 1
-}
-cp "$root/.github/actions/capture-source/action.yaml" "$work/loaded-action/action.yaml"
-for bad in CAPTURE_GROUP=unknown CAPTURE_GROUP= FIRST_RUN=yes VISUAL=false VISUAL=yes GPU_GATED=yes GITHUB_SHA=unknown GITHUB_SHA=0000000000000000000000000000000000000000 GITHUB_ACTION_PATH=; do
+run GITHUB_ACTION_PATH=
+rmdir "$work/shots"
+for bad in CAPTURE_GROUP=unknown CAPTURE_GROUP= FIRST_RUN=yes VISUAL=false VISUAL=yes GPU_GATED=yes GITHUB_SHA=unknown GITHUB_SHA=0000000000000000000000000000000000000000; do
   if run "$bad" >"$work/output" 2>&1; then
     echo "FAIL: accepted $bad" >&2
     exit 1

@@ -188,7 +188,7 @@ jq -r '.jobs["detect-visual-changes"].steps[] | select(.id=="check") | .run' \
 for helper in tools/capture-cloth-evidence.sh tools/install-ci-macos-godot.sh \
   tools/source-capture-inputs.sh tools/source-evidence-package.sh tools/source-evidence-conditions.sh \
   tools/render-source-base.sh tools/report-source-frames.sh tools/source-evidence/main.go \
-  .github/actions/capture-source/action.yaml; do
+  tools/source-evidence-workflow.test.sh; do
   fixture="$scratch/detect-${helper//\//-}"
   mkdir -p "$fixture/tools"
   git -C "$fixture" init -q -b main
@@ -237,7 +237,7 @@ admit() {
     ($jobs["ci-required-checks"].needs|index("frame-capture-cloth"))!=null and
     ($jobs["ci-required-checks"].steps[-1].with["job-results"]|contains("${{ needs.frame-capture-cloth.result }}")) and
     any($jobs["client-ordinary"].steps[];.run?=="bash tools/cloth-capture.test.sh") and
-    any($jobs["frame-capture-head"].steps[];(.uses? // "" | test("^devantler-tech/world-at-ruin/\\.github/actions/capture-source@[0-9a-f]{40}$"))) and
+    any($jobs["frame-capture-head"].steps[];.run?=="bash tools/install-ci-macos-godot.sh") and
     (any($jobs["frame-capture"].steps[];(.run? // "")|contains("ragged_cloth"))|not)
   ' "$1" >/dev/null
 }
