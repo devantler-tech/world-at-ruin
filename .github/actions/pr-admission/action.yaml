@@ -1,0 +1,25 @@
+name: World product admission
+description: Run the reviewed-base complete contained regression suite against GitHub's candidate integration.
+author: devantler-tech
+inputs:
+  candidate-sha:
+    description: Immutable candidate integration commit supplied by GitHub.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Verify shared origin and reviewed product identities
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+      run: bash "$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh" check
+    - name: Install reviewed host Go toolchain
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: "1.27.3"
+        cache: false
+    - name: Execute complete reviewed regressions in containment
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+      run: bash "$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh" run

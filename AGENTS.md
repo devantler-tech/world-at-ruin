@@ -411,6 +411,14 @@ Run the source-input, component-contract, source-workflow and Go evidence
 tests after changes; hosted capture and complete feedback timing remain separate
 proof. See [source evidence](docs/ci/source-evidence.md).
 
+The product-owned PR admission action accepts only the canonical shared
+reviewed-base invocation and an exact GitHub integration identity. Candidate
+bytes remain anonymous data for the complete contained regression controller.
+Run `bash tools/shared-product-admission.test.sh` with the trusted workflow,
+lifecycle and deadline tests after changes. Source preparation does not activate
+enforcement or retire the existing required source; see
+[the action interface](.github/actions/pr-admission/README.md).
+
 Ordinary discovered client scenes run on three isolated workers with an
 integration/run/attempt-bound complete-union receipt. The six dedicated
 product-law guards stay separate and non-skippable; the historical sandbox
@@ -435,6 +443,13 @@ Run `bash tools/cloth-capture.test.sh` and
 verified installer, routing or required-result wiring. Local synthetic controls
 do not replace hosted Metal capture or measured run time. See
 [cloth evidence](docs/ci/cloth-evidence.md).
+
+The native fixture's test and executable use the same read-only module graph,
+path trimming and version-control flags. Keep their compilation inputs aligned
+so a fresh job can reuse its own compiled dependencies. This is not a shared
+image cache or a cached test verdict. Run
+`bash tools/native-acceptance-workflow.test.sh` after changes; complete native
+CI on both architectures must still pass before claiming a runtime improvement.
 
 Every trusted cold runtime enforces the generated complete installed-package
 identity lock and reviewed archive expectation, independently of diagnostic
