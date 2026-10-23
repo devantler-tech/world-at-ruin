@@ -85,6 +85,7 @@ jobs:
         run: |
           bash tools/select-lavapipe-capture.test.sh
           bash tools/lavapipe-workflow.test.sh
+          bash tools/lavapipe-partitions.test.sh
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
       - name: Ordinary entry cancellation retires nested engine groups
@@ -2913,8 +2914,8 @@ jobs:
             cloth-${{ matrix.mode }}.log
           if-no-files-found: error
 
-  frame-capture-exported:
-    name: Frame capture (exported client)
+  frame-capture-exported-head:
+    name: Frame capture (exported HEAD)
     # The ordinary frame-capture job photographs the EDITOR project, but what a
     # player installs is the separately exported .app — a change to export-only
     # behaviour (resource filters, feature tags, packed-resource resolution,
@@ -2923,7 +2924,7 @@ jobs:
     # one proves it still LOOKS RIGHT (#174).
     #
     # It REUSES the HEAD artifact client-export-macos already built. A second,
-    # base-tip export is made here only because comparing editor frames cannot
+    # base-tip export runs independently because comparing editor frames cannot
     # expose an export-only regression: the change report must photograph the
     # same shipped entry path on both sides (#296). That extra work remains
     # reporting-only, records its own wall-clock cost, and runs only when
@@ -2952,7 +2953,7 @@ jobs:
     needs: [detect-visual-changes, client-export-macos]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       # The hosted display cannot realise the shipped 1600x900 window and has
       # clamped identical exports to both 1024x642 and 1024x645. Pin a smaller
@@ -2963,8 +2964,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The head game still comes exclusively from the export artifact.
-          # Full history is for the advisory BASE export below: a depth-1
-          # checkout cannot materialise github.event.pull_request.base.sha.
+          ref: ${{ github.sha }}
+          # Keep the same exact integration source on both capture workers.
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -3201,7 +3202,35 @@ jobs:
             echo
             echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
           } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: exported-head-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/exported-shots/*.png
+            ${{ runner.temp }}/exported-shots/*.txt
+            ${{ runner.temp }}/exported-shots/opt-in-previews/*.png
+            ${{ runner.temp }}/exported-shots/opt-in-previews/*.txt
+          if-no-files-found: error
+
+  frame-capture-exported-base:
+    name: Frame capture (exported BASE)
+    # The base export does not depend on the HEAD build or captures. Preserve
+    # its own recipe, real macOS renderer and advisory installation/render result.
+    needs: [detect-visual-changes]
+    if: needs.detect-visual-changes.outputs.export_affecting == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      EXPORTED_CAPTURE_RESOLUTION: 1024x576
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Install Godot and templates for the exported base comparison
+        id: base-engine
+        timeout-minutes: 2
         # Advisory with the base render below. A transient download or old-base
         # export failure must not turn this required evidence job red; the
         # report step names the missing comparison explicitly instead.
@@ -3226,19 +3255,79 @@ jobs:
             echo "Pinned Godot and templates install: **${elapsed}s**."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Render the PR base through the exported client
+        id: base-capture
+        if: steps.base-engine.outcome == 'success'
+        # Leave time for the advisory failure record and artifact upload even
+        # when a healthy old base exceeds this comparison's feedback budget.
+        timeout-minutes: 9
         continue-on-error: true
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           tools/exported-frame-change-report.sh render-base \
             "$BASE_SHA" "${RUNNER_TEMP}/exported-frame-report"
-      - name: Report exported frames against the PR base
-        # Reporting only: no visual threshold and no required-job failure. The
-        # helper warns when the base export failed, when nothing compared, or
-        # when a head frame carries no matching base measurement.
-        continue-on-error: true
+      - name: Bind the advisory result to this source and attempt
+        timeout-minutes: 1
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ENGINE_OUTCOME: ${{ steps.base-engine.outcome }}
+          CAPTURE_OUTCOME: ${{ steps.base-capture.outcome }}
         run: |
-          tools/exported-frame-change-report.sh report \
+          tools/exported-frame-change-report.sh record-source \
+            "${RUNNER_TEMP}/exported-frame-report" "$ENGINE_OUTCOME" "$CAPTURE_OUTCOME"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        timeout-minutes: 1
+        with:
+          name: exported-base-${{ github.sha }}-${{ github.run_attempt }}
+          # Never upload the temporary Git checkout, source tree or app bundle.
+          path: |
+            ${{ runner.temp }}/exported-frame-report/source.json
+            ${{ runner.temp }}/exported-frame-report/*.log
+            ${{ runner.temp }}/exported-frame-report/exported-shots-base/*.png
+            ${{ runner.temp }}/exported-frame-report/exported-shots-base/*.txt
+          if-no-files-found: error
+
+  frame-capture-exported:
+    name: Frame capture (exported client)
+    needs: [detect-visual-changes, frame-capture-exported-head, frame-capture-exported-base]
+    if: always() && needs.detect-visual-changes.result == 'success' && needs.detect-visual-changes.outputs.export_affecting == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require both complete capture jobs
+        env:
+          HEAD_RESULT: ${{ needs.frame-capture-exported-head.result }}
+          BASE_RESULT: ${{ needs.frame-capture-exported-base.result }}
+        run: '[[ "$HEAD_RESULT" == success && "$BASE_RESULT" == success ]]'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: exported-head-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/exported-shots
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: exported-base-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/exported-frame-report
+      - name: Install the checksum-verified comparison engine
+        run: tools/install-ci-godot.sh
+      - name: Import the comparison project
+        run: |
+          godot --headless --editor --quit --path client >comparison-import.log 2>&1
+          if grep -qE 'SCRIPT ERROR|^ERROR' comparison-import.log; then
+            cat comparison-import.log
+            exit 1
+          fi
+      - name: Report exported frames against the source-bound PR base
+        # Visual differences and an explicitly failed base remain advisory.
+        # Missing/stale source metadata and failed required captures do not.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tools/exported-frame-change-report.sh report-source \
             "${RUNNER_TEMP}/exported-frame-report" \
             "${RUNNER_TEMP}/exported-shots"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
