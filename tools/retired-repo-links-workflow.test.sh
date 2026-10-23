@@ -6,7 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 workflow="$root/.github/workflows/retired-repo-links.yaml"
-action="$root/.github/actions/retired-repo-links/action.yaml"
+action="$root/.github/actions/retired-repository-links/action.yaml"
 if [[ ! -f "$workflow" ]]; then
   echo 'TEST FAIL -- no retired-link guard workflow can run on main pushes' >&2
   exit 1
@@ -22,6 +22,45 @@ jq -s 'if length == 3 and all(type == "object") then {ci:.[0],guard:.[1],action:
   else error("require complete single-document workflow/action observations") end' \
   "$scratch/ci.json" "$scratch/guard.json" "$scratch/action.json" >"$scratch/bundle.json"
 
+# A full-SHA same-repository call must execute the checked-in action bytes,
+# rather than silently testing a stale pinned implementation.
+if ! yq -e '(.runs.steps[0].run // "") | contains("cmp")' "$action" >/dev/null; then
+  echo 'TEST FAIL -- pinned local action must bind fetched and checked-out declarations' >&2
+  exit 1
+fi
+yq -r '.runs.steps[0].run' "$action" >"$scratch/source-binding.sh"
+mkdir -p "$scratch/source" "$scratch/checked-out/.github/actions/retired-repository-links"
+cp "$action" "$scratch/source/action.yaml"
+cp "$action" "$scratch/checked-out/.github/actions/retired-repository-links/action.yaml"
+binding_status=0
+(
+  cd "$scratch/checked-out"
+  ACTION_DIRECTORY="$scratch/source" bash "$scratch/source-binding.sh"
+) || binding_status=$?
+[[ $binding_status == 0 ]] || { echo 'TEST FAIL -- matching pinned action refused'; exit 1; }
+printf '\nchanged: declaration\n' >>"$scratch/checked-out/.github/actions/retired-repository-links/action.yaml"
+binding_status=0
+(
+  cd "$scratch/checked-out"
+  ACTION_DIRECTORY="$scratch/source" bash "$scratch/source-binding.sh"
+) >"$scratch/mismatch.log" 2>&1 || binding_status=$?
+[[ $binding_status != 0 ]] || { echo 'TEST FAIL -- stale pinned action accepted'; exit 1; }
+rm "$scratch/checked-out/.github/actions/retired-repository-links/action.yaml"
+ln -s "$scratch/source/action.yaml" "$scratch/checked-out/.github/actions/retired-repository-links/action.yaml"
+binding_status=0
+(
+  cd "$scratch/checked-out"
+  ACTION_DIRECTORY="$scratch/source" bash "$scratch/source-binding.sh"
+) >"$scratch/symlink.log" 2>&1 || binding_status=$?
+[[ $binding_status != 0 ]] || { echo 'TEST FAIL -- symlinked action declaration accepted'; exit 1; }
+rm "$scratch/checked-out/.github/actions/retired-repository-links/action.yaml"
+binding_status=0
+(
+  cd "$scratch/checked-out"
+  ACTION_DIRECTORY="$scratch/source" bash "$scratch/source-binding.sh"
+) >"$scratch/missing.log" 2>&1 || binding_status=$?
+[[ $binding_status != 0 ]] || { echo 'TEST FAIL -- missing action declaration accepted'; exit 1; }
+
 # admit reads parsed workflow data; it never evaluates a GitHub expression or
 # executes fixture-controlled shell. Closed key sets prevent optional filters,
 # conditions, inherited secrets and success-on-error settings from hiding work.
@@ -31,8 +70,8 @@ jq -s 'if length == 3 and all(type == "object") then {ci:.[0],guard:.[1],action:
 # the source output returned by the scan, with no second revision declaration.
 admit() {
   jq -e '
-    def pinned($action): capture("^" + $action + "@(?<sha>[0-9a-f]{40})$").sha;
-    def wrapper($checkout):
+    def pinned($action): select(type == "string") | capture("^" + $action + "@(?<sha>[0-9a-f]{40})$").sha;
+    def wrapper($checkout; $component):
       keys == ["name","permissions","runs-on","steps","timeout-minutes"]
       and .permissions == {contents:"read"}
       and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 10
@@ -40,16 +79,19 @@ admit() {
       and (.steps[0] | keys == ["uses","with"] and .uses == $checkout
         and .with == {ref:"${{ github.sha }}","persist-credentials":false})
       and (.steps[1] | keys == ["name","uses"]
-        and .uses == "./.github/actions/retired-repo-links");
+        and .uses == $component);
     (.guard.jobs["retired-repo-links"].steps[0].uses | pinned("actions/checkout")) as $checkout_sha
     | ("actions/checkout@" + $checkout_sha) as $checkout
-    | (.action.runs.steps[0].uses
+    | (.guard.jobs["retired-repo-links"].steps[1].uses
+      | pinned("devantler-tech/world-at-ruin/\\.github/actions/retired-repository-links")) as $component_sha
+    | ("devantler-tech/world-at-ruin/.github/actions/retired-repository-links@" + $component_sha) as $component
+    | (.action.runs.steps[1].uses
       | pinned("devantler-tech/\\.github/actions/validate-retired-repo-links")) as $source
     | ("devantler-tech/.github/actions/validate-retired-repo-links@" + $source) as $validator
     |
     .ci.on == {pull_request:null,merge_group:null}
     and .ci.permissions == {contents:"read"}
-    and (.ci.jobs["retired-repo-links"] | wrapper($checkout))
+    and (.ci.jobs["retired-repo-links"] | wrapper($checkout; $component))
     and (.ci.jobs["ci-required-checks"] |
       (.needs | index("retired-repo-links")) != null
       and .if == "${{ always() }}"
@@ -63,22 +105,25 @@ admit() {
       and .on == {push:{branches:["main"]}}
       and .permissions == {contents:"read"}
       and (.jobs | keys) == ["retired-repo-links"])
-    and (.guard.jobs["retired-repo-links"] | wrapper($checkout))
+    and (.guard.jobs["retired-repo-links"] | wrapper($checkout; $component))
     and (.action | keys == ["author","description","name","runs"]
       and .author == "devantler-tech"
       and (.runs | keys == ["steps","using"] and .using == "composite"
-        and (.steps | length) == 4))
+        and (.steps | length) == 5))
     and (.action.runs.steps |
-      (.[0] | keys == ["id","name","uses","with"]
+      (.[0] | keys == ["env","name","run","shell"] and .shell == "bash"
+        and .env == {ACTION_DIRECTORY:"${{ github.action_path }}"}
+        and .run == "set -euo pipefail\ntest -f .github/actions/retired-repository-links/action.yaml\ntest ! -L .github/actions/retired-repository-links/action.yaml\ncmp \"$ACTION_DIRECTORY/action.yaml\" .github/actions/retired-repository-links/action.yaml")
+      and (.[1] | keys == ["id","name","uses","with"]
         and .id == "links" and .uses == $validator and .with == {enabled:"true"})
-      and (.[1] | keys == ["env","name","run","shell"] and .shell == "bash"
+      and (.[2] | keys == ["env","name","run","shell"] and .shell == "bash"
         and .env == {VALIDATED:"${{ steps.links.outputs.validated }}"}
         and .run == "test \"$VALIDATED\" = true")
-      and (.[2] | keys == ["env","name","run","shell"] and .shell == "bash"
+      and (.[3] | keys == ["env","name","run","shell"] and .shell == "bash"
         and .env == {GOWORK:"off",GOFLAGS:"",GOTOOLCHAIN:"local",
           VALIDATOR_SOURCE:"${{ steps.links.outputs.source-directory }}"}
         and .run == "bash tools/retired-repo-links-controls.sh")
-      and (.[3] | keys == ["name","run","shell"] and .shell == "bash"
+      and (.[4] | keys == ["name","run","shell"] and .shell == "bash"
         and .run == "bash tools/retired-repo-links-workflow.test.sh"))
   ' "$1" >/dev/null
 }
@@ -104,7 +149,7 @@ done
 
 # A dependency updater changes only the declared action revision. This must
 # remain admissible without a source-checkout or guard-test pin update.
-jq '.action.runs.steps[0].uses="devantler-tech/.github/actions/validate-retired-repo-links@" + ("a" * 40)' \
+jq '.action.runs.steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@" + ("a" * 40)' \
   "$scratch/bundle.json" >"$scratch/updated-pin.json"
 if ! admit "$scratch/updated-pin.json"; then
   echo 'TEST FAIL -- an isolated immutable validator pin update requires another edit' >&2
@@ -130,23 +175,30 @@ for mutation in \
   '.ci.jobs["retired-repo-links"].steps[0].with["persist-credentials"]=true' \
   '.ci.jobs["retired-repo-links"].steps[0].with.ref="main"' \
   '.guard.jobs["retired-repo-links"].steps[0].with.ref="main"' \
-  '.ci.jobs["retired-repo-links"].steps |= [.[0],{run:"echo changed > .github/actions/retired-repo-links/action.yaml"},.[1]]' \
-  '.guard.jobs["retired-repo-links"].steps |= [.[0],{run:"echo changed > .github/actions/retired-repo-links/action.yaml"},.[1]]' \
+  '.ci.jobs["retired-repo-links"].steps |= [.[0],{run:"echo changed > .github/actions/retired-repository-links/action.yaml"},.[1]]' \
+  '.guard.jobs["retired-repo-links"].steps |= [.[0],{run:"echo changed > .github/actions/retired-repository-links/action.yaml"},.[1]]' \
   '.ci.jobs["retired-repo-links"].steps[1]["continue-on-error"]=true' \
   '.guard.jobs["retired-repo-links"].steps[1].uses="$/actions/other"' \
-  '.guard.jobs["retired-repo-links"].steps[1].uses="$/.github/actions/retired-repo-links"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses="$/.github/actions/retired-repository-links"' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses |= sub("@.*$"; "@main")' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses |= sub("devantler-tech/world-at-ruin"; "example/fork")' \
+  '.guard.jobs["retired-repo-links"].steps[1].uses |= sub("@.*$"; "@" + ("a" * 40))' \
   '.guard.jobs["retired-repo-links"].steps[1].if="false"' \
-  '.action.runs.steps[0].with.enabled="false"' \
+  '.action.runs.steps[0].env.ACTION_DIRECTORY="/tmp/substituted-action"' \
+  '.action.runs.steps[0].run="true"' \
+  '.action.runs.steps[0]["continue-on-error"]=true' \
   '.action.runs.steps[0].if="false"' \
-  '.action.runs.steps[2].env.VALIDATOR_SOURCE="/tmp/substituted-validator"' \
-  '.action.runs.steps[2].env.VALIDATOR_SOURCE |= sub("steps.links"; "steps.other")' \
-  '.action.runs.steps[2].run = "VALIDATOR_SOURCE=/tmp/substituted-validator\n" + .action.runs.steps[2].run' \
-  '.action.runs.steps[2].env.GOFLAGS="-C /tmp/substituted-validator"' \
-  '.action.runs.steps[2].env.GOTOOLCHAIN="auto"' \
-  '.action.runs.steps[1].run="true"' \
-  '.action.runs.steps[2]["continue-on-error"]=true' \
-  '.action.runs.steps[3].run="true"' \
-  '.action.runs.steps[2].shell="sh"' \
+  '.action.runs.steps[1].with.enabled="false"' \
+  '.action.runs.steps[1].if="false"' \
+  '.action.runs.steps[3].env.VALIDATOR_SOURCE="/tmp/substituted-validator"' \
+  '.action.runs.steps[3].env.VALIDATOR_SOURCE |= sub("steps.links"; "steps.other")' \
+  '.action.runs.steps[3].run = "VALIDATOR_SOURCE=/tmp/substituted-validator\n" + .action.runs.steps[3].run' \
+  '.action.runs.steps[3].env.GOFLAGS="-C /tmp/substituted-validator"' \
+  '.action.runs.steps[3].env.GOTOOLCHAIN="auto"' \
+  '.action.runs.steps[2].run="true"' \
+  '.action.runs.steps[3]["continue-on-error"]=true' \
+  '.action.runs.steps[4].run="true"' \
+  '.action.runs.steps[3].shell="sh"' \
   '.ci.jobs["ci-required-checks"].needs |= map(select(. != "retired-repo-links"))' \
   '.ci.jobs["ci-required-checks"].steps[-1].with["job-results"]="success"' \
   '.ci.jobs["ci-required-checks"].steps += [.ci.jobs["ci-required-checks"].steps[-1]]' \
@@ -154,8 +206,8 @@ for mutation in \
   '.ci.jobs["ci-required-checks"].steps[-1]["continue-on-error"]=true' \
   '.ci.jobs["ci-required-checks"].steps[-1].uses="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"' \
   '.guard.jobs["retired-repo-links"].steps[0].uses="actions/checkout@v7"' \
-  '.action.runs.steps[0].uses="devantler-tech/.github/actions/validate-retired-repo-links@v7.2.10"' \
-  '.action.runs.steps[0].uses="devantler-tech/.github/actions/validate-retired-repo-links@main"' \
+  '.action.runs.steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@v7.2.10"' \
+  '.action.runs.steps[1].uses="devantler-tech/.github/actions/validate-retired-repo-links@main"' \
   '.ci.jobs["ci-required-checks"].steps[-1].uses="devantler-tech/.github/actions/aggregate-job-checks@v7"' \
   '.ci.jobs["ci-required-checks"].steps[-1].uses="example/.github/actions/aggregate-job-checks@bd0035dd8f41fcf1459b878882b8897443f8dc59"'; do
   jq "$mutation" "$scratch/bundle.json" >"$scratch/mutant.json"

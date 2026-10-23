@@ -22,6 +22,5 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Validate retired repository links
-        # Keep the same exact-SHA, no-intervening-step boundary as PR CI while
-        # MegaLinter's released actionlint lacks support for $/ references.
-        uses: ./.github/actions/retired-repo-links
+        # Use the same immutable owner-local action as PR CI; no workspace call.
+        uses: devantler-tech/world-at-ruin/.github/actions/retired-repository-links@ec86d98f9d49fdb1c1ae05a4d00fd8213d40e270 # owned source

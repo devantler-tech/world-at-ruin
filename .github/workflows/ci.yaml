@@ -3266,9 +3266,9 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Validate retired repository links
-        # MegaLinter's released actionlint cannot parse $/ yet. The preceding
-        # credential-free checkout is exactly github.sha; no mutable step intervenes.
-        uses: ./.github/actions/retired-repo-links
+        # Owner-local step composition, fetched independently of workspace state.
+        # The action itself requires its declaration to match the exact checkout.
+        uses: devantler-tech/world-at-ruin/.github/actions/retired-repository-links@ec86d98f9d49fdb1c1ae05a4d00fd8213d40e270 # owned source
 
   ci-required-checks:
     name: CI - Required Checks
