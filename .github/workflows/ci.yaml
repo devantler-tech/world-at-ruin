@@ -1443,7 +1443,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prove native profile acceptance refuses partial observations
+        run: |
+          bash tools/nakama-native-harness.test.sh
+          bash tools/native-acceptance-workflow.test.sh
+          bash tools/issued-native-stability.test.sh
+          bash tools/issued-native-stability-workflow.test.sh
       - name: Build the explicitly experimental native bundle and acceptance image
+        id: native-image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -1453,19 +1460,16 @@ jobs:
             RUNTIME_PROFILE=${{ matrix.profile }}
           load: true
           tags: world-at-ruin-nakama-native:ci
-      - name: Prove native profile acceptance refuses partial observations
-        run: |
-          bash tools/nakama-native-harness.test.sh
-          bash tools/issued-native-stability.test.sh
-          bash tools/issued-native-stability-workflow.test.sh
       - name: Exercise the actual packaged runtime against disposable PostgreSQL
         env:
           NATIVE_PROFILE: ${{ matrix.profile }}
+          IMAGE_ID: ${{ steps.native-image.outputs.imageid }}
+          WAR_NATIVE_WORKERS: ${{ matrix.profile == 'issued-spire' && '1' || '4' }}
         run: |
           args=()
           if [[ $NATIVE_PROFILE == issued ]]; then args+=(--issued); fi
           if [[ $NATIVE_PROFILE == issued-spire ]]; then args+=(--spire); fi
-          bash tools/smoke-nakama-native.sh world-at-ruin-nakama-native:ci --experimental "${args[@]}"
+          bash tools/smoke-nakama-native.sh "$IMAGE_ID" --experimental "${args[@]}"
 
   spire-native:
     name: SPIRE native (${{ matrix.arch }})

@@ -1301,6 +1301,14 @@ the permanent blocking policy.
   keeps journal writers and serving-reader/retained-artifact activation separate.
   [ADR 0035](docs/adr/0035-observe-journals-through-the-packaged-nakama-candidate.md)
   adds native candidate readback while preserving those activation gates.
+- **Complete native acceptance:** native and issued CI profiles opt into four isolated
+  same-image workers on both architectures. The real compiled inventory, exact disjoint
+  verdict union and owned container/database/network retirement must all complete before
+  success. Keep the one-worker default and the independent serial issued-SPIRE profile;
+  never cache a test verdict or shorten scenario deadlines to meet a feedback target.
+  Run `bash tools/nakama-native-harness.test.sh` and
+  `bash tools/native-acceptance-workflow.test.sh`; these hermetic controls do not replace
+  real hosted native timing and correctness evidence. See [ADR 0061](docs/adr/0061-partition-complete-native-acceptance.md).
 - **Durable admission experiment:** `server/internal/allocatoradmission/` uses one
   private generation-wide conditional document for registration and irreversible drain.
   Snapshots are diagnostic and cannot release quarantine or restore capabilities.

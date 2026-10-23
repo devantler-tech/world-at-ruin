@@ -92,4 +92,5 @@ if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental --arbitrary 
   exit 1
 fi
 [[ ! -s $HARNESS_RECORD ]]
+bash "$root/tools/nakama-native-shard-harness.test.sh"
 echo 'TEST PASS: three native profiles refuse partial or failed acceptance; issued cleanup observations required'
