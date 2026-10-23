@@ -4,6 +4,15 @@ author: devantler-tech
 runs:
   using: composite
   steps:
+    - name: Require the pinned action declaration to match the checkout
+      shell: bash
+      env:
+        ACTION_DIRECTORY: ${{ github.action_path }}
+      run: |-
+        set -euo pipefail
+        test -f .github/actions/retired-repository-links/action.yaml
+        test ! -L .github/actions/retired-repository-links/action.yaml
+        cmp "$ACTION_DIRECTORY/action.yaml" .github/actions/retired-repository-links/action.yaml
     - name: Check active documentation
       id: links
       uses: devantler-tech/.github/actions/validate-retired-repo-links@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
