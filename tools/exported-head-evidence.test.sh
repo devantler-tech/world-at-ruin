@@ -17,11 +17,14 @@ jq -e '
   .jobs["client-export-macos"] as $producer |
   .jobs["frame-capture-exported-head"] as $head |
   ($producer.steps[]|select(.id=="capture-exported")) as $capture |
+  ($producer.steps[]|select(.id=="export-selection")) as $selection |
   $producer.needs==["detect-visual-changes"] and ($producer|has("if")|not) and
   $producer["runs-on"]=="macos-15" and
   $producer.steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false} and
   $producer.env.EXPORTED_CAPTURE_RESOLUTION=="1024x576" and
   $producer.outputs.captured=="${{ steps.capture-exported.outputs.captured }}" and
+  $selection.env=={EXPORT_SELECTED:"${{ needs.detect-visual-changes.outputs.export_affecting }}"} and
+  ($selection|(has("if") or has("continue-on-error"))|not) and
   $capture.if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
   $capture["timeout-minutes"]==15 and ($capture|has("continue-on-error")|not) and
   ($capture.uses|test("^devantler-tech/world-at-ruin/\\.github/actions/capture-exported-head@[0-9a-f]{40}$")) and
