@@ -40,29 +40,28 @@ admit_plan() {
     "always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" as $export_selected |
     ($export_selected+" && steps.export-base-checkout.outcome == '\''success'\''") as $export_ready |
     $source.strategy=={"fail-fast":false,matrix:{group:["world","activity"]}} and
-    ($source.steps|length)==8 and $source["timeout-minutes"]==32 and
-    $source.steps[0]["timeout-minutes"]==2 and
-    ($source.steps[1] | required_phase(".github/actions/capture-source-head") and
-      (has("if")|not) and .with=={group:"${{ matrix.group }}",
-        "first-run":"${{ needs.detect-visual-changes.outputs.first_run }}",
-        "gpu-gated":"${{ needs.detect-visual-changes.outputs.gpu_gated }}",
-        visual:"${{ needs.detect-visual-changes.outputs.visual }}"}) and
-    ([$source.steps[2:][]|.["timeout-minutes"]]==[1,1,2,8,1,1]) and
-    $source.steps[2].id=="source-base-checkout" and $source.steps[2].if==$selected and
-    $source.steps[3].id=="source-base-toolchain" and $source.steps[3].if==$checked and
-    $source.steps[4].id=="install" and $source.steps[4].if==$ready and
-    $source.steps[5].id=="base" and $source.steps[5].if==($ready+" && steps.install.outcome == '\''success'\''") and
-    $source.steps[6].id=="source-base-seal" and $source.steps[6].if==$ready and
-    $source.steps[7].id=="source-base-upload" and
-      $source.steps[7].if==($ready+" && steps.source-base-seal.outcome == '\''success'\''") and
-    all($source.steps[2:][]|select(.id!="install" and .id!="base"); (has("continue-on-error")|not)) and
+    ($source.steps|length)==25 and $source["timeout-minutes"]==15 and
+    $source.steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false} and
+    $source.steps[2].run=="bash tools/source-capture-inputs.sh" and
+    $source.steps[2].env=={CAPTURE_GROUP:"${{ matrix.group }}",
+      FIRST_RUN:"${{ needs.detect-visual-changes.outputs.first_run }}",
+      GPU_GATED:"${{ needs.detect-visual-changes.outputs.gpu_gated }}",
+      VISUAL:"${{ needs.detect-visual-changes.outputs.visual }}"} and
+    ([$source.steps[19:][]|.["timeout-minutes"]]==[1,1,2,8,1,1]) and
+    $source.steps[19].id=="source-base-checkout" and $source.steps[19].if==$selected and
+    $source.steps[20].id=="source-base-toolchain" and $source.steps[20].if==$checked and
+    $source.steps[21].id=="install" and $source.steps[21].if==$ready and
+    $source.steps[22].id=="base" and $source.steps[22].if==($ready+" && steps.install.outcome == '\''success'\''") and
+    $source.steps[23].id=="source-base-seal" and $source.steps[23].if==$ready and
+    $source.steps[24].id=="source-base-upload" and
+      $source.steps[24].if==($ready+" && steps.source-base-seal.outcome == '\''success'\''") and
+    all($source.steps[19:][]|select(.id!="install" and .id!="base"); (has("continue-on-error")|not)) and
     $cloth.strategy=={"fail-fast":false,matrix:{include:[
       {pair:"off/on",first:"off",second:"on"},{pair:"drape/both",first:"drape",second:"both"}]}} and
-    ($cloth.steps|length)==3 and $cloth["timeout-minutes"]==32 and
-    $cloth.steps[0]["timeout-minutes"]==2 and
-    ($cloth.steps[1] | required_phase(".github/actions/capture-cloth-mode") and
+    ($cloth.steps|length)==2 and $cloth["timeout-minutes"]==32 and
+    ($cloth.steps[0] | required_phase(".github/actions/capture-cloth-mode") and
       (has("if")|not) and .with=={mode:"${{ matrix.first }}"}) and
-    ($cloth.steps[2] | required_phase(".github/actions/capture-cloth-mode") and
+    ($cloth.steps[1] | required_phase(".github/actions/capture-cloth-mode") and
       .if=="always() && !cancelled()" and .with=={mode:"${{ matrix.second }}"}) and
     ($export.steps|length)==16 and
     ([$export.steps[10:][]|.["timeout-minutes"]]==[1,2,9,1,1,1]) and
@@ -124,12 +123,12 @@ if admit_component "$fixture" "$adopted" missing/action.yaml "$fixture/action/ac
   exit 1
 fi
 for mutation in \
-  '.jobs["frame-capture-head"].steps[1].with.visual="false"' \
-  '.jobs["frame-capture-head"].steps[5].if="false"' \
-  '.jobs["frame-capture-head"].steps[2]["continue-on-error"]=true' \
+  '.jobs["frame-capture-head"].steps[2].env.VISUAL="false"' \
+  '.jobs["frame-capture-head"].steps[22].if="false"' \
+  '.jobs["frame-capture-head"].steps[19]["continue-on-error"]=true' \
   '.jobs["frame-capture-cloth"].strategy.matrix.include[1].second="drape"' \
-  '.jobs["frame-capture-cloth"].steps[2].if="success()"' \
-  '.jobs["frame-capture-cloth"].steps[1]["timeout-minutes"]=1' \
+  '.jobs["frame-capture-cloth"].steps[1].if="success()"' \
+  '.jobs["frame-capture-cloth"].steps[0]["timeout-minutes"]=1' \
   '(.jobs["client-export-macos"].steps[]|select(.id=="base-capture")).if="false"' \
   '.jobs["client-export-macos"].outputs["base-recorded"]="true"'; do
   jq "$mutation" "$work/workflow.json" >"$work/mutated.json"
@@ -167,15 +166,13 @@ jq '.jobs["frame-capture-head"].strategy.matrix.group += ["extra"]' \
   echo 'FAIL: extra matrix worker escaped capacity accounting' >&2
   exit 1
 }
-for component in source-head cloth-mode; do
-  action=".github/actions/capture-$component/action.yaml"
-  pin=$(jq -er --arg prefix "devantler-tech/world-at-ruin/${action%/action.yaml}@" '
-    [.jobs[].steps[]? | .uses? // "" | select(startswith($prefix)) | split("@")[1]] |
-    unique | if length==1 then .[0] else error("ambiguous component pin") end
-  ' "$work/workflow.json")
-  admit_component "$root" "$pin" "$action" "$root/$action" refs/remotes/origin/main || {
-    echo "FAIL: $component execution is not the exact tested adopted component" >&2
-    exit 1
-  }
-done
+action=".github/actions/capture-cloth-mode/action.yaml"
+pin=$(jq -er --arg prefix "devantler-tech/world-at-ruin/${action%/action.yaml}@" '
+  [.jobs[].steps[]? | .uses? // "" | select(startswith($prefix)) | split("@")[1]] |
+  unique | if length==1 then .[0] else error("ambiguous component pin") end
+' "$work/workflow.json")
+admit_component "$root" "$pin" "$action" "$root/$action" refs/remotes/origin/main || {
+  echo 'FAIL: cloth execution is not the exact tested adopted component' >&2
+  exit 1
+}
 echo 'PASS: complete native evidence uses five expanded Mac workers'

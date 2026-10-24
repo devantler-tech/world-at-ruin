@@ -1,38 +1,35 @@
 #!/usr/bin/env bash
-# Exercise both the active pinned source recipe and the local source component.
+# Exercise active inline source capture and its reviewed historical recipe.
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-for surface in workflow component; do
+for surface in workflow reference; do
   work="$scratch/$surface"
   mkdir "$work"
   if [[ $surface == workflow ]]; then
-    # Exercise the recipe the actual workflow executes, not only its local copy.
-    # The caller is now pinned to an adopted action rather than inline steps.
-    yq -o=json '.jobs."frame-capture-head".steps[1]' "$root/.github/workflows/ci.yaml" >"$work/call.json"
-    # shellcheck disable=SC2016 # GitHub expressions are routing data.
-    jq -e '
-      (.uses|test("^devantler-tech/world-at-ruin/[.]github/actions/capture-source-head@[0-9a-f]{40}$")) and
-      .["timeout-minutes"]==15 and (has("if") or has("continue-on-error")|not) and
-      .with=={group:"${{ matrix.group }}",
-        "first-run":"${{ needs.detect-visual-changes.outputs.first_run }}",
-        "gpu-gated":"${{ needs.detect-visual-changes.outputs.gpu_gated }}",
-        visual:"${{ needs.detect-visual-changes.outputs.visual }}"}
-    ' "$work/call.json" >/dev/null || {
-      echo 'FAIL: active source call bypasses its pinned recipe or input routing' >&2
-      exit 1
-    }
-    pin=$(jq -er '.uses|split("@")[1]' "$work/call.json")
-    git -C "$root" show "$pin:.github/actions/capture-source-head/action.yaml" |
-      yq -o=json '.runs' >"$work/action.json"
+    # Normalize only expression names so exactly the same controls execute on
+    # both surfaces. The frozen scene suite still reads the real inline YAML.
+    yq -o=json '.jobs."frame-capture-head".steps' "$root/.github/workflows/ci.yaml" |
+      jq '{steps: .[:19]} | walk(if type=="string" then
+        gsub("matrix[.]group";"inputs.group") |
+        gsub("needs[.]detect-visual-changes[.]outputs[.]first_run";"inputs.first-run") |
+        gsub("needs[.]detect-visual-changes[.]outputs[.]gpu_gated";"inputs.gpu-gated") |
+        gsub("needs[.]detect-visual-changes[.]outputs[.]visual";"inputs.visual")
+        else . end)' >"$work/action.json"
   else
-    yq -o=json '.runs' "$root/.github/actions/capture-source-head/action.yaml" >"$work/action.json"
+    # Data-only regression oracle, reachable from protected main. This recipe
+    # is not a runtime dependency; removing its unused action loses no control.
+    git --no-replace-objects -C "$root" show \
+      '7d411bb93302afde81006c39aaca32a1b541b76f:.github/actions/capture-source-head/action.yaml' |
+      yq -o=json '.runs' >"$work/action.json"
   fi
   contract() {
     # Protect group ownership and forwarding, not each capture implementation.
     # shellcheck disable=SC2016 # Literal GitHub expressions are parsed as data.
     jq -e '
+    (.steps|length)==19 and
+    .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false} and
     all(.steps[]; (has("continue-on-error")|not)) and
     any(.steps[];.run?=="bash tools/source-capture-inputs.sh" and .env=={
       CAPTURE_GROUP:"${{ inputs.group }}",FIRST_RUN:"${{ inputs.first-run }}",

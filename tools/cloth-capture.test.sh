@@ -191,7 +191,7 @@ jq -r '.jobs["detect-visual-changes"].steps[] | select(.id=="check") | .run' \
 for helper in tools/capture-cloth-evidence.sh tools/install-ci-macos-godot.sh \
   tools/source-capture-inputs.sh tools/source-evidence-package.sh tools/source-evidence-conditions.sh \
   tools/render-source-base.sh tools/report-source-frames.sh tools/source-evidence/main.go \
-  tools/source-evidence-workflow.test.sh .github/actions/capture-source-head/action.yaml \
+  tools/source-evidence-workflow.test.sh .github/workflows/ci.yaml \
   .github/actions/capture-cloth-mode/action.yaml; do
   fixture="$scratch/detect-${helper//\//-}"
   mkdir -p "$fixture/tools"
@@ -224,7 +224,7 @@ admit() {
     $cloth["runs-on"]=="macos-15" and $cloth["timeout-minutes"]==32 and
     ($cloth|keys)==["if","name","needs","runs-on","steps","strategy","timeout-minutes"] and
     $cloth.strategy=={"fail-fast":false,matrix:{include:[{pair:"off/on",first:"off",second:"on"},{pair:"drape/both",first:"drape",second:"both"}]}} and
-    ($cloth.steps|length)==3 and ($steps|length)==5 and
+    ($cloth.steps|length)==2 and ($steps|length)==5 and
     all($steps[]; (has("if") or has("continue-on-error"))|not) and
     $steps[0]=={uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",with:{"fetch-depth":0,"persist-credentials":false}} and
     $steps[1].run=="bash tools/install-ci-macos-godot.sh" and
@@ -241,7 +241,7 @@ admit() {
     ($jobs["ci-required-checks"].needs|index("frame-capture-cloth"))!=null and
     ($jobs["ci-required-checks"].steps[-1].with["job-results"]|contains("${{ needs.frame-capture-cloth.result }}")) and
     any($jobs["client-ordinary"].steps[];.run?=="bash tools/cloth-capture.test.sh") and
-    any($jobs["frame-capture-head"].steps[];((.uses? // "")|startswith("devantler-tech/world-at-ruin/.github/actions/capture-source-head@"))) and
+    any($jobs["frame-capture-head"].steps[];.name?=="Capture the opted-in ground previews" and .shell=="bash") and
     (any($jobs["frame-capture"].steps[];(.run? // "")|contains("ragged_cloth"))|not)
   ' "$1" >/dev/null
 }

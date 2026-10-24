@@ -5,34 +5,33 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 yq -o=json '.' "$root/.github/workflows/ci.yaml" >"$work/dag.json"
-yq -o=json '.' "$root/.github/actions/capture-source-head/action.yaml" >"$work/head.json"
-jq --slurpfile head "$work/head.json" \
-  '. + {source_head:$head[0]}' "$work/dag.json" >"$work/workflow.json"
+jq '. + {source_head:{runs:{steps:.jobs["frame-capture-head"].steps[:19]}}}' \
+  "$work/dag.json" >"$work/workflow.json"
 admit() {
   # shellcheck disable=SC2016 # Literal GitHub expressions are the data under test.
   jq -e '
     def checkout: .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false};
     def safe: (.permissions // {contents:"read"})=={contents:"read"} and
       (has("continue-on-error")|not) and (has("container")|not);
-    .jobs as $jobs | .source_head.runs as $head | {steps:$jobs["frame-capture-head"].steps[2:]} as $base |
+    .jobs as $jobs | .source_head.runs as $head | {steps:$jobs["frame-capture-head"].steps[19:]} as $base |
     all(["client-export-macos","frame-capture-head","frame-capture-cloth"][];
       . as $job | $jobs[$job]."runs-on"=="macos-15") and
     $jobs["frame-capture-exported-head"]."runs-on"=="ubuntu-latest" and
     all(["frame-capture-base","frame-capture-exported-base"][]; . as $job |
       $jobs[$job]."runs-on"=="ubuntu-latest") and
     ($jobs["frame-capture-head"] | safe and checkout and
-      .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==32 and
+      .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
       .strategy=={"fail-fast":false,matrix:{group:["world","activity"]}}) and
     ($head | checkout and
       all(.steps[]; (has("continue-on-error")|not)) and
       all(.steps[]|select(has("if")); (.name|startswith("Capture "))) and
       any(.steps[];.run?=="bash tools/source-capture-inputs.sh" and .env=={
-        CAPTURE_GROUP:"${{ inputs.group }}",FIRST_RUN:"${{ inputs.first-run }}",
-        VISUAL:"${{ inputs.visual }}",GPU_GATED:"${{ inputs.gpu-gated }}"}) and
+        CAPTURE_GROUP:"${{ matrix.group }}",FIRST_RUN:"${{ needs.detect-visual-changes.outputs.first_run }}",
+        VISUAL:"${{ needs.detect-visual-changes.outputs.visual }}",GPU_GATED:"${{ needs.detect-visual-changes.outputs.gpu_gated }}"}) and
       any(.steps[];.run?=="bash tools/install-ci-macos-godot.sh" and (has("if")|not)) and
-      any(.steps[];.run?=="bash tools/source-evidence-package.sh head" and .env.CAPTURE_GROUP=="${{ inputs.group }}") and
-      .steps[-1].with.name=="source-head-${{ github.sha }}-${{ github.run_attempt }}-${{ inputs.group }}" and
+      any(.steps[];.run?=="bash tools/source-evidence-package.sh head" and .env.CAPTURE_GROUP=="${{ matrix.group }}") and
+      .steps[-1].with.name=="source-head-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.group }}" and
       .steps[-1].with["if-no-files-found"]=="error" and
       (.steps[-1].with.path|split("\n")|map(select(length>0))|sort)==([
         "","light-response/","opt-in-previews/","walk/","breath/","run/","gait-transition/",
@@ -83,7 +82,7 @@ for mutation in \
   '.jobs["frame-capture-exported-head"]["runs-on"]="macos-15-intel"' \
   '.jobs["frame-capture-exported-base"]["runs-on"]="macos-15"' \
   '.source_head.runs.steps[2]["continue-on-error"]=true' \
-  'del(.jobs["frame-capture-head"].steps[5]["timeout-minutes"])' \
+  'del(.jobs["frame-capture-head"].steps[22]["timeout-minutes"])' \
   '.jobs["frame-capture-base"].needs += ["frame-capture"]' \
   '.jobs["frame-capture"].needs -= ["frame-capture-base"]' \
   '.jobs["frame-capture"].if="true"' \

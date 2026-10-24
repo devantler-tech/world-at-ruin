@@ -418,6 +418,8 @@ whole-run timings remain separate proof. See
 Native source-frame evidence runs as isolated `world`, `activity` and BASE operations.
 The `world` worker also runs the independent inline BASE steps, preserving separate
 checkout, save/output directories, outcome records and individual step bounds.
+Keep the source HEAD recipe inline so frozen scene guards inspect the real capture
+commands. Both source workers retain the original fifteen-minute total job limit.
 Keep BASE inline: composite actions cannot enforce those per-step deadlines.
 The stable required collector accepts only the complete source/run/attempt-bound
 PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
@@ -1634,11 +1636,11 @@ the permanent blocking policy.
     unrelated-canary survival. Unreadable process inspection is a refused cleanup verdict.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
-    Exported HEAD and BASE frame captures run on independent macOS workers. The HEAD retains
+    Exported HEAD and BASE frame captures run as separate operations on the native export worker. The HEAD retains
     the default-world, opt-in-preview and first-run evidence. A stable terminal job requires both
-    workers and source/run/attempt-bound comparison data before publishing the complete artifact.
+    operations and source/run/attempt-bound comparison data before publishing the complete artifact.
     BASE installation and rendering have two- and nine-minute step bounds inside the 15-minute
-    worker budget, reserving time to record and upload their actual outcome. A known BASE failure
+    BASE operation budget, reserving time to record and upload their actual outcome. A known BASE failure
     remains advisory; missing or stale transport evidence is not. Run
     `tools/exported-frame-change-report.test.sh` and `tools/preview-flags.test.sh`.
   - `lavapipe-capture.yaml` owns advisory volumetric evidence independently of required CI.

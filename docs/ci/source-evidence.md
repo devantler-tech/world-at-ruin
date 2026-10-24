@@ -9,8 +9,9 @@ renders moving-light response, replicated population, authoritative mob chase,
 breathing, walking, running, the gait transition and controller-driven gait.
 The BASE operation renders the PR base using its own committed character recipe.
 
-The owning workflow invokes owner-local capture actions in the HEAD matrix,
-with the same warmup, image/caption checks and feature flags. The `world` worker
+The owning workflow keeps the complete source recipe inline in the HEAD matrix,
+with the same warmup, image/caption checks and feature flags. This lets the
+trusted scene suite inspect the actual capture commands and guards. The `world` worker
 then runs the independent inline BASE steps, including their own checkout,
 installer, render and outcome record. BASE is attempted even after a failed HEAD
 phase, but not after workflow cancellation. Keeping BASE inline preserves its
@@ -35,10 +36,10 @@ A recorded BASE installation/render failure remains advisory. Its partial
 images are not included in the comparison. BASE installation and rendering have
 two- and eight-minute step bounds; toolchain setup, sealing and upload also have
 their own bounds, leaving time to record an unavailable comparison within the
-original BASE operation budget. The HEAD phase also retains its own 15-minute
-budget. The combined worker's 32-minute safety envelope accommodates both full
-phases and setup; it is not a pass against the separate 15-minute complete-feedback
-objective. Missing or inconsistent transport
+original BASE operation budget. The combined world/BASE worker retains the
+original source job's 15-minute total limit; the activity worker has the same
+limit. These bounds alone are not a pass against the separate 15-minute
+complete-feedback objective. Missing or inconsistent transport
 evidence is an operational failure, not an advisory result. The final artifact
 retains the established `frames-<PR-head-sha>` name and all source-frame paths.
 Its receipt identifies the integration source actually rendered. Input hashes
@@ -50,8 +51,10 @@ The advisory comparison may annotate captions after collection.
 Run the native-worker-plan, source-input, capture-contract and source-workflow tests, then
 `go test -race tools/source-evidence/main.go tools/source-evidence/main_test.go`.
 Input tests verify the exact checkout, closed flag decisions and fresh output
-directory. The component test verifies actual workflow selector routing, then
-executes the actual capture guard against successful and failed renderer logs.
+directory. The capture-contract test verifies actual workflow selector routing,
+then executes the actual capture guard against successful and failed renderer
+logs. It repeats those controls against a protected historical recipe as a
+data-only regression oracle; that recipe is not an executable CI dependency.
 The Go controls exercise complete collection,
 observed BASE failure and refusal of incomplete or mismatched artifacts.
 `tools/cloth-capture.test.sh` also exercises the shipping path detector against
@@ -61,7 +64,7 @@ Complete visual CI uses five Mac workers: source world/BASE, source activity,
 two cloth pairs, and native export/exported BASE. The source BASE status is a
 Linux acknowledgement of successful native production; the existing collector
 still requires its independently sealed exact-attempt artifact. Owner-local
-actions hold the HEAD and cloth recipes; BASE stays inline. This introduces no
+actions hold the cloth recipe; source HEAD and BASE stay inline. This introduces no
 additional reusable workflow or shared export.
 
 Runner selection does not guarantee available capacity. Record queue delay
