@@ -90,22 +90,9 @@ func TestApplyCommitsPlayerRecordAndAuditInOneAtomicWrite(t *testing.T) {
 	t.Parallel()
 
 	storage := seededInventoryStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	store := newTestStore(t, storage)
 
-	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
-	// Retain unsorted input: this assertion also proves canonical serialization.
-	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
-	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
-	result, err := store.Apply(context.Background(), mutation)
-	if err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-	if string(result.Outcome) != `{"item_count":1}` {
-		t.Fatalf("Apply() outcome = %s", result.Outcome)
-	}
+	requireApplyOutcome(t, store, unsortedRewardMutation(), `{"item_count":1}`)
 	recordWrite, auditWrite := atomicWriteBatch(t, storage)
 	if recordWrite.UserID != testSubjectID ||
 		recordWrite.Version != "observed" ||
@@ -140,35 +127,10 @@ func TestClientOwnedAuditPreseedCannotReplayASystemMutation(t *testing.T) {
 	)
 	mutation.Record.ExpectedVersion = "*"
 	mutation.Record.SystemOwned = true
-	storage.seed(storedObject{
-		Collection: AuditCollection,
-		Key: auditKey(
-			testSubjectID,
-			mutation.Record.Collection,
-			mutation.Record.Key,
-			mutation.IdempotencyKey,
-		),
-		UserID: testSubjectID,
-		Value: `{"schema":1,` + testAuditIdentityFields +
-			`"operation":"grant_item",` +
-			`"payload":{"item_id":"ash-blade","quantity":1},` +
-			`"outcome":{"item_count":999}}`,
-		Version:         "attacker-version",
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	})
+	seedAudit(storage, rewardAuditKey(mutation), testSubjectID, inflatedRewardAudit, "attacker-version")
 
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	result, err := store.Apply(context.Background(), mutation)
-	if err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-	if string(result.Outcome) != `{"item_count":1}` {
-		t.Fatalf("Apply() outcome = %s", result.Outcome)
-	}
+	store := newTestStore(t, storage)
+	requireApplyOutcome(t, store, mutation, `{"item_count":1}`)
 	_, auditWrite := atomicWriteBatch(t, storage)
 	if auditWrite.UserID != "" {
 		t.Fatalf("system mutation audit write = %#v", auditWrite)
@@ -179,14 +141,8 @@ func TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain(t *testing.T) {
 	t.Parallel()
 
 	storage := seededInventoryStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
-	// Retain unsorted input: this assertion also proves canonical serialization.
-	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
-	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
+	store := newTestStore(t, storage)
+	mutation := unsortedRewardMutation()
 	if _, err := store.Apply(context.Background(), mutation); err != nil {
 		t.Fatalf("first Apply() error = %v", err)
 	}
@@ -216,38 +172,12 @@ func TestApplyIgnoresClientOwnedAuditAtDerivedKey(t *testing.T) {
 
 	storage := seededInventoryStorage()
 	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
-	auditObjectKey := auditKey(
-		testSubjectID,
-		mutation.Record.Collection,
-		mutation.Record.Key,
-		mutation.IdempotencyKey,
-	)
-	storage.seed(storedObject{
-		Collection: AuditCollection,
-		Key:        auditObjectKey,
-		UserID:     testSubjectID,
-		Value: `{"schema":1,` +
-			`"idempotency_key":"quest:ember:reward",` +
-			`"record_collection":"world_at_ruin_inventory",` +
-			`"record_key":"carried","operation":"grant_item",` +
-			`"payload":{"item_id":"ash-blade","quantity":1},` +
-			`"outcome":{"item_count":999}}`,
-		Version:         "client-owned",
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	})
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	auditObjectKey := rewardAuditKey(mutation)
+	seedAudit(storage, auditObjectKey, testSubjectID, inflatedRewardAudit, "client-owned")
+	store := newTestStore(t, storage)
 
-	result, err := store.Apply(context.Background(), mutation)
-	if err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-	if string(result.Outcome) != `{"item_count":1}` {
-		t.Fatalf("Apply() outcome = %s, want authoritative outcome", result.Outcome)
-	}
+	// The authoritative outcome, not the client-owned document's 999.
+	requireApplyOutcome(t, store, mutation, `{"item_count":1}`)
 	if len(storage.WriteCalls) != 1 {
 		t.Fatalf("StorageWrite() calls = %d, want 1", len(storage.WriteCalls))
 	}
@@ -261,38 +191,10 @@ func TestApplyReconcilesACommittedMutationWhoseResponseWasLost(
 ) {
 	t.Parallel()
 
-	storage := newFakeStorage()
-	storage.seed(storedObject{
-		Collection:      "world_at_ruin_inventory",
-		Key:             "carried",
-		UserID:          testSubjectID,
-		Value:           `{"items":[],"schema":1}`,
-		Version:         "observed",
-		PermissionRead:  0,
-		PermissionWrite: 0,
-	})
+	storage := seededInventoryStorage()
 	storage.writeErrAfterApply = errors.New("connection reset after commit")
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	mutation := Mutation{
-		SubjectID:      testSubjectID,
-		IdempotencyKey: "quest:ember:reward",
-		Operation:      "grant_item",
-		Payload: json.RawMessage(
-			`{"item_id":"ash-blade","quantity":1}`,
-		),
-		Record: RecordWrite{
-			Collection:      "world_at_ruin_inventory",
-			Key:             "carried",
-			ExpectedVersion: "observed",
-			Value: json.RawMessage(
-				`{"items":["ash-blade"],"schema":1}`,
-			),
-		},
-		Outcome: json.RawMessage(`{"item_count":1}`),
-	}
+	store := newTestStore(t, storage)
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
 
 	result, err := store.Apply(context.Background(), mutation)
 	if err != nil {
@@ -321,10 +223,7 @@ func TestApplyReplayAfterProcessCrashDoesNotWriteAgain(t *testing.T) {
 
 	storage := seededInventoryStorage()
 	storage.panicAfterApply = true
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	store := newTestStore(t, storage)
 	mutation := inventoryMutation(
 		testSubjectID,
 		"quest:ember:reward",
@@ -394,15 +293,9 @@ func TestApplySanitizesStorageFailures(t *testing.T) {
 
 			storage := seededInventoryStorage()
 			test.configure(storage)
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
+			store := newTestStore(t, storage)
 
-			_, err = store.Apply(
-				context.Background(),
-				inventoryMutation(testSubjectID, "quest:ember:reward"),
-			)
+			err := applyReward(store)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Apply() error = %v, want %v", err, test.want)
 			}
@@ -418,15 +311,9 @@ func TestApplyPreservesCancellationAfterWriteDispatch(t *testing.T) {
 
 	storage := seededInventoryStorage()
 	storage.writeErrBeforeApply = context.Canceled
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	store := newTestStore(t, storage)
 
-	_, err = store.Apply(
-		context.Background(),
-		inventoryMutation(testSubjectID, "quest:ember:reward"),
-	)
+	err := applyReward(store)
 	if !errors.Is(err, ErrIndeterminate) ||
 		!errors.Is(err, context.Canceled) {
 		t.Fatalf(
@@ -464,15 +351,7 @@ func TestApplyRejectsKeyReuseForADifferentMutation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			storage := seededInventoryStorage()
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
-			mutation := inventoryMutation(
-				testSubjectID,
-				"quest:ember:reward",
-			)
+			storage, store, mutation := rewardFixture(t)
 			if _, err := store.Apply(
 				context.Background(),
 				mutation,
@@ -481,7 +360,7 @@ func TestApplyRejectsKeyReuseForADifferentMutation(t *testing.T) {
 			}
 
 			test.change(&mutation)
-			_, err = store.Apply(context.Background(), mutation)
+			_, err := store.Apply(context.Background(), mutation)
 			if !errors.Is(err, ErrKeyConflict) {
 				t.Fatalf(
 					"reused-key Apply() error = %v, want %v",
@@ -503,10 +382,7 @@ func TestApplyKeepsDistinctKeysForTheSameEffectDistinct(t *testing.T) {
 	t.Parallel()
 
 	storage := seededInventoryStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	store := newTestStore(t, storage)
 	first := inventoryMutation(testSubjectID, "quest:ember:first")
 	if _, err := store.Apply(context.Background(), first); err != nil {
 		t.Fatalf("first Apply() error = %v", err)
@@ -577,10 +453,7 @@ func TestApplyScopesTheSameRawKeyBySubjectAndRecord(t *testing.T) {
 
 			storage := seededInventoryStorage()
 			storage.seed(test.recordSeed)
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
+			store := newTestStore(t, storage)
 			first := inventoryMutation(testSubjectID, "reward")
 			if _, err := store.Apply(
 				context.Background(),
@@ -671,29 +544,11 @@ func TestApplyRejectsMalformedAuditDocuments(t *testing.T) {
 			t.Parallel()
 
 			storage := seededInventoryStorage()
-			storage.seed(storedObject{
-				Collection: AuditCollection,
-				Key: auditKey(
-					testSubjectID,
-					"world_at_ruin_inventory",
-					"carried",
-					"quest:ember:reward",
-				),
-				UserID:          systemOwnerID,
-				Value:           test.value,
-				Version:         "audit-version",
-				PermissionRead:  0,
-				PermissionWrite: 0,
-			})
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
+			reward := inventoryMutation(testSubjectID, "quest:ember:reward")
+			seedAudit(storage, rewardAuditKey(reward), systemOwnerID, test.value, "audit-version")
+			store := newTestStore(t, storage)
 
-			_, err = store.Apply(
-				context.Background(),
-				inventoryMutation(testSubjectID, "quest:ember:reward"),
-			)
+			err := applyReward(store)
 			if !errors.Is(err, ErrStorage) {
 				t.Fatalf("Apply() error = %v, want %v", err, ErrStorage)
 			}
@@ -767,15 +622,7 @@ func TestApplyRejectsInvalidMutationBeforeStorage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			storage := seededInventoryStorage()
-			store, err := NewStore(storage)
-			if err != nil {
-				t.Fatalf("NewStore() error = %v", err)
-			}
-			mutation := inventoryMutation(
-				testSubjectID,
-				"quest:ember:reward",
-			)
+			storage, store, mutation := rewardFixture(t)
 			test.change(&mutation)
 			if _, err := store.Apply(
 				context.Background(),
@@ -798,10 +645,7 @@ func TestApplyCreatesAPlayerRecordConditionallyWithItsAudit(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	store, err := NewStore(storage)
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
+	store := newTestStore(t, storage)
 	mutation := inventoryMutation(testSubjectID, "account:first-inventory")
 	mutation.Record.ExpectedVersion = "*"
 
@@ -897,4 +741,76 @@ func inventoryMutation(subjectID, idempotencyKey string) Mutation {
 		},
 		Outcome: json.RawMessage(`{"item_count":1}`),
 	}
+}
+
+// inflatedRewardAudit is a well-formed audit document for the standard reward that claims a
+// 999-item outcome, so a test can tell a planted document's outcome from the authoritative one.
+const inflatedRewardAudit = `{"schema":1,` + testAuditIdentityFields +
+	`"operation":"grant_item",` +
+	`"payload":{"item_id":"ash-blade","quantity":1},` +
+	`"outcome":{"item_count":999}}`
+
+// newTestStore builds a Store over storage and fails the test if construction is refused.
+// Fault injection and extra seeds stay in each test, before or after this call.
+func newTestStore(t *testing.T, storage *fakeStorage) *Store {
+	t.Helper()
+	store, err := NewStore(storage)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	return store
+}
+
+// rewardFixture is the seeded inventory, a store over it and the standard reward mutation for
+// the test subject. Each call returns fresh storage, so parallel tests never share state.
+func rewardFixture(t *testing.T) (*fakeStorage, *Store, Mutation) {
+	t.Helper()
+	storage := seededInventoryStorage()
+	return storage, newTestStore(t, storage), inventoryMutation(testSubjectID, "quest:ember:reward")
+}
+
+// unsortedRewardMutation is the standard reward with its payload and record value written out of
+// key order, so an assertion on the stored bytes also proves canonical serialization.
+func unsortedRewardMutation() Mutation {
+	mutation := inventoryMutation(testSubjectID, "quest:ember:reward")
+	mutation.Payload = json.RawMessage(`{"quantity":1,"item_id":"ash-blade"}`)
+	mutation.Record.Value = json.RawMessage(`{"schema":1,"items":["ash-blade"]}`)
+	return mutation
+}
+
+// applyReward applies the standard reward for the test subject and returns only its error.
+func applyReward(store *Store) error {
+	_, err := store.Apply(context.Background(), inventoryMutation(testSubjectID, "quest:ember:reward"))
+	return err
+}
+
+// requireApplyOutcome applies mutation and fails unless it succeeds with exactly outcome want.
+func requireApplyOutcome(t *testing.T, store *Store, mutation Mutation, want string) {
+	t.Helper()
+	result, err := store.Apply(context.Background(), mutation)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if string(result.Outcome) != want {
+		t.Fatalf("Apply() outcome = %s, want %s", result.Outcome, want)
+	}
+}
+
+// rewardAuditKey is the audit key the store derives for mutation's subject, record and
+// idempotency key.
+func rewardAuditKey(mutation Mutation) string {
+	return auditKey(mutation.SubjectID, mutation.Record.Collection, mutation.Record.Key, mutation.IdempotencyKey)
+}
+
+// seedAudit plants a private audit document (both permissions 0) at key, owned by userID.
+func seedAudit(storage *fakeStorage, key, userID, value, version string) {
+	storage.seed(storedObject{
+		Collection:      AuditCollection,
+		Key:             key,
+		UserID:          userID,
+		Value:           value,
+		Version:         version,
+		PermissionRead:  0,
+		PermissionWrite: 0,
+	})
 }
