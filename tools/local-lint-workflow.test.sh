@@ -32,7 +32,7 @@ check() {
           .env.APPLY_FIXES == "none" and .env.GOTOOLCHAIN == "local")) and
       ([.steps[] | (.env // {}) | keys[] | select(test("TOKEN|SECRET|PRIVATE_KEY"))] | length) == 0) and
     ([((.env // {}), .jobs.lint) | .. | strings |
-      select(test("(?i)secrets[[:space:]]*(\\.|\\[)|github[[:space:]]*(\\.[[:space:]]*token|\\[[[:space:]]*[\"\\x27]token[\"\\x27][[:space:]]*\\])|tojson[[:space:]]*\\([[:space:]]*(secrets|github)"))] | length) == 0
+      select(test("(?i)\\bsecrets\\b|\\bgithub[[:space:]]*(\\.[[:space:]]*token|\\[)|tojson[[:space:]]*\\([[:space:]]*github\\b"))] | length) == 0
   ' >/dev/null
 }
 
@@ -58,6 +58,7 @@ for mutation in \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).env.PAT = "${{ secrets.APP_PRIVATE_KEY }}"' \
   '.env.PAT = "${{ secrets.APP_PRIVATE_KEY }}"' \
   '.jobs.lint.env.PAT = "${{ GITHUB.TOKEN }}"' \
+  '.jobs.lint.env.PAT = "${{ github[format('"'"'tok{0}'"'"', '"'"'en'"'"')] }}"' \
   '.jobs.lint.env.PAT = "${{ github['"'"'token'"'"'] }}"' \
   '.jobs.lint.env.PAT = "${{ toJson(Secrets) }}"' \
   '.jobs["client-ordinary"].steps |= map(select(.run != "bash tools/local-lint-workflow.test.sh"))' \
