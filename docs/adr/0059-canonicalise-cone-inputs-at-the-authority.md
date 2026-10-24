@@ -1,6 +1,7 @@
 # Canonicalise cone inputs at the authority
 
-Status: accepted for the cone threshold and facing (#1447).
+Status: accepted for the cone threshold and facing (#1447) and for circle and
+cone extents (#1451).
 
 ## Context
 
@@ -41,7 +42,30 @@ by all three. A membership comparison shows the stored world-forward facing
 catches exactly what the zero facing caught through the fallback, and the
 server produces only circle casts today, so no existing cast changes.
 
+## Extents
+
+A circle's radius and a cone's range are a cast only when they are positive.
+The client cast factory refuses a radius or range of zero or less. The shared
+membership law catches the exact centre of a zero circle and the exact apex of
+a zero cone, and catches nothing for a negative extent. A zero extent would
+therefore be a warning the server resolves but the client never paints, and a
+negative extent would be a cast that warns of nothing.
+
+No positive extent catches exactly what a zero extent catches, so the
+authority cannot canonicalise one into the other. It does not start such a
+cast instead. A mob whose circle radius is not positive never paints. Both wire
+codecs refuse a circle or cone whose extent is not positive, and the cast
+factory keeps its refusal. The membership law is unchanged on both tiers: no
+cast with such an extent reaches it.
+
+`client/tests/data/cone_input_authority.json` carries the extent vectors in
+`extent_cases`. The Go wire test and the client test read them. Both wire
+codecs and the client factory accept exactly the positive extents, and a mob
+starts a circle for exactly those radii. Every mob cast built from a positive
+radius is unchanged.
+
 ## Not covered
 
 Rectangles keep the zero-facing fallback without canonicalisation. They have no
-client caster yet; they adopt this rule when one is added.
+client caster yet; they adopt this rule when one is added. Ring and rectangle
+extents are likewise left to the change that adds their client caster.
