@@ -277,7 +277,7 @@ else
   # the wiring detectable.
   #
   # The editor capture must OBTAIN its flags from this resolver...
-  yq -o=json '.jobs."frame-capture-head".steps' "$WORKFLOW" |
+  yq -o=json '.runs.steps' "$ROOT/.github/actions/capture-source-head/action.yaml" |
     jq -er '.[] | select(.name=="Capture the opted-in ground previews") | .run' \
       >"$SCRATCH_DIR/editor-capture-job"
   if ! grep -qE '^[[:space:]]*tools/preview-flags\.sh --env[[:space:]]*>' \
@@ -326,7 +326,7 @@ else
   # pipeline reports FAILURE — so the match reads as "no hard-coded flag found"
   # and this guard silently stops firing. ci.yaml carries the same warning
   # about the same shape; this file reproduced the bug before adopting it.
-  grep -h -vE '^[[:space:]]*#' "$WORKFLOW" "$CAPTURE_ACTION" >"$SCRATCH_DIR/workflow-nocomments" || true
+  grep -h -vE '^[[:space:]]*#' "$WORKFLOW" "$CAPTURE_ACTION" "$ROOT/.github/actions/capture-source-head/action.yaml" >"$SCRATCH_DIR/workflow-nocomments" || true
   while IFS= read -r listed_flag; do
     if grep -q "${listed_flag}=1" "$SCRATCH_DIR/workflow-nocomments"; then
       t_fail "ci.yaml hard-codes ${listed_flag}=1 — tools/preview-flags.txt is not the source of truth"

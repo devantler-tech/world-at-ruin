@@ -23,12 +23,18 @@ accepted as new evidence.
 The smoke app uses its own fresh save, vault, recovery and update-history paths.
 The complete capture component retains a fifteen-minute deadline. The stable HEAD
 check accepts only a successful native producer and the component's complete-upload
-acknowledgement. The independent BASE worker retains its own recipe, source identity
-and explicit advisory failure semantics. The terminal comparison requires both
+acknowledgement. The same Mac then runs the independent inline BASE steps, retaining
+their own checkout, complete installer, recipe, source identity, individual
+deadlines and explicit advisory failure semantics. BASE stays inline because
+composite actions do not support per-step deadlines. It is attempted even if a
+preceding HEAD operation fails, but not after workflow cancellation. Its separate output paths and source/run/attempt
+receipt are unchanged. The lightweight BASE status accepts only successful native
+production and a complete-upload receipt, not a claimed successful render.
+The terminal comparison requires both
 successful producers and exact current integration/run/attempt artifacts before
 reporting image differences.
 
-Run `bash tools/exported-head-evidence.test.sh`, the exported-frame report tests,
+Run `bash tools/native-worker-plan.test.sh`, `bash tools/exported-head-evidence.test.sh`, the exported-frame report tests,
 preview-flag controls and client/native workflow guards after changes. The fast
 fixtures prove archive admission and failure propagation, not native rendering.
 Actual macOS app capture, artifact inspection and complete hosted timings remain

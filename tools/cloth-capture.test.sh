@@ -69,9 +69,9 @@ for kind in directory file symlink; do
   mkdir -p "$reused/shots/ragged-cloth"
   output="$reused/shots/ragged-cloth/off"
   case "$kind" in
-  directory) mkdir "$output" ;;
-  file) printf 'retained evidence\n' >"$output" ;;
-  symlink) ln -s "$scratch/run-0/shots/ragged-cloth/off" "$output" ;;
+    directory) mkdir "$output" ;;
+    file) printf 'retained evidence\n' >"$output" ;;
+    symlink) ln -s "$scratch/run-0/shots/ragged-cloth/off" "$output" ;;
   esac
   if (cd "$reused" && PATH="$scratch/bin:$PATH" RUNNER_TEMP="$reused" bash "$capture" off) >"$scratch/reused.log" 2>&1; then
     fail "accepted an existing $kind as fresh evidence"
@@ -180,7 +180,10 @@ if CHECKSUM_EXIT=17 run_setup; then fail 'installed after checksum rejection'; f
 if DOWNLOAD_EXIT=23 run_setup; then fail 'installed after download failure'; fi
 [[ $(paste -sd, "$scratch/setup-trace") == download ]] || fail 'download failure reached verification'
 
-yq -o=json . "$root/.github/workflows/ci.yaml" >"$scratch/workflow.json"
+yq -o=json . "$root/.github/workflows/ci.yaml" >"$scratch/dag.json"
+yq -o=json . "$root/.github/actions/capture-cloth-mode/action.yaml" >"$scratch/cloth.json"
+jq --slurpfile cloth "$scratch/cloth.json" '. + {cloth_component:$cloth[0]}' \
+  "$scratch/dag.json" >"$scratch/workflow.json"
 # Execute the shipping path detector with real commits, one helper change at a
 # time. A regex-presence assertion alone cannot prove the required job runs.
 jq -r '.jobs["detect-visual-changes"].steps[] | select(.id=="check") | .run' \
@@ -188,7 +191,8 @@ jq -r '.jobs["detect-visual-changes"].steps[] | select(.id=="check") | .run' \
 for helper in tools/capture-cloth-evidence.sh tools/install-ci-macos-godot.sh \
   tools/source-capture-inputs.sh tools/source-evidence-package.sh tools/source-evidence-conditions.sh \
   tools/render-source-base.sh tools/report-source-frames.sh tools/source-evidence/main.go \
-  tools/source-evidence-workflow.test.sh; do
+  tools/source-evidence-workflow.test.sh .github/actions/capture-source-head/action.yaml \
+  .github/actions/capture-cloth-mode/action.yaml; do
   fixture="$scratch/detect-${helper//\//-}"
   mkdir -p "$fixture/tools"
   git -C "$fixture" init -q -b main
@@ -212,32 +216,32 @@ done
 # Check the exact required worker matrix and artifact contract after parsing real YAML.
 admit() {
   jq -e '
-    .jobs as $jobs | $jobs["frame-capture-cloth"] as $cloth |
-    $cloth.name=="Frame capture (cloth evidence, ${{ matrix.mode }})" and
+    .jobs as $jobs | $jobs["frame-capture-cloth"] as $cloth | .cloth_component.runs.steps as $steps |
+    $cloth.name=="Frame capture (cloth evidence, ${{ matrix.pair }})" and
     $cloth.needs==["detect-visual-changes"] and
     $cloth.if==$jobs["frame-capture-head"].if and
     $cloth.if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
-    $cloth["runs-on"]=="macos-15" and $cloth["timeout-minutes"]==15 and
+    $cloth["runs-on"]=="macos-15" and $cloth["timeout-minutes"]==32 and
     ($cloth|keys)==["if","name","needs","runs-on","steps","strategy","timeout-minutes"] and
-    $cloth.strategy=={"fail-fast":false,matrix:{mode:["off","on","drape","both"]}} and
-    ($cloth.steps|length)==5 and
-    all($cloth.steps[]; (has("if") or has("continue-on-error"))|not) and
-    $cloth.steps[0]=={uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",with:{"fetch-depth":0,"persist-credentials":false}} and
-    $cloth.steps[1].run=="bash tools/install-ci-macos-godot.sh" and
-    $cloth.steps[2].run=="godot --headless --editor --quit --path client 2>&1 | tee import.log" and
-    $cloth.steps[3].env=={CLOTH_MODE:"${{ matrix.mode }}"} and
-    $cloth.steps[3].run=="bash tools/capture-cloth-evidence.sh \"$CLOTH_MODE\"" and
-    $cloth.steps[4].uses=="actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" and
-    $cloth.steps[4].with.name=="cloth-frames-${{ matrix.mode }}-${{ github.sha }}" and
-    $cloth.steps[4].with["if-no-files-found"]=="error" and
-    ($cloth.steps[4].with.path|split("\n")|map(select(length>0))|sort)==[
-      "${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.png",
-      "${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.txt",
-      "cloth-${{ matrix.mode }}.log"] and
+    $cloth.strategy=={"fail-fast":false,matrix:{include:[{pair:"off/on",first:"off",second:"on"},{pair:"drape/both",first:"drape",second:"both"}]}} and
+    ($cloth.steps|length)==3 and ($steps|length)==5 and
+    all($steps[]; (has("if") or has("continue-on-error"))|not) and
+    $steps[0]=={uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",with:{"fetch-depth":0,"persist-credentials":false}} and
+    $steps[1].run=="bash tools/install-ci-macos-godot.sh" and
+    $steps[2].run=="godot --headless --editor --quit --path client 2>&1 | tee import.log" and
+    $steps[3].env=={CLOTH_MODE:"${{ inputs.mode }}"} and
+    $steps[3].run=="bash tools/capture-cloth-evidence.sh \"$CLOTH_MODE\"" and
+    $steps[4].uses=="actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" and
+    $steps[4].with.name=="cloth-frames-${{ inputs.mode }}-${{ github.sha }}" and
+    $steps[4].with["if-no-files-found"]=="error" and
+    ($steps[4].with.path|split("\n")|map(select(length>0))|sort)==[
+      "${{ runner.temp }}/shots/ragged-cloth/${{ inputs.mode }}/*.png",
+      "${{ runner.temp }}/shots/ragged-cloth/${{ inputs.mode }}/*.txt",
+      "cloth-${{ inputs.mode }}.log"] and
     ($jobs["ci-required-checks"].needs|index("frame-capture-cloth"))!=null and
     ($jobs["ci-required-checks"].steps[-1].with["job-results"]|contains("${{ needs.frame-capture-cloth.result }}")) and
     any($jobs["client-ordinary"].steps[];.run?=="bash tools/cloth-capture.test.sh") and
-    any($jobs["frame-capture-head"].steps[];.run?=="bash tools/install-ci-macos-godot.sh") and
+    any($jobs["frame-capture-head"].steps[];((.uses? // "")|startswith("devantler-tech/world-at-ruin/.github/actions/capture-source-head@"))) and
     (any($jobs["frame-capture"].steps[];(.run? // "")|contains("ragged_cloth"))|not)
   ' "$1" >/dev/null
 }
@@ -247,21 +251,21 @@ for mutation in \
   '.jobs["frame-capture-cloth"].if="false"' \
   '.jobs["frame-capture-cloth"].needs=["frame-capture"]' \
   '.jobs["frame-capture-cloth"]["continue-on-error"]=true' \
-  '.jobs["frame-capture-cloth"]["timeout-minutes"]=30' \
+  '.jobs["frame-capture-cloth"]["timeout-minutes"]=60' \
   '.jobs["frame-capture-cloth"].strategy["fail-fast"]=true' \
-  '.jobs["frame-capture-cloth"].strategy.matrix.mode=["off","on","drape"]' \
-  '.jobs["frame-capture-cloth"].strategy.matrix.mode=["off","on","drape","drape"]' \
-  '.jobs["frame-capture-cloth"].strategy.matrix.exclude=[{mode:"both"}]' \
-  '.jobs["frame-capture-cloth"].steps[0].with["persist-credentials"]=true' \
-  '.jobs["frame-capture-cloth"].steps[0].with.ref="main"' \
-  '.jobs["frame-capture-cloth"].steps[1].run="true"' \
-  '.jobs["frame-capture-cloth"].steps[2].run="true"' \
-  '.jobs["frame-capture-cloth"].steps[3].if="false"' \
-  '.jobs["frame-capture-cloth"].steps[3].run="true"' \
-  '.jobs["frame-capture-cloth"].steps[3].env.CLOTH_MODE="off"' \
-  '.jobs["frame-capture-cloth"].steps[4].with.path="cloth-off.log"' \
-  '.jobs["frame-capture-cloth"].steps[4].with.name="unbound-frames"' \
-  '.jobs["frame-capture-cloth"].steps[4].with["if-no-files-found"]="ignore"' \
+  '.jobs["frame-capture-cloth"].strategy.inputs.mode=["off","on","drape"]' \
+  '.jobs["frame-capture-cloth"].strategy.inputs.mode=["off","on","drape","drape"]' \
+  '.jobs["frame-capture-cloth"].strategy.matrix.exclude=[{second:"both"}]' \
+  '.cloth_component.runs.steps[0].with["persist-credentials"]=true' \
+  '.cloth_component.runs.steps[0].with.ref="main"' \
+  '.cloth_component.runs.steps[1].run="true"' \
+  '.cloth_component.runs.steps[2].run="true"' \
+  '.cloth_component.runs.steps[3].if="false"' \
+  '.cloth_component.runs.steps[3].run="true"' \
+  '.cloth_component.runs.steps[3].env.CLOTH_MODE="off"' \
+  '.cloth_component.runs.steps[4].with.path="cloth-off.log"' \
+  '.cloth_component.runs.steps[4].with.name="unbound-frames"' \
+  '.cloth_component.runs.steps[4].with["if-no-files-found"]="ignore"' \
   '.jobs["ci-required-checks"].needs|=map(select(.!="frame-capture-cloth"))' \
   '.jobs["ci-required-checks"].steps[-1].with["job-results"]|=sub("frame-capture-cloth";"frame-capture")'; do
   jq "$mutation" "$scratch/workflow.json" >"$scratch/mutant.json"
