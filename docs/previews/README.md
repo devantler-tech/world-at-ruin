@@ -28,7 +28,7 @@ given, saved characters must keep their shape and equipment.
 
 ## At a glance
 
-| Preview | Launch setting | Retirement issue | Waiting since | Decision date |
+| Preview | Launch setting | Retirement issue | Waiting since | Decision due |
 |---|---|---|---|---|
 | [Layered outfit pickers](#layered-outfit-pickers) | `WAR_LAYERED_OUTFIT_PICKERS` | [#336](https://github.com/devantler-tech/world-at-ruin/issues/336) | 2026-07-22 | — |
 | [Walk cycle](#walk-cycle) | `WAR_WALK_CYCLE` | [#405](https://github.com/devantler-tech/world-at-ruin/issues/405) | 2026-07-27 | — |
@@ -112,8 +112,8 @@ for a few seconds, then fades, and a small `[H] controls` label brings it back.
 
 > A third outcome ("leave it opt-in") is not acceptable; that is the flag debt this issue exists to prevent.
 
-**Decide:** flip on · remove. #459 rules out leaving it switched off, so "iterate" applies
-only if a named gap is closed in the same change that retires the setting.
+**Decide:** flip on · iterate (name the gap) · remove. #459 rules out leaving it switched off,
+so an iterate answer means the named gap is closed in the same change that retires the setting.
 
 ## Cave-foot talus
 
@@ -209,7 +209,7 @@ the default path must still blend cleanly from the standing pose into the run.
 ## Ragged-cloth material
 
 **Launch setting:** `WAR_RAGGED_CLOTH_DETAIL=1`. **Retires through:**
-[#947](https://github.com/devantler-tech/world-at-ruin/issues/947). **Decision date:**
+[#947](https://github.com/devantler-tech/world-at-ruin/issues/947). **Decision due:**
 2026-11-01.
 
 **What the player sees change:** the ragged wrap every new character wakes in gets woven
@@ -240,7 +240,7 @@ drape and the waist are decided separately below.
 ## Ragged-wrap drape
 
 **Launch setting:** `WAR_RAGGED_CLOTH_DRAPE=1`. **Retires through:**
-[#950](https://github.com/devantler-tech/world-at-ruin/issues/950). **Decision date:**
+[#950](https://github.com/devantler-tech/world-at-ruin/issues/950). **Decision due:**
 2026-11-01.
 
 **What the player sees change:** the hanging panels of the ragged wrap flare and sag
@@ -271,7 +271,7 @@ waist refinement below, which depends on it.
 
 **Launch setting:** `WAR_RAGGED_WRAP_REFINEMENT=1`, which only works together with
 `WAR_RAGGED_CLOTH_DRAPE=1`. **Retires through:**
-[#1275](https://github.com/devantler-tech/world-at-ruin/issues/1275). **Decision date:**
+[#1275](https://github.com/devantler-tech/world-at-ruin/issues/1275). **Decision due:**
 2026-11-01.
 
 **What the player sees change:** with the drape on, the wrap's waist is narrower and its
@@ -297,7 +297,7 @@ flip on unless the drape does.
 
 **Launch setting:** `WAR_REGION_STONE=1`, which only works together with
 `WAR_GROUND_PLATES=1`. **Retires through:**
-[#1287](https://github.com/devantler-tech/world-at-ruin/issues/1287). **Decision date:**
+[#1287](https://github.com/devantler-tech/world-at-ruin/issues/1287). **Decision due:**
 2026-11-07.
 
 **What the player sees change:** how much bare stone shows through the ground depends on

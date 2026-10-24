@@ -80,9 +80,9 @@ To build your own `.app` instead, export with the `macOS` preset in `client/expo
 newest first — replaying after each build shows exactly what the agents grew.
 
 **Previews waiting for a decision:** eleven unfinished looks, from clothing and gaits to
-ground cover, drifting ash and control hints, can be tried by turning on a launch setting.
-The [preview page](docs/previews/README.md) shows each one side by side with frames,
-what it still lacks and the decision it is waiting for.
+ground cover, drifting ash and control hints, can be tried by turning on their launch settings; two of them also need a companion setting.
+The [preview page](docs/previews/README.md) lists the settings each one needs and shows them
+side by side with frames, what each still lacks and the decision it is waiting for.
 
 **Ragged-cloth material preview:** launch from source with
 `WAR_RAGGED_CLOTH_DETAIL=1 godot --path client`, or prefix the installed app's
