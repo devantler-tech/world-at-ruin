@@ -28,7 +28,10 @@ cleanup() {
   rm -rf "$tmp"
 }
 trap cleanup EXIT
-sleep 600 & canary=$!
+# Fixtures end on their own once this test is gone, even when a force-kill skips cleanup.
+# The bound stays far above each case's 15-second allowance, so the runner must still escalate.
+export FAKE_OWNER=$$ FAKE_LIFETIME_SECONDS=120
+bash -c 'while kill -0 "$FAKE_OWNER" 2>/dev/null && ((SECONDS < 600)); do sleep 1; done' & canary=$!
 mkdir -p "$tmp/fixture/client/tests" "$tmp/bin"
 : > "$tmp/fixture/client/tests/held.tscn"
 : > "$tmp/fixture/client/tests/boot_ledger_boot_test.tscn"
@@ -38,8 +41,8 @@ set -euo pipefail
 printf '%s\n' "$$" > "$FAKE_ENGINE"
 printf '%s\n' "$$" > "$FAKE_ENGINE.$$"
 trap '' TERM
-bash -c 'trap "" TERM; printf "%s\n" "$$" > "$FAKE_CHILD"; printf "%s\n" "$$" > "$FAKE_CHILD.$$"; while :; do sleep 0.1; done' &
-while :; do sleep 0.1; done
+bash -c 'trap "" TERM; printf "%s\n" "$$" > "$FAKE_CHILD"; printf "%s\n" "$$" > "$FAKE_CHILD.$$"; while kill -0 "$FAKE_OWNER" 2>/dev/null && ((SECONDS < FAKE_LIFETIME_SECONDS)); do sleep 0.1; done' &
+while kill -0 "$FAKE_OWNER" 2>/dev/null && ((SECONDS < FAKE_LIFETIME_SECONDS)); do sleep 0.1; done
 ENGINE
 chmod +x "$tmp/bin/godot"
 cat > "$tmp/capture-window" <<'CAPTURE'
