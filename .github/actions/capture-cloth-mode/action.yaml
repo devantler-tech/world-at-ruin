@@ -1,0 +1,32 @@
+name: Capture cloth mode
+description: Run the complete owner-local native cloth mode recipe
+inputs:
+  mode:
+    description: "Complete cloth mode: off, on, drape or both"
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Install Godot (pinned, checksum-verified)
+      run: bash tools/install-ci-macos-godot.sh
+      shell: bash
+    - name: Headless import + class-name scan
+      run: godot --headless --editor --quit --path client 2>&1 | tee import.log
+      shell: bash
+    - name: Capture the complete cloth mode
+      env:
+        CLOTH_MODE: ${{ inputs.mode }}
+      run: bash tools/capture-cloth-evidence.sh "$CLOTH_MODE"
+      shell: bash
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: cloth-frames-${{ inputs.mode }}-${{ github.sha }}
+        path: |
+          ${{ runner.temp }}/shots/ragged-cloth/${{ inputs.mode }}/*.png
+          ${{ runner.temp }}/shots/ragged-cloth/${{ inputs.mode }}/*.txt
+          cloth-${{ inputs.mode }}.log
+        if-no-files-found: error
