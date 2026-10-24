@@ -81,6 +81,7 @@ jobs:
           bash tools/source-evidence-component.test.sh
           bash tools/source-evidence-conditions.test.sh
           bash tools/source-evidence-workflow.test.sh
+          bash tools/native-worker-plan.test.sh
           go test -race tools/source-evidence/main.go tools/source-evidence/main_test.go
       - name: Manifest sequence is monotonic in release order and fail-closed
         run: ./tools/manifest-sequence.test.sh
@@ -1161,28 +1162,18 @@ jobs:
 
   client-export-macos:
     name: Client export (macOS)
-    needs: [detect-visual-changes]
+    needs:
+      - detect-visual-changes
     outputs:
       archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
       captured: ${{ steps.capture-exported.outputs.captured }}
-    # BUILD VERIFICATION, not distribution: this proves a change still exports
-    # and that the exported .app actually boots, so a broken export is caught on
-    # the PR rather than at release time. The shipped, version-stamped build is
-    # cd.yaml's job — the artifact uploaded here is a debugging convenience with
-    # no version identity, and is never an install source.
-    #
-    # macOS runner on purpose: Godot's built-in AD-HOC codesign only works on a
-    # macOS host, and an unsigned arm64 .app is killed by macOS before it can
-    # launch — a Linux-exported unsigned zip would be dead on arrival on the
-    # maintainer's Apple-Silicon machine.
+      base-recorded: ${{ steps.base-recorded.outputs.recorded }}
     runs-on: macos-15
     env:
       EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # This job uploads an artifact — never let the checked-out token
-          # ride along in it (zizmor artipacked).
           persist-credentials: false
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -1196,10 +1187,6 @@ jobs:
             *) echo '::error::export capture selection is unknown'; exit 1 ;;
           esac
       - name: Retained v1 reader artifact consumes the shipped recovery golden
-        # The writer may emit recovery v1 only because v0.51.1 is the retained
-        # monolithic rollback target. BOOT_OK alone is insufficient: recovery
-        # deliberately degrades when unreadable. This gate seeds the real v1
-        # golden and requires the released app to reconcile it without loss.
         run: ./tools/verify-retained-boot-recovery-reader.sh
       - name: Install Godot (pinned, checksum-verified)
         run: |
@@ -1216,9 +1203,6 @@ jobs:
           mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
           mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
       - name: Headless import + class-name scan
-        # Same rule as the smoke job: only the headless editor pass writes
-        # global_script_class_cache.cfg; exporting without it breaks class_name
-        # resolution in the packed scripts.
         run: godot --headless --editor --quit --path client 2>&1 | tee import.log
       - name: Export .app (release, ad-hoc signed)
         id: export-client
@@ -1235,10 +1219,6 @@ jobs:
           [[ "$archive_digest" =~ ^[0-9a-f]{64}$ ]]
           printf 'archive-sha256=%s\n' "$archive_digest" >> "$GITHUB_OUTPUT"
       - name: Smoke boot the EXPORTED app (60 frames)
-        # Boot the artifact itself, not the editor build — proves the shipped
-        # .app actually starts (packed resources resolve, signature is valid).
-        # pipefail: without it, tee masks a nonzero exit from the app itself
-        # (a crash with no matching error line would upload a broken artifact).
         run: |
           set -euo pipefail
           unzip -q build/WorldAtRuin.zip -d build/app
@@ -1251,7 +1231,7 @@ jobs:
           if grep -qE "SCRIPT ERROR|^ERROR" exported-smoke.log; then
             echo "::error::Errors booting the exported app"; exit 1
           fi
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: WorldAtRuin-macOS-universal
           path: build/WorldAtRuin.zip
@@ -1259,14 +1239,80 @@ jobs:
       - name: Capture the exact exported HEAD
         id: capture-exported
         if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-        # The native capture retains its own complete fifteen-minute
-        # budget. Pin its reviewed control code independently of the app's
-        # already-executed workspace; the archive and integration are checked
-        # again immediately before the fresh evidence app is extracted.
         timeout-minutes: 15
         uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@8868b4c00b0e9ff330b83f200a6c87a100e51635
         with:
           archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+        id: export-base-checkout
+        if: always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == 'true'
+        timeout-minutes: 1
+      - name: Install Godot and templates for the exported base comparison
+        id: base-engine
+        timeout-minutes: 2
+        continue-on-error: true
+        run: |
+          started="$(date +%s)"
+          curl -fsSL -o godot-base.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          echo "${GODOT_MACOS_SHA512}  godot-base.zip" | shasum -a 512 -c -
+          unzip -q godot-base.zip
+          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
+          sudo chmod +x /usr/local/bin/godot
+          curl -fsSL -o base-templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "${GODOT_TEMPLATES_SHA512}  base-templates.tpz" | shasum -a 512 -c -
+          unzip -q base-templates.tpz
+          mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
+          elapsed=$(( $(date +%s) - started ))
+          echo "ADDED CI COST: base Godot and templates install ${elapsed}s"
+          {
+            echo "### Exported-client comparison setup"
+            echo
+            echo "Pinned Godot and templates install: **${elapsed}s**."
+          } >> "$GITHUB_STEP_SUMMARY"
+        if: always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == 'true' && steps.export-base-checkout.outcome == 'success'
+      - name: Render the PR base through the exported client
+        id: base-capture
+        if: always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == 'true' && steps.export-base-checkout.outcome == 'success' && steps.base-engine.outcome == 'success'
+        timeout-minutes: 9
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tools/exported-frame-change-report.sh render-base \
+            "$BASE_SHA" "${RUNNER_TEMP}/exported-frame-report"
+      - name: Bind the advisory result to this source and attempt
+        timeout-minutes: 1
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ENGINE_OUTCOME: ${{ steps.base-engine.outcome }}
+          CAPTURE_OUTCOME: ${{ steps.base-capture.outcome }}
+        run: |
+          tools/exported-frame-change-report.sh record-source \
+            "${RUNNER_TEMP}/exported-frame-report" "$ENGINE_OUTCOME" "$CAPTURE_OUTCOME"
+        id: base-record
+        if: always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == 'true' && steps.export-base-checkout.outcome == 'success'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        timeout-minutes: 1
+        with:
+          name: exported-base-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/exported-frame-report/source.json
+            ${{ runner.temp }}/exported-frame-report/*.log
+            ${{ runner.temp }}/exported-frame-report/exported-shots-base/*.png
+            ${{ runner.temp }}/exported-frame-report/exported-shots-base/*.txt
+          if-no-files-found: error
+        id: base-upload
+        if: always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == 'true' && steps.export-base-checkout.outcome == 'success' && steps.base-record.outcome == 'success'
+      - id: base-recorded
+        name: Acknowledge complete BASE outcome
+        if: always() && !cancelled() && needs.detect-visual-changes.outputs.export_affecting == 'true' && steps.base-upload.outcome == 'success'
+        timeout-minutes: 1
+        run: echo "recorded=true" >> "$GITHUB_OUTPUT"
 
   license-guard:
     name: IP guard (licences, provenance, originality boundary)
@@ -1797,7 +1843,7 @@ jobs:
             # corrupt the output file before these fail-open values are written.
             capture_everything
             exit 0
-          elif grep -qE '^tools/source-(capture|evidence)|^tools/(render-source-base|report-source-frames)\.sh$' gate_machinery.txt; then
+          elif grep -qE '^tools/source-(capture|evidence)|^tools/(render-source-base|report-source-frames)\.sh$|^tools/native-worker-plan\.test\.sh$|^\.github/actions/capture-cloth-mode/action\.yaml$' gate_machinery.txt; then
             echo "This PR changes source capture machinery — capturing everything."
             capture_everything
             exit 0
@@ -2007,25 +2053,28 @@ jobs:
 
   frame-capture-head:
     name: Source capture (${{ matrix.group }})
-    needs: [detect-visual-changes]
+    needs:
+      - detect-visual-changes
     if: needs.detect-visual-changes.outputs.visual == 'true'
     runs-on: macos-15
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        group: [world, activity]
+        group:
+          - world
+          - activity
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
       GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: server/go.mod
           cache: false
@@ -2576,7 +2625,7 @@ jobs:
         env:
           CAPTURE_GROUP: ${{ matrix.group }}
         run: bash tools/source-evidence-package.sh head
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: source-head-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.group }}
           path: |
@@ -2603,36 +2652,30 @@ jobs:
             ${{ runner.temp }}/shots/evidence.json
             ${{ runner.temp }}/shots/logs/*.log
           if-no-files-found: error
-
-  frame-capture-base:
-    name: Source capture (BASE)
-    needs: [detect-visual-changes]
-    if: needs.detect-visual-changes.outputs.visual == 'true'
-    runs-on: macos-15
-    timeout-minutes: 15
-    env:
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
-      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        id: source-base-checkout
+        if: always() && !cancelled() && matrix.group == 'world'
+        timeout-minutes: 1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         timeout-minutes: 1
         with:
           go-version-file: server/go.mod
           cache: false
+        id: source-base-toolchain
+        if: always() && !cancelled() && matrix.group == 'world' && steps.source-base-checkout.outcome == 'success'
       - id: install
         name: Install Godot (pinned, checksum-verified)
         timeout-minutes: 2
         continue-on-error: true
         run: bash tools/install-ci-macos-godot.sh
+        if: always() && !cancelled() && matrix.group == 'world' && steps.source-base-checkout.outcome == 'success' && steps.source-base-toolchain.outcome == 'success'
       - id: base
         name: Render the merge base for comparison
-        if: steps.install.outcome == 'success'
+        if: always() && !cancelled() && matrix.group == 'world' && steps.source-base-checkout.outcome == 'success' && steps.source-base-toolchain.outcome == 'success' && steps.install.outcome == 'success'
         timeout-minutes: 8
         continue-on-error: true
         run: bash tools/render-source-base.sh
@@ -2642,46 +2685,64 @@ jobs:
           INSTALL_RESULT: ${{ steps.install.outcome }}
           RENDER_RESULT: ${{ steps.base.outcome }}
         run: bash tools/source-evidence-package.sh base
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: source-base-seal
+        if: always() && !cancelled() && matrix.group == 'world' && steps.source-base-checkout.outcome == 'success' && steps.source-base-toolchain.outcome == 'success'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         timeout-minutes: 1
         with:
           name: source-base-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/source-base/
           if-no-files-found: error
+        id: source-base-upload
+        if: always() && !cancelled() && matrix.group == 'world' && steps.source-base-checkout.outcome == 'success' && steps.source-base-toolchain.outcome == 'success' && steps.source-base-seal.outcome == 'success'
+
+  frame-capture-base:
+    name: Source capture (BASE)
+    needs:
+      - detect-visual-changes
+      - frame-capture-head
+    if: needs.detect-visual-changes.outputs.visual == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      FIRST_RUN: ${{ needs.detect-visual-changes.outputs.first_run }}
+      GPU_GATED: ${{ needs.detect-visual-changes.outputs.gpu_gated }}
+    steps:
+      - name: Require complete native source production
+        env:
+          SOURCE_RESULT: ${{ needs.frame-capture-head.result }}
+        run: '[[ "$SOURCE_RESULT" == success ]]'
 
   frame-capture-cloth:
-    name: Frame capture (cloth evidence, ${{ matrix.mode }})
-    # Native Metal, identical selection and complete evidence in a parallel
-    # runner. No cloth mode or camera is exchanged for a shorter verdict.
-    needs: [detect-visual-changes]
+    name: Frame capture (cloth evidence, ${{ matrix.pair }})
+    needs:
+      - detect-visual-changes
     if: needs.detect-visual-changes.outputs.visual == 'true'
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 32
     strategy:
       fail-fast: false
       matrix:
-        mode: [off, on, drape, both]
+        include:
+          - pair: off/on
+            first: "off"
+            second: "on"
+          - pair: drape/both
+            first: drape
+            second: both
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Capture the first complete cloth mode
+        timeout-minutes: 15
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@7d411bb93302afde81006c39aaca32a1b541b76f
         with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install Godot (pinned, checksum-verified)
-        run: bash tools/install-ci-macos-godot.sh
-      - name: Headless import + class-name scan
-        run: godot --headless --editor --quit --path client 2>&1 | tee import.log
-      - name: Capture the complete cloth mode
-        env:
-          CLOTH_MODE: ${{ matrix.mode }}
-        run: bash tools/capture-cloth-evidence.sh "$CLOTH_MODE"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+          mode: ${{ matrix.first }}
+      - name: Capture the second complete cloth mode
+        if: always() && !cancelled()
+        timeout-minutes: 15
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@7d411bb93302afde81006c39aaca32a1b541b76f
         with:
-          name: cloth-frames-${{ matrix.mode }}-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.png
-            ${{ runner.temp }}/shots/ragged-cloth/${{ matrix.mode }}/*.txt
-            cloth-${{ matrix.mode }}.log
-          if-no-files-found: error
+          mode: ${{ matrix.second }}
 
   frame-capture-exported-head:
     name: Frame capture (exported HEAD)
@@ -2702,78 +2763,20 @@ jobs:
 
   frame-capture-exported-base:
     name: Frame capture (exported BASE)
-    # The base export does not depend on the HEAD build or captures. Preserve
-    # its own recipe, real macOS renderer and advisory installation/render result.
-    needs: [detect-visual-changes]
+    needs:
+      - detect-visual-changes
+      - client-export-macos
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-    runs-on: macos-15
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
     env:
       EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install Godot and templates for the exported base comparison
-        id: base-engine
-        timeout-minutes: 2
-        # Advisory with the base render below. A transient download or old-base
-        # export failure must not turn this required evidence job red; the
-        # report step names the missing comparison explicitly instead.
-        continue-on-error: true
-        run: |
-          started="$(date +%s)"
-          curl -fsSL -o godot-base.zip "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
-          echo "${GODOT_MACOS_SHA512}  godot-base.zip" | shasum -a 512 -c -
-          unzip -q godot-base.zip
-          printf '#!/bin/sh\nexec "%s/Godot.app/Contents/MacOS/Godot" "$@"\n' "${PWD}" | sudo tee /usr/local/bin/godot >/dev/null
-          sudo chmod +x /usr/local/bin/godot
-          curl -fsSL -o base-templates.tpz "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
-          echo "${GODOT_TEMPLATES_SHA512}  base-templates.tpz" | shasum -a 512 -c -
-          unzip -q base-templates.tpz
-          mkdir -p "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
-          mv templates/* "${HOME}/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable/"
-          elapsed=$(( $(date +%s) - started ))
-          echo "ADDED CI COST: base Godot and templates install ${elapsed}s"
-          {
-            echo "### Exported-client comparison setup"
-            echo
-            echo "Pinned Godot and templates install: **${elapsed}s**."
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Render the PR base through the exported client
-        id: base-capture
-        if: steps.base-engine.outcome == 'success'
-        # Leave time for the advisory failure record and artifact upload even
-        # when a healthy old base exceeds this comparison's feedback budget.
-        timeout-minutes: 9
-        continue-on-error: true
+      - name: Require the complete native BASE outcome
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          tools/exported-frame-change-report.sh render-base \
-            "$BASE_SHA" "${RUNNER_TEMP}/exported-frame-report"
-      - name: Bind the advisory result to this source and attempt
-        timeout-minutes: 1
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          ENGINE_OUTCOME: ${{ steps.base-engine.outcome }}
-          CAPTURE_OUTCOME: ${{ steps.base-capture.outcome }}
-        run: |
-          tools/exported-frame-change-report.sh record-source \
-            "${RUNNER_TEMP}/exported-frame-report" "$ENGINE_OUTCOME" "$CAPTURE_OUTCOME"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        timeout-minutes: 1
-        with:
-          name: exported-base-${{ github.sha }}-${{ github.run_attempt }}
-          # Never upload the temporary Git checkout, source tree or app bundle.
-          path: |
-            ${{ runner.temp }}/exported-frame-report/source.json
-            ${{ runner.temp }}/exported-frame-report/*.log
-            ${{ runner.temp }}/exported-frame-report/exported-shots-base/*.png
-            ${{ runner.temp }}/exported-frame-report/exported-shots-base/*.txt
-          if-no-files-found: error
+          EXPORT_RESULT: ${{ needs.client-export-macos.result }}
+          BASE_RECORDED: ${{ needs.client-export-macos.outputs.base-recorded }}
+        run: '[[ "$EXPORT_RESULT" == success && "$BASE_RECORDED" == true ]]'
 
   frame-capture-exported:
     name: Frame capture (exported client)

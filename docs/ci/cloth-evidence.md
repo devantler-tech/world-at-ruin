@@ -1,15 +1,19 @@
 # Cloth capture evidence
 
-The required **Frame capture (cloth evidence, mode)** matrix runs each of its
-four fixed modes on a separate native macOS runner, alongside
+The required **Frame capture (cloth evidence, pair)** matrix runs two native
+macOS workers: `off/on` and `drape/both`, alongside
 **Frame capture (evidence)** rather than after
 its other scenarios. Both use the same visual-change decision. A change to the
 capture script or macOS installer triggers capture even without a client edit.
 The stable **CI - Required Checks** aggregate requires the new job's result as
 well as the remaining source and exported capture results. Every matrix worker
-must succeed; fail-fast is disabled so one failed mode does not cancel the
-other modes' evidence. Missing, duplicated or excluded modes fail the workflow
-contract tests. Each worker retains the 15-minute bound.
+must succeed; fail-fast is disabled and each second mode uses
+`always() && !cancelled()` so a failed first mode does not skip its partner, while
+workflow cancellation still stops superseded work. Missing, duplicated or excluded
+modes fail the workflow contract tests. Each complete mode retains its own
+15-minute phase bound. The combined worker's 32-minute safety envelope allows
+both phases and setup to report; it does not establish the separate 15-minute
+complete-feedback objective.
 
 ## What must stay complete
 
@@ -18,8 +22,10 @@ detail and drape off, detail only, drape only, and both enabled. Every mode has
 front, rear, profile and gameplay views, each with ten comparison arms. The
 result is **160 PNGs and 160 caption files**. All must be nonempty.
 With no argument the helper captures all four modes for local use; CI passes
-exactly one of `off`, `on`, `drape` or `both` to each worker. Unknown, empty or
-extra arguments fail before starting the engine. Each worker verifies all
+exactly one of `off`, `on`, `drape` or `both` to each invocation of the local
+capture action. Every action performs its own checkout, verified installation,
+import, capture and upload. Unknown, empty or
+extra arguments fail before starting the engine. Each invocation verifies all
 40 images and 40 captions belonging to its mode.
 
 Each mode directory must be absent before capture. Atomic creation refuses reused
@@ -48,7 +54,8 @@ evidence is unchanged.
 
 ## Validate a change
 
-Run `bash tools/cloth-capture.test.sh` for the actual capture script's synthetic
+Run `bash tools/native-worker-plan.test.sh` for complete five-worker routing and
+failure acknowledgements. Run `bash tools/cloth-capture.test.sh` for the actual capture script's synthetic
 complete-set and refusal controls, the installer's checksum-before-install
 controls, real Git change-routing fixtures and parsed required-job wiring.
 Run `bash tools/client-proof-workflow-guard.test.sh` for the complete aggregate's
@@ -58,6 +65,6 @@ they are not proof that real Metal rendered correctly.
 Before promotion, inspect the complete hosted run at the proposed head: all
 cloth modes must succeed, their four artifacts must contain all 320 evidence files, and
 all other required jobs must remain green. Record source-frame, cloth and overall
-feedback times, including setup and runner waits. The cloth job has a 15-minute
-bound. Splitting it is not proof that the entire workflow meets the portfolio's
+feedback times, including setup and runner waits. Keeping every mode's 15-minute
+bound is not proof that the entire workflow meets the portfolio's
 15-minute feedback objective; remaining critical paths stay tracked separately.

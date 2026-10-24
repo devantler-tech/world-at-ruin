@@ -415,13 +415,18 @@ the preview and client/native workflow guards after changes; native captures and
 whole-run timings remain separate proof. See
 [exported HEAD evidence](docs/ci/exported-head-evidence.md).
 
-Native source-frame evidence runs in isolated `world`, `activity` and BASE jobs.
+Native source-frame evidence runs as isolated `world`, `activity` and BASE operations.
+The `world` worker also runs the independent inline BASE steps, preserving separate
+checkout, save/output directories, outcome records and individual step bounds.
+Keep the source HEAD recipe inline so frozen scene guards inspect the real capture
+commands. Both source workers retain the original fifteen-minute total job limit.
+Keep BASE inline: composite actions cannot enforce those per-step deadlines.
 The stable required collector accepts only the complete source/run/attempt-bound
 PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
 Native source, exported-client and cloth captures share the standard Apple-silicon
 `macos-15` runner. Measure queue delay separately from execution time; a runner
 label alone does not prove the complete feedback budget.
-Run the source-input, component-contract, source-workflow and Go evidence
+Run the native-worker-plan, source-input, component-contract, source-workflow and Go evidence
 tests after changes; hosted capture and complete feedback timing remain separate
 proof. See [source evidence](docs/ci/source-evidence.md).
 
@@ -456,9 +461,13 @@ refusal, complete scene selection and cleanup acknowledgments. Run
 `bash tools/sandbox-runtime-handoff.test.sh` and the deadline/lifecycle suites
 after changes. See [runtime inventory](docs/ci/trusted-runtime-inventory.md).
 
-Cloth capture runs in its own required native macOS job, in parallel with the
+Cloth capture runs in two required native macOS workers (`off/on`, `drape/both`), in parallel with the
 remaining source frames. Preserve all four modes, four views, ten comparison
 arms and both image/caption files; never exchange evidence for a shorter job.
+Each full mode retains its fifteen-minute bound and independent installation;
+the second mode is attempted even after a failed first mode. Complete visual CI
+uses five expanded Mac workers; actual queue-inclusive hosted timings, not that
+count or a combined worker's safety timeout, establish the feedback budget.
 Run `bash tools/cloth-capture.test.sh` and
 `bash tools/client-proof-workflow-guard.test.sh` after changing its capture,
 verified installer, routing or required-result wiring. Local synthetic controls
@@ -1627,11 +1636,11 @@ the permanent blocking policy.
     unrelated-canary survival. Unreadable process inspection is a refused cleanup verdict.
     Its macOS export job is **build verification** — proof the project still exports and the
     exported app boots — not a distribution channel; that artifact has no version identity.
-    Exported HEAD and BASE frame captures run on independent macOS workers. The HEAD retains
+    Exported HEAD and BASE frame captures run as separate operations on the native export worker. The HEAD retains
     the default-world, opt-in-preview and first-run evidence. A stable terminal job requires both
-    workers and source/run/attempt-bound comparison data before publishing the complete artifact.
+    operations and source/run/attempt-bound comparison data before publishing the complete artifact.
     BASE installation and rendering have two- and nine-minute step bounds inside the 15-minute
-    worker budget, reserving time to record and upload their actual outcome. A known BASE failure
+    BASE operation budget, reserving time to record and upload their actual outcome. A known BASE failure
     remains advisory; missing or stale transport evidence is not. Run
     `tools/exported-frame-change-report.test.sh` and `tools/preview-flags.test.sh`.
   - `lavapipe-capture.yaml` owns advisory volumetric evidence independently of required CI.
