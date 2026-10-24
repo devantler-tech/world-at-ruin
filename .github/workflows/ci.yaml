@@ -75,6 +75,8 @@ jobs:
         run: ./tools/preview-flags.test.sh
       - name: Cloth evidence is complete and independently required
         run: bash tools/cloth-capture.test.sh
+      - name: Local lint boundaries cannot be skipped with the lint job
+        run: bash tools/local-lint-workflow.test.sh
       - name: Source capture preserves every scenario and joins complete evidence
         run: |
           bash tools/source-capture-inputs.test.sh
@@ -1359,19 +1361,37 @@ jobs:
   # container's Go can lag.
   lint:
     name: Lint
-    uses: devantler-tech/.github/.github/workflows/lint.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    with:
-      # Pull-request and merge-queue code is untrusted, including this repository's
-      # MegaLinter configuration. Keep lint read-only and never expose the GitHub App
-      # credential used by release automation. Auto-fixes belong on a separate trusted
-      # workflow that does not execute proposed code.
-      #
-      # Read-only is not a softer gate: with APPLY_FIXES=none a deliberately misformatted
-      # JSON file is a prettier warning and MegaLinter exits 0 (measured), while real lint
-      # ERRORS — invalid JSON, shellcheck failures — still fail the job.
-      apply-fixes: false
+    # Preserve the former reusable's per-invocation cancellation lane.
+    concurrency:
+      group: "lint-${{ github.repository }}-${{ github.ref }}-${{ github.workflow }}-false"
+      cancel-in-progress: true
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint
+        uses: oxsecurity/megalinter/flavors/go@9949bad031045f366be2467e00e8371a7328a2e2 # v10.1.0
+        env:
+          DEFAULT_WORKSPACE: .
+          GOTOOLCHAIN: local
+          MEGALINTER_CONFIG: ${{ github.workspace }}/.mega-linter.yml
+          VALIDATE_ALL_CODEBASE: true
+          # Proposed linter configuration can execute code. Never provide it
+          # the release App key, enable fixes or persist checkout credentials.
+          APPLY_FIXES: none
+          APPLY_FIXES_EVENT: all
+          APPLY_FIXES_MODE: commit
+          # Preserve the two documented compatibility exceptions only; other
+          # unknown workflow permissions/concurrency keys remain errors.
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality -ignore unexpected.key..queue..for..concurrency..section
 
   duplication-gate:
     name: Block new code duplication
