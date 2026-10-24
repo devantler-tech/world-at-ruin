@@ -242,7 +242,7 @@ if ! printf '%s\n' "$exported_block" |
   t_fail "frame-capture-exported does not pin a hosted-safe 16:9 resolution"
 fi
 head_resolution_uses="$(
-  printf '%s\n' "$exported_block" |
+  yq -r '.runs.steps[] | select(has("run")) | .run' "$ROOT/.github/actions/capture-exported-head/action.yaml" |
     grep -Fc -- "--resolution \"\${EXPORTED_CAPTURE_RESOLUTION}\"" || true
 )"
 if [ "$head_resolution_uses" -ne 3 ]; then
@@ -255,13 +255,17 @@ fi
 
 # Actual fork/join source: neither capture waits on the other, and the stable
 # terminal check cannot pass without the HEAD result and source-bound BASE data.
-yq -o=json '.' "$WORKFLOW" >"$SCRATCH_DIR/parallel.json"
+yq -o=json '.' "$WORKFLOW" >"$SCRATCH_DIR/workflow.json"
+yq -o=json '.' "$ROOT/.github/actions/capture-exported-head/action.yaml" >"$SCRATCH_DIR/component.json"
+jq --slurpfile component "$SCRATCH_DIR/component.json" '. + {exported_head_component:$component[0]}' \
+  "$SCRATCH_DIR/workflow.json" >"$SCRATCH_DIR/parallel.json"
 parallel_contract() {
   # shellcheck disable=SC2016 # jq owns these bound variables and literal expressions.
   jq -e '
 		.jobs["frame-capture-exported-head"] as $head |
 		.jobs["frame-capture-exported-base"] as $base |
 		.jobs["frame-capture-exported"] as $join |
+		.exported_head_component as $component |
 		all([$head,$base,$join][]; (has("continue-on-error") or has("defaults") or has("permissions"))|not) and
 		all([$head,$base,$join][]; .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false}) and
 		$head.needs==["detect-visual-changes","client-export-macos"] and
@@ -270,8 +274,11 @@ parallel_contract() {
 		$base.if==$head.if and $head.env.EXPORTED_CAPTURE_RESOLUTION=="1024x576" and $base.env==$head.env and
 		$head["runs-on"]=="macos-15" and $base["runs-on"]=="macos-15" and
 		all($head.steps[];(has("continue-on-error") or has("if"))|not) and
-		$head.steps[-1].with.name=="exported-head-${{ github.sha }}-${{ github.run_attempt }}" and
-		$head.steps[-1].with["if-no-files-found"]=="error" and
+		$head.steps[-1].uses=="./.github/actions/capture-exported-head" and
+		$head.steps[-1].with=={"archive-sha256":"${{ needs.client-export-macos.outputs.archive-sha256 }}"} and
+		all($component.runs.steps[];(has("continue-on-error") or has("if"))|not) and
+		($component.runs.steps[]|select(.id=="upload").with.name)=="exported-head-${{ github.sha }}-${{ github.run_attempt }}" and
+		($component.runs.steps[]|select(.id=="upload").with["if-no-files-found"])=="error" and
 		$base.steps[1].id=="base-engine" and $base.steps[1]["continue-on-error"]==true and
 		$base.steps[2].id=="base-capture" and $base.steps[2]["continue-on-error"]==true and
 		$base["timeout-minutes"]==15 and
@@ -304,7 +311,7 @@ else
     '.jobs["frame-capture-exported-base"].needs += ["client-export-macos"]' \
     '.jobs["frame-capture-exported-head"]["continue-on-error"]=true' \
     '.jobs["frame-capture-exported-head"].steps[1]["continue-on-error"]=true' \
-    '.jobs["frame-capture-exported-head"].steps[-1].with.name="unbound-head"' \
+    '(.exported_head_component.runs.steps[]|select(.id=="upload")).with.name="unbound-head"' \
     '.jobs["frame-capture-exported-base"].steps[2].env.BASE_SHA="wrong"' \
     'del(.jobs["frame-capture-exported-base"].steps[1]["timeout-minutes"])' \
     '.jobs["frame-capture-exported-base"].steps[2]["timeout-minutes"]=15' \

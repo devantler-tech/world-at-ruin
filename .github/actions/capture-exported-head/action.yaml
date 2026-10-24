@@ -1,0 +1,264 @@
+name: Capture exported HEAD
+description: Verify and photograph the exact native app archive without accepting stale capture state.
+author: devantler-tech
+inputs:
+  archive-sha256:
+    description: SHA-256 emitted by the native archive producer.
+    required: true
+outputs:
+  captured:
+    description: True only after all selected native evidence uploads successfully.
+    value: ${{ steps.complete.outputs.captured }}
+runs:
+  using: composite
+  steps:
+    - name: Admit exact source, archive and fresh state
+      id: prepare
+      shell: bash
+      env:
+        EXPECTED_ARCHIVE_SHA256: ${{ inputs.archive-sha256 }}
+      run: |-
+        set -euo pipefail
+        fail() { printf 'exported HEAD admission: %s\n' "$*" >&2; exit 1; }
+        [[ "${EXPECTED_ARCHIVE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || fail 'missing or invalid producer digest'
+        [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || fail 'missing integration source'
+        [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || fail 'another integration source'
+        git -c core.fsmonitor=false diff --quiet --no-ext-diff --no-textconv HEAD -- || fail 'dirty capture source'
+        [[ -f build/WorldAtRuin.zip && ! -L build/WorldAtRuin.zip ]] || fail 'archive is absent or linked'
+        actual_digest="$(shasum -a 256 build/WorldAtRuin.zip)"
+        [[ "${actual_digest%% *}" == "$EXPECTED_ARCHIVE_SHA256" ]] || fail 'archive differs from the native producer'
+        for capture_path in build/evidence-app "$RUNNER_TEMP/exported-shots" \
+          "$RUNNER_TEMP/probe_save.json" "$RUNNER_TEMP/probe_save_vault.json" "$RUNNER_TEMP/probe_save_recovery.json" \
+          "$RUNNER_TEMP/exported_preview_save.json" "$RUNNER_TEMP/exported_preview_save_vault.json" "$RUNNER_TEMP/exported_preview_save_recovery.json" \
+          "$RUNNER_TEMP/no_such_save.json" "$RUNNER_TEMP/no_such_save_vault.json" "$RUNNER_TEMP/no_such_save_recovery.json"; do
+          [[ ! -e "$capture_path" && ! -L "$capture_path" ]] || fail 'capture app, save or output state is not fresh'
+        done
+    - name: Capture frames from the exported client
+      run: |
+        set -o pipefail
+        mkdir -p "${RUNNER_TEMP}/exported-shots"
+        unzip -q build/WorldAtRuin.zip -d build/evidence-app
+        # Seed a save for the same reason the editor capture does: with none
+        # present the first-run creator opens and its panel covers a third of
+        # every frame. Checked explicitly rather than trusting errexit: a
+        # silent miss would produce frames of the character creator that
+        # still passed every downstream guard.
+        if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/probe_save.json"; then
+          echo "::error::could not seed the capture save from client/recipes/wanderer.json — frames would show the first-run creator instead of the world"
+          exit 1
+        fi
+        WAR_CAPTURE=1 \
+        WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
+        WAR_SAVE_PATH="${RUNNER_TEMP}/probe_save.json" \
+        WAR_VAULT_PATH="${RUNNER_TEMP}/probe_save_vault.json" \
+        WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/probe_save_recovery.json" \
+          "build/evidence-app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+          --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-capture.log
+        if ! grep -q "CAPTURE PASS" exported-capture.log; then
+          echo "::error::exported-client capture did not report PASS — see log"; tail -40 exported-capture.log; exit 1
+        fi
+        # Same boot proof as the editor capture: PASS asserts the world
+        # exists and is visible, but a path that returns early AFTER the
+        # terrain is built and BEFORE main.gd finishes booting would still
+        # satisfy it — and the frames would depict a half-initialised game.
+        if ! grep -q "BOOT_OK" exported-capture.log; then
+          echo "::error::exported-client capture never reached BOOT_OK — frames depict a partially booted game"
+          tail -40 exported-capture.log; exit 1
+        fi
+        # Same error scan as the editor capture, with the same Metal fence
+        # carve-out (a virtualised-GPU driver retry that recovers, not a
+        # render fault) and the same filter-to-a-FILE form: under pipefail a
+        # `grep -v … | grep -q` pipeline can misreport a SIGPIPE'd upstream
+        # as "no errors found".
+        grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+          exported-capture.log > exported-capture.filtered.log || true
+        if grep -qE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log; then
+          echo "::error::errors during the exported-client capture — frames may not depict a healthy world"
+          grep -nE "SCRIPT ERROR|^ERROR" exported-capture.filtered.log | head -20
+          exit 1
+        fi
+      id: world
+      shell: bash
+    - name: Capture opted-in previews from the exported client
+      run: |
+        set -o pipefail
+        mkdir -p "${RUNNER_TEMP}/exported-shots/opt-in-previews"
+        if ! cp client/recipes/wanderer.json "${RUNNER_TEMP}/exported_preview_save.json"; then
+          echo "::error::could not seed the exported opt-in preview save — frames would show the first-run creator instead of the treatments"
+          exit 1
+        fi
+        flags_file="${RUNNER_TEMP}/exported-shots/opt-in-previews/enabled-flags.txt"
+        tools/preview-flags.sh --env >"$flags_file"
+        echo "opt-in treatments enabled for the exported capture:"
+        cat "$flags_file"
+        set -a
+        # shellcheck source=/dev/null
+        . "$flags_file"
+        set +a
+        WAR_CAPTURE=1 \
+        WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots/opt-in-previews" \
+        WAR_SAVE_PATH="${RUNNER_TEMP}/exported_preview_save.json" \
+        WAR_VAULT_PATH="${RUNNER_TEMP}/exported_preview_save_vault.json" \
+        WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/exported_preview_save_recovery.json" \
+          "build/evidence-app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+          --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-previews.log
+        if ! grep -q "CAPTURE PASS" exported-previews.log; then
+          echo "::error::exported opt-in preview capture did not report PASS"
+          tail -40 exported-previews.log
+          exit 1
+        fi
+        if ! grep -q "BOOT_OK" exported-previews.log; then
+          echo "::error::exported opt-in preview capture never reached BOOT_OK"
+          tail -40 exported-previews.log
+          exit 1
+        fi
+        grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+          exported-previews.log > exported-previews.filtered.log || true
+        if grep -qE "SCRIPT ERROR|^ERROR" exported-previews.filtered.log; then
+          echo "::error::errors during the exported opt-in preview capture"
+          grep -nE "SCRIPT ERROR|^ERROR" exported-previews.filtered.log | head -20
+          exit 1
+        fi
+      id: previews
+      shell: bash
+    - name: Capture the exported first-run UI
+      run: |
+        set -o pipefail
+        # The save must be ABSENT here — its absence is precisely what makes
+        # the creator open. Point at a path in the run's temp dir that was
+        # never created; the tool fails closed if the creator does not
+        # appear, so a stray save cannot silently turn this back into a
+        # world shot.
+        WAR_CAPTURE=1 \
+        WAR_SCENARIO=first_run \
+        WAR_LAYERED_OUTFIT_PICKERS=1 \
+        WAR_SHOT_DIR="${RUNNER_TEMP}/exported-shots" \
+        WAR_SAVE_PATH="${RUNNER_TEMP}/no_such_save.json" \
+        WAR_VAULT_PATH="${RUNNER_TEMP}/no_such_save_vault.json" \
+        WAR_BOOT_RECOVERY_PATH="${RUNNER_TEMP}/no_such_save_recovery.json" \
+          "build/evidence-app/World at Ruin.app/Contents/MacOS/World at Ruin" \
+          --resolution "${EXPORTED_CAPTURE_RESOLUTION}" 2>&1 | tee exported-first-run.log
+        # Require the FIRST-RUN marker, not a bare PASS — the world scenario
+        # prints "CAPTURE PASS" too, and its PNGs already sit in the same
+        # directory, so a silent fall-back to the default scenario would
+        # otherwise go green.
+        if ! grep -qE "[0-9]+ first-run vantages? written" exported-first-run.log; then
+          echo "::error::exported first-run capture did not report a first-run vantage — see log"; tail -40 exported-first-run.log; exit 1
+        fi
+        if ! grep -Fxq "BACKDROP PINNED — scenery clocks fixed before first-run capture" exported-first-run.log; then
+          echo "::error::exported first-run capture did not pin its live scenery clock before boot"
+          tail -40 exported-first-run.log; exit 1
+        fi
+        # Require the FULL expected set, for the editor job's reason: a
+        # regression that dropped the lower-panel shot or the preset loop
+        # would still report SOME number. The preset list is read from the
+        # creator itself so adding a preset cannot leave CI checking the old
+        # set; fail loudly if it cannot be parsed.
+        presets=$(grep -oE 'const PRESETS := \[[^]]*\]' client/scripts/character_creator.gd \
+          | grep -oE '"[a-z_]+"' | tr -d '"')
+        if [ -z "$presets" ]; then
+          echo "::error::could not read PRESETS from client/scripts/character_creator.gd — cannot tell which frames to require"
+          exit 1
+        fi
+        expected="first_run first_run_outfit first_run_torso_clothing first_run_legs_clothing first_run_feet_clothing first_run_feet_armor first_run_head_clothing first_run_head_armor first_run_hands_armor first_run_lower"
+        for p in $presets; do expected="$expected first_run_$p"; done
+        missing=""
+        for f in $expected; do
+          [ -s "${RUNNER_TEMP}/exported-shots/$f.png" ] || missing="$missing $f.png"
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::exported first-run frames missing:$missing"
+          ls -la "${RUNNER_TEMP}/exported-shots" || true
+          exit 1
+        fi
+        echo "exported first-run frames present:$expected"
+        # This run exercises the ABSENT-save branch, which the seeded world
+        # capture never touches, so it needs its own boot proof.
+        if ! grep -q "BOOT_OK" exported-first-run.log; then
+          echo "::error::exported first-run capture never reached BOOT_OK — the frame depicts a partially booted game"
+          tail -40 exported-first-run.log; exit 1
+        fi
+        grep -vE "timeout waiting for fence|drivers/metal/rendering_device_driver_metal" \
+          exported-first-run.log > exported-first-run.filtered.log || true
+        if grep -qE "SCRIPT ERROR|^ERROR" exported-first-run.filtered.log; then
+          echo "::error::errors during the exported first-run capture"
+          grep -nE "SCRIPT ERROR|^ERROR" exported-first-run.filtered.log | head -20
+          exit 1
+        fi
+      id: first-run
+      shell: bash
+    - name: Frames actually exist
+      run: |
+        count=$(find "${RUNNER_TEMP}/exported-shots" -name '*.png' -size +10k | wc -l | tr -d ' ')
+        if [ "$count" -lt 1 ]; then
+          echo "::error::no non-trivial PNGs produced"; ls -la "${RUNNER_TEMP}/exported-shots" || true; exit 1
+        fi
+        echo "captured $count exported-client frame(s)"
+      id: files
+      shell: bash
+    - name: Record what these frames can evidence
+      run: |
+        set -o pipefail
+        # Same fail-closed reader as the editor-project capture: exactly one
+        # DISTINCT verdict per marker, or refuse to publish a conditions file
+        # that guesses.
+        read_verdict() {
+          marker="$1"; log="$2"
+          distinct="$(grep -oE "^${marker} (on|off)([[:space:]]|\$)" "$log" \
+            | sed -E "s/^${marker} //; s/[[:space:]]*\$//" | sort -u)"
+          n="$(printf '%s\n' "$distinct" | grep -c . || true)"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no ${marker} verdict in ${log} — cannot tell what these frames depict" >&2
+            return 1
+          fi
+          if [ "$n" -gt 1 ]; then
+            echo "::error::contradictory ${marker} verdicts in ${log} ($(printf '%s' "$distinct" | tr '\n' '/')) — refusing to guess" >&2
+            return 1
+          fi
+          printf '%s' "$distinct"
+        }
+        probe="$(read_verdict VOLUMETRICS exported-capture.log)" || exit 1
+        pools="$(read_verdict 'HOLLOW FOG' exported-capture.log)" || exit 1
+        echo "volumetric fog path: ${probe}; hollow ash pools: ${pools}"
+        {
+          echo "# Capture conditions (exported client)"
+          echo
+          echo "runner: ${RUNNER_OS} (hosted)"
+          echo "volumetric_fog: ${probe}"
+          echo "hollow_ash_pools: ${pools}"
+          if [ "${probe}" = "off" ]; then
+            echo
+            echo "These frames show the HEIGHT-FOG FALLBACK, not the volumetric"
+            echo "path: this runner's GPU lacks R32_Uint atomic storage image"
+            echo "support, so Godot's froxel volumetrics never initialise here."
+            echo "Nothing in this artifact evidences a change to volumetric fog."
+          fi
+          if [ "${pools}" = "off" ]; then
+            echo
+            echo "This world contains ZERO ash pools. Pools need the GPU probe"
+            echo "AND the WAR_HOLLOW_FOG opt-in, and the capture sets neither"
+            echo "by default. Nothing in this artifact evidences a change to"
+            echo "the hollow ash pools."
+          fi
+        } > "${RUNNER_TEMP}/exported-shots/capture-conditions.txt"
+        {
+          echo "### Exported-client capture conditions"
+          echo
+          echo "Volumetric fog path: **${probe}** · hollow ash pools: **${pools}**"
+        } >> "$GITHUB_STEP_SUMMARY"
+      id: conditions
+      shell: bash
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: exported-head-${{ github.sha }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/exported-shots/*.png
+          ${{ runner.temp }}/exported-shots/*.txt
+          ${{ runner.temp }}/exported-shots/opt-in-previews/*.png
+          ${{ runner.temp }}/exported-shots/opt-in-previews/*.txt
+        if-no-files-found: error
+      id: upload
+    - name: Acknowledge complete uploaded capture
+      id: complete
+      shell: bash
+      run: printf 'captured=true\n' >> "$GITHUB_OUTPUT"
