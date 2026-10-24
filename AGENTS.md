@@ -1307,6 +1307,8 @@ the permanent blocking policy.
   `devantler-tech/.github` catalogue because they have independent production consumers. The
   single-consumer, read-only MegaLinter job lives directly in this repository's `ci.yaml`.
   Run `bash tools/local-lint-workflow.test.sh` for scope, credential and required-routing controls.
+  Keep that guard in the independent ordinary worker, inheriting its owned-step shell;
+  skipping or masking lint must not skip the guard that refuses it.
   World-specific tests, policy, selectors and controller behavior remain in this repository.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path

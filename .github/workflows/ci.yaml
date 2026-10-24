@@ -75,6 +75,8 @@ jobs:
         run: ./tools/preview-flags.test.sh
       - name: Cloth evidence is complete and independently required
         run: bash tools/cloth-capture.test.sh
+      - name: Local lint boundaries cannot be skipped with the lint job
+        run: bash tools/local-lint-workflow.test.sh
       - name: Source capture preserves every scenario and joins complete evidence
         run: |
           bash tools/source-capture-inputs.test.sh
@@ -1375,8 +1377,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate local lint boundaries
-        run: bash tools/local-lint-workflow.test.sh
       - name: Lint
         uses: oxsecurity/megalinter/flavors/go@9949bad031045f366be2467e00e8371a7328a2e2 # v10.1.0
         env:

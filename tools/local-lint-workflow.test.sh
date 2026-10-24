@@ -9,6 +9,9 @@ trap 'rm -rf "$scratch"' EXIT
 check() {
   # shellcheck disable=SC2016 # GitHub expressions are literal configuration data.
   yq -o=json '.' "$1" | jq -e '
+    ([.jobs["client-ordinary"].steps[] | select(.run? == "bash tools/local-lint-workflow.test.sh")] |
+      length == 1 and (.[0] |
+        (has("if") or has("continue-on-error") or has("shell") | not))) and
     (.jobs["ci-required-checks"].needs | index("lint")) != null and
     (.jobs.lint |
       (has("uses") | not) and ."runs-on" == "ubuntu-latest" and
@@ -45,6 +48,10 @@ for mutation in \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES))["continue-on-error"] = true' \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).if = "false"' \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).env.ACTION_ACTIONLINT_ARGUMENTS = "-ignore .*"' \
+  '.jobs["client-ordinary"].steps |= map(select(.run != "bash tools/local-lint-workflow.test.sh"))' \
+  '(.jobs["client-ordinary"].steps[] | select(.run == "bash tools/local-lint-workflow.test.sh")).if = "false"' \
+  '(.jobs["client-ordinary"].steps[] | select(.run == "bash tools/local-lint-workflow.test.sh"))["continue-on-error"] = true' \
+  '(.jobs["client-ordinary"].steps[] | select(.run == "bash tools/local-lint-workflow.test.sh")).shell = "true {0}"' \
   '.jobs["ci-required-checks"].needs |= map(select(. != "lint"))'; do
   yq "$mutation" "$root/.github/workflows/ci.yaml" >"$scratch/workflow.yaml"
   if check "$scratch/workflow.yaml"; then
