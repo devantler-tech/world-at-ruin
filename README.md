@@ -79,6 +79,11 @@ To build your own `.app` instead, export with the `macOS` preset in `client/expo
 **Watch the world grow:** press `L` in-game. Every player-visible change is a dev-log entry,
 newest first — replaying after each build shows exactly what the agents grew.
 
+**Previews waiting for a decision:** eleven unfinished looks, from clothing and gaits to
+ground cover, drifting ash and control hints, can be tried by turning on a launch setting.
+The [preview page](docs/previews/README.md) shows each one side by side with frames,
+what it still lacks and the decision it is waiting for.
+
 **Ragged-cloth material preview:** launch from source with
 `WAR_RAGGED_CLOTH_DETAIL=1 godot --path client`, or prefix the installed app's
 executable with the same environment setting. In the creator, leave the wardrobe
