@@ -262,16 +262,7 @@ func TestAgonesServesRealTLSWhenCertValid(t *testing.T) {
 	f := startSidecar(t)
 	certFile, keyFile := writeSelfSignedCert(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 
-	cmd := zoneCommand(t,
-		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-tls-cert", certFile, "-tls-key", keyFile,
-		"-duration", "400ms",
-		"-agones", "-agones-health-interval", "50ms",
-	)
-	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("valid-cert wss run failed: %v\n%s", err, out)
-	}
+	out := runServingAgonesZone(t, f, "valid-cert wss", "-tls-cert", certFile, "-tls-key", keyFile)
 	if !strings.Contains(string(out), "zone: listening on wss://") {
 		t.Fatalf("wss listener never came up:\n%s", out)
 	}
@@ -402,16 +393,7 @@ func TestAgonesRequiresListen(t *testing.T) {
 func TestAgonesComposesWithListen(t *testing.T) {
 	f := startSidecar(t)
 
-	cmd := zoneCommand(t,
-		"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0", "-insecure-plaintext",
-		"-duration", "400ms",
-		"-agones", "-agones-health-interval", "50ms",
-	)
-	cmd.Env = sidecarEnvironment(f, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("listen+agones run failed: %v\n%s", err, out)
-	}
+	out := runServingAgonesZone(t, f, "listen+agones", "-insecure-plaintext")
 	if !strings.Contains(string(out), "zone: listening on ws://") {
 		t.Fatalf("socket never came up:\n%s", out)
 	}
@@ -424,6 +406,22 @@ func TestAgonesComposesWithListen(t *testing.T) {
 	if got := f.ShutdownCalls(); got != 1 {
 		t.Fatalf("Shutdown calls = %d, want exactly 1", got)
 	}
+}
+
+// runServingAgonesZone runs the fleet serving shape against sidecar: a loopback zone socket with
+// the given transport flags, the Agones lifecycle at a 50ms health cadence, and a 400ms deadline
+// exit. It fails the test, naming label, when the process exits non-zero, and returns its output.
+func runServingAgonesZone(t *testing.T, sidecar *agonestest.Sidecar, label string, transport ...string) []byte {
+	t.Helper()
+	args := append([]string{"-allocation-id", "allocation-a", "-listen", "127.0.0.1:0"}, transport...)
+	args = append(args, "-duration", "400ms", "-agones", "-agones-health-interval", "50ms")
+	cmd := zoneCommand(t, args...)
+	cmd.Env = sidecarEnvironment(sidecar, "WAR_ZONE_ADMISSION_SECRET="+strings.Repeat("ab", 32))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s run failed: %v\n%s", label, err, out)
+	}
+	return out
 }
 
 // startSidecar starts the hermetic Agones RPC sidecar and registers its shutdown with the test.
