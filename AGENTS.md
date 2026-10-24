@@ -404,6 +404,14 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+The owner-local exported-HEAD capture component verifies the native producer's
+archive digest, exact integration checkout and fresh app/save/image state before
+capturing every selected view. Preserve its total deadline, complete upload and
+source-bound BASE join. Run the component and exported-frame report tests with
+the preview and client/native workflow guards after changes; native captures and
+whole-run timings remain separate proof. See
+[exported HEAD evidence](docs/ci/exported-head-evidence.md).
+
 Native source-frame evidence runs in isolated `world`, `activity` and BASE jobs.
 The stable required collector accepts only the complete source/run/attempt-bound
 PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
