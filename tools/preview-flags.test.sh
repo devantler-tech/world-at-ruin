@@ -287,9 +287,10 @@ else
   # The shipped artifact has its own capture job and must resolve the same
   # source of truth there. A resolver call in the editor-only job cannot prove
   # an exported build ever rendered the treatments.
-  yq -o=json '.jobs."frame-capture-exported-head".steps' "$WORKFLOW" |
-    jq -e '[.[]|select(.uses?=="devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6")]|
-      length==1 and (.[0]|(has("if") or has("continue-on-error"))|not)' >/dev/null ||
+  yq -o=json '.jobs."client-export-macos".steps' "$WORKFLOW" |
+    jq -e '[.[]|select(.id=="capture-exported")]|
+      length==1 and (.[0]|(.uses|test("^devantler-tech/world-at-ruin/\\.github/actions/capture-exported-head@[0-9a-f]{40}$")) and
+        .if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and (has("continue-on-error")|not))' >/dev/null ||
     t_fail "the selected exported capture does not invoke its owner-local component"
   yq '.runs.steps' "$CAPTURE_ACTION" >"$SCRATCH_DIR/exported-capture-job"
   # shellcheck disable=SC2016 # workflow variables are matched as literal source

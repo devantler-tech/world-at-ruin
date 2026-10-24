@@ -14,17 +14,49 @@ jq -e '.jobs["client-export-macos"].outputs["archive-sha256"] == "${{ steps.expo
   fail 'the native producer does not bind its actual archive bytes'
 yq -o=json '.' "$root/.github/actions/capture-exported-head/action.yaml" >"$work/action.json"
 jq -e '
-  .jobs["frame-capture-exported-head"] |
-  .needs==["detect-visual-changes","client-export-macos"] and
-  ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
-  .if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
-  (.steps|length)==3 and
-  .steps[2]=={name:"Capture the exact exported HEAD",uses:"devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6",
-    with:{"archive-sha256":"${{ needs.client-export-macos.outputs.archive-sha256 }}"}}
-' "$work/ci.json" >/dev/null || fail 'the native capture call changed source, selection or deadline'
-capture_ref=$(jq -r '.jobs["frame-capture-exported-head"].steps[2].uses|split("@")[1]' "$work/ci.json")
+  .jobs["client-export-macos"] as $producer |
+  .jobs["frame-capture-exported-head"] as $head |
+  ($producer.steps[]|select(.id=="capture-exported")) as $capture |
+  $producer.needs==["detect-visual-changes"] and ($producer|has("if")|not) and
+  $producer["runs-on"]=="macos-15" and
+  $producer.steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false} and
+  $producer.env.EXPORTED_CAPTURE_RESOLUTION=="1024x576" and
+  $producer.outputs.captured=="${{ steps.capture-exported.outputs.captured }}" and
+  $capture.if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
+  $capture["timeout-minutes"]==15 and ($capture|has("continue-on-error")|not) and
+  ($capture.uses|test("^devantler-tech/world-at-ruin/\\.github/actions/capture-exported-head@[0-9a-f]{40}$")) and
+  $capture.with=={"archive-sha256":"${{ steps.export-client.outputs.archive-sha256 }}"} and
+  $head.needs==["detect-visual-changes","client-export-macos"] and
+  $head["runs-on"]=="ubuntu-latest" and $head["timeout-minutes"]==15 and
+  $head.if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
+  ($head.steps|length)==1 and
+  $head.steps[0].env=={EXPORT_RESULT:"${{ needs.client-export-macos.result }}",CAPTURED:"${{ needs.client-export-macos.outputs.captured }}"} and
+  all($head.steps[];(has("if") or has("continue-on-error"))|not)
+' "$work/ci.json" >/dev/null || fail 'complete exported capture does not reuse the native producer with its original budget'
+capture_ref=$(jq -r '.jobs["client-export-macos"].steps[]|select(.id=="capture-exported").uses|split("@")[1]' "$work/ci.json")
 git -C "$root" show "$capture_ref:.github/actions/capture-exported-head/action.yaml" >"$work/pinned-action.yaml"
-cmp -s "$work/pinned-action.yaml" "$root/.github/actions/capture-exported-head/action.yaml" || fail 'tested capture differs from its immutable executed source'
+cmp -s "$work/pinned-action.yaml" "$root/.github/actions/capture-exported-head/action.yaml" || fail 'the tested component differs from the immutable executed component'
+jq -r '.jobs["frame-capture-exported-head"].steps[0].run' "$work/ci.json" >"$work/join.sh"
+for result in success failure skipped cancelled; do
+  for captured in true false ''; do
+    status=0
+    EXPORT_RESULT="$result" CAPTURED="$captured" bash -euo pipefail "$work/join.sh" || status=$?
+    if [[ "$result" == success && "$captured" == true ]]; then
+      [[ "$status" == 0 ]] || fail 'complete capture acknowledgement was rejected'
+    else
+      [[ "$status" != 0 ]] || fail 'missing or failed native capture reported completion'
+    fi
+  done
+done
+jq -r '.jobs["client-export-macos"].steps[]|select(.id=="export-selection").run' "$work/ci.json" >"$work/selection-admission.sh"
+for selection in true false '' unknown; do
+  status=0
+  EXPORT_SELECTED="$selection" bash -euo pipefail "$work/selection-admission.sh" >"$work/selection-admission.log" 2>&1 || status=$?
+  case "$selection" in
+    true | false) [[ "$status" == 0 ]] || fail 'known native selection was rejected' ;;
+    *) [[ "$status" != 0 ]] || fail 'unknown native selection silently skipped evidence' ;;
+  esac
+done
 jq -e '
   .inputs|keys==["archive-sha256"]
 ' "$work/action.json" >/dev/null || fail 'unexpected capture interface'
@@ -72,6 +104,15 @@ cat >"$bundle/World at Ruin" <<'APP'
 #!/usr/bin/env bash
 set -euo pipefail
 mode=${FAKE_CAPTURE_MODE:-ok}
+if [[ "${1:-}" == --headless ]]; then
+  for state in "$WAR_SAVE_PATH" "$WAR_VAULT_PATH" "$WAR_BOOT_RECOVERY_PATH" "$WAR_UPDATE_HISTORY_PATH"; do
+    [[ "$state" == "$RUNNER_TEMP"/exported-smoke.*/* && ! -e "$state" ]] || exit 91
+    printf '%s\n' "$state" >> "$SMOKE_RECORD"
+  done
+  printf 'BOOT_OK fixture\n'
+  [[ "$mode" != partial ]] || exit 17
+  exit 0
+fi
 [[ "$mode" == no-pass ]] || printf 'CAPTURE PASS\n'
 [[ "$mode" == no-boot ]] || printf 'BOOT_OK fixture\n'
 printf 'VOLUMETRICS off\nHOLLOW FOG off\n'
@@ -86,6 +127,21 @@ chmod +x "$bundle/World at Ruin"
 cp "$fixture/build/WorldAtRuin.zip" "$work/pristine.zip"
 digest=$(shasum -a 256 "$fixture/build/WorldAtRuin.zip")
 digest=${digest%% *}
+jq -r '.jobs["client-export-macos"].steps[]|select(.name=="Smoke boot the EXPORTED app (60 frames)").run' "$work/ci.json" >"$work/smoke.sh"
+for mode in ok partial; do
+  smoke_root="$work/smoke-$mode"
+  cp -R "$fixture" "$smoke_root"
+  mkdir "$smoke_root/temp"
+  status=0
+  (cd "$smoke_root" && RUNNER_TEMP="$smoke_root/temp" SMOKE_RECORD="$smoke_root/states" \
+    FAKE_CAPTURE_MODE="$mode" bash -euo pipefail "$work/smoke.sh") >"$work/smoke-$mode.log" 2>&1 || status=$?
+  [[ $(sort -u "$smoke_root/states" | wc -l | tr -d ' ') == 4 ]] || fail 'smoke inherited or shared a capture state path'
+  if [[ "$mode" == ok ]]; then
+    [[ "$status" == 0 ]] || fail 'isolated exported smoke was rejected'
+  else
+    [[ "$status" == 17 ]] || fail 'plausible smoke output masked a failed native app'
+  fi
+done
 # Run the actual producer under GitHub's unspecified-shell bash -e behavior.
 # Plausible output followed by a nonzero export must not publish a digest.
 jq -r '.jobs["client-export-macos"].steps[]|select(.id=="export-client").run' "$work/ci.json" >"$work/producer.sh"
@@ -202,4 +258,5 @@ for changed_path in .github/actions/capture-exported-head/action.yaml tools/expo
       fail "$changed_path did not retain $field selection"
   done
 done
+git -C "$root" merge-base --is-ancestor "$capture_ref" origin/main || fail 'capture component is not from the adopted default branch'
 printf 'PASS: archive/source refusals, complete-component mutations and actual renderer/file failure guards\n'
