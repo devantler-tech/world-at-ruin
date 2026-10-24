@@ -1,8 +1,6 @@
 package sim
 
 import (
-	"encoding/binary"
-	"hash/fnv"
 	"slices"
 	"testing"
 )
@@ -713,12 +711,7 @@ func runCombatGolden(n int) (digest uint64, caught, empty int) {
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 6_000, Z: 6_000}, MaxSpeed: 3_500, Radius: 300})
 	w.AddMob(9, MobParams{AggroRadiusMM: 15_000, CastTicks: 30, CooldownTicks: 45, CircleRadiusMM: 2_500})
 
-	h := fnv.New64a()
-	var buf [8]byte
-	put := func(v uint64) {
-		binary.LittleEndian.PutUint64(buf[:], v)
-		_, _ = h.Write(buf[:])
-	}
+	h, put := newDemoHashWriter()
 
 	// Walker 1 orbits a square (60 ticks per leg); walker 2 alternates 45
 	// ticks of walking toward the mob with 45 ticks of standing still — the

@@ -1039,17 +1039,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "888e6ab5336405e5d6adad35859a48074a66ca9f45c20918938cd369d7e06219",
-      "format": "go",
-      "files": [
-        "server/sim/combat_test.go",
-        "server/sim/telegraph_test.go"
-      ],
-      "fragmentSHA256": "04ecc3ab208a8fe7ee5f40e2aa93ecd1f1eea7fc7c4787f85b8c06cf2f1201c4",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "8896fcab7d3f7fa788216f0eac4298c7bf3f649256be2727b260de4f7108d73c",
       "format": "go",
       "files": [
@@ -1523,17 +1512,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "c1c618194648648082f388e00c8a71988308c72b514f9f8c735878858515b30f",
-      "format": "go",
-      "files": [
-        "server/zonesock/hub_test.go",
-        "server/zonesock/hub_test.go"
-      ],
-      "fragmentSHA256": "b56fd3053d6fd7a56b3f358cbbdad2df754e1d47cf2994bef6212e022af8d658",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "c3d3458cf8f1aa3219b2fd164c9016a63d56470c8a68775884f0505d8faa1c75",
       "format": "gdscript",
       "files": [
@@ -1776,17 +1754,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "ddd52a7fd7372d6392d972c9961edc41f3cf67f4ad84c2bfefb0a0f926d20968",
-      "format": "go",
-      "files": [
-        "server/sim/combat_test.go",
-        "server/sim/world.go"
-      ],
-      "fragmentSHA256": "c1de0c356390c4f32e645b5280514e28b038c6b9cdb28092487250812237dd48",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "dde2afb21f1e96fd715cc942d05f32454dcdc501d86a839786900299ea62d57c",
       "format": "go",
       "files": [
@@ -2025,17 +1992,6 @@
         "server/internal/allocatoradmission/handoff_test.go"
       ],
       "fragmentSHA256": "7e5b28ba93083f05c59f4fa87a60d49837e4bb38fa9f87f07cb9e22023370ebb",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "f60efdb98ac501fe1997d620a910edff16856fca9a733d8466ee93ed217c02c1",
-      "format": "go",
-      "files": [
-        "server/cmd/zone/main_test.go",
-        "server/cmd/zone/main_test.go"
-      ],
-      "fragmentSHA256": "11f484d7c5d570dad95048382e642eea5f8cf0a44f30f4cd2d4c92ca73f88642",
       "occurrences": 1,
       "cleanupIssue": 276
     },

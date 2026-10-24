@@ -11,8 +11,6 @@ package sim
 // read-only query, never part of Step — leaves the movement golden untouched.
 
 import (
-	"encoding/binary"
-	"hash/fnv"
 	"reflect"
 	"testing"
 )
@@ -392,12 +390,7 @@ func runTelegraphDemo(n int) (uint64, int) {
 	w := NewDemoWorld()
 	battery := goldenBattery()
 
-	h := fnv.New64a()
-	var buf [8]byte
-	put := func(v uint64) {
-		binary.LittleEndian.PutUint64(buf[:], v)
-		_, _ = h.Write(buf[:])
-	}
+	h, put := newDemoHashWriter()
 
 	eventfulTicks := 0
 	for i := range n {
