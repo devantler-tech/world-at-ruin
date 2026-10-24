@@ -69,9 +69,9 @@ for kind in directory file symlink; do
   mkdir -p "$reused/shots/ragged-cloth"
   output="$reused/shots/ragged-cloth/off"
   case "$kind" in
-    directory) mkdir "$output" ;;
-    file) printf 'retained evidence\n' >"$output" ;;
-    symlink) ln -s "$scratch/run-0/shots/ragged-cloth/off" "$output" ;;
+  directory) mkdir "$output" ;;
+  file) printf 'retained evidence\n' >"$output" ;;
+  symlink) ln -s "$scratch/run-0/shots/ragged-cloth/off" "$output" ;;
   esac
   if (cd "$reused" && PATH="$scratch/bin:$PATH" RUNNER_TEMP="$reused" bash "$capture" off) >"$scratch/reused.log" 2>&1; then
     fail "accepted an existing $kind as fresh evidence"
@@ -185,8 +185,11 @@ yq -o=json . "$root/.github/workflows/ci.yaml" >"$scratch/workflow.json"
 # time. A regex-presence assertion alone cannot prove the required job runs.
 jq -r '.jobs["detect-visual-changes"].steps[] | select(.id=="check") | .run' \
   "$scratch/workflow.json" >"$scratch/detect.sh"
-for helper in capture-cloth-evidence install-ci-macos-godot; do
-  fixture="$scratch/detect-$helper"
+for helper in tools/capture-cloth-evidence.sh tools/install-ci-macos-godot.sh \
+  tools/source-capture-inputs.sh tools/source-evidence-package.sh tools/source-evidence-conditions.sh \
+  tools/render-source-base.sh tools/report-source-frames.sh tools/source-evidence/main.go \
+  tools/source-evidence-workflow.test.sh; do
+  fixture="$scratch/detect-${helper//\//-}"
   mkdir -p "$fixture/tools"
   git -C "$fixture" init -q -b main
   git -C "$fixture" config user.name fixture
@@ -197,8 +200,9 @@ for helper in capture-cloth-evidence install-ci-macos-godot; do
   git -C "$fixture" add tools/pr-diff-base.sh
   git -C "$fixture" commit -qm base
   base=$(git -C "$fixture" rev-parse HEAD)
-  printf '# changed helper\n' >"$fixture/tools/$helper.sh"
-  git -C "$fixture" add "tools/$helper.sh"
+  mkdir -p "$(dirname "$fixture/$helper")"
+  printf '# changed helper\n' >"$fixture/$helper"
+  git -C "$fixture" add "$helper"
   git -C "$fixture" commit -qm helper-change
   head=$(git -C "$fixture" rev-parse HEAD)
   (cd "$fixture" && BASE_SHA="$base" HEAD_SHA="$head" GITHUB_OUTPUT="$fixture/output" \
@@ -211,9 +215,9 @@ admit() {
     .jobs as $jobs | $jobs["frame-capture-cloth"] as $cloth |
     $cloth.name=="Frame capture (cloth evidence, ${{ matrix.mode }})" and
     $cloth.needs==["detect-visual-changes"] and
-    $cloth.if==$jobs["frame-capture"].if and
+    $cloth.if==$jobs["frame-capture-head"].if and
     $cloth.if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
-    $cloth["runs-on"]=="macos-latest" and $cloth["timeout-minutes"]==15 and
+    $cloth["runs-on"]=="macos-15" and $cloth["timeout-minutes"]==15 and
     ($cloth|keys)==["if","name","needs","runs-on","steps","strategy","timeout-minutes"] and
     $cloth.strategy=={"fail-fast":false,matrix:{mode:["off","on","drape","both"]}} and
     ($cloth.steps|length)==5 and
@@ -233,7 +237,7 @@ admit() {
     ($jobs["ci-required-checks"].needs|index("frame-capture-cloth"))!=null and
     ($jobs["ci-required-checks"].steps[-1].with["job-results"]|contains("${{ needs.frame-capture-cloth.result }}")) and
     any($jobs["client-ordinary"].steps[];.run?=="bash tools/cloth-capture.test.sh") and
-    any($jobs["frame-capture"].steps[];.run?=="bash tools/install-ci-macos-godot.sh") and
+    any($jobs["frame-capture-head"].steps[];.run?=="bash tools/install-ci-macos-godot.sh") and
     (any($jobs["frame-capture"].steps[];(.run? // "")|contains("ragged_cloth"))|not)
   ' "$1" >/dev/null
 }

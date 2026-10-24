@@ -44,6 +44,8 @@ admit() {
         and .with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false})
       and (.steps[1]|.run=="bash tools/select-lavapipe-capture.sh verify"
         and .env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}",HEAD_SHA:"${{ github.event.pull_request.head.sha }}"})
+      and (.steps[2].run|startswith("bash tools/install-ci-lavapipe.sh\n") and
+        contains("icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)"))
       and any(.steps[];.run?=="bash tools/install-ci-godot.sh")
       and any(.steps[];.id?=="capture" and .env=={CAPTURE_VANTAGE:"${{ matrix.vantage }}"}
         and (.run|contains("./tools/lavapipe-capture-guard.sh"))
@@ -98,6 +100,7 @@ for mutation in \
   '.capture.jobs["frame-capture-lavapipe"].steps[6].env.CAPTURE_VANTAGE="sunward"' \
   '.capture.jobs["frame-capture-lavapipe"].steps[1].run="true"' \
   '.capture.jobs["frame-capture-lavapipe"].steps[2]["continue-on-error"]=true' \
+  '.capture.jobs["frame-capture-lavapipe"].steps[2].run="true"' \
   '.capture.jobs["frame-capture-lavapipe"].steps[-1].with["if-no-files-found"]="ignore"' \
   '.capture.jobs["frame-capture-lavapipe"].steps[-1].with.name="unbound-frames"' \
   '.capture.jobs["collect-lavapipe"].if="true"' \
@@ -115,3 +118,4 @@ for mutation in \
   fi
 done
 echo 'Independent advisory workflow routing, identity, permissions and evidence controls passed'
+bash "$root/tools/install-ci-lavapipe.test.sh"

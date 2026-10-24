@@ -404,6 +404,23 @@ everything shipped afterwards is held to.
 
 ## Maintenance
 
+Native source-frame evidence runs in isolated `world`, `activity` and BASE jobs.
+The stable required collector accepts only the complete source/run/attempt-bound
+PNG/caption inventory, preserving the macOS captures and advisory BASE semantics.
+Native source, exported-client and cloth captures share the standard Apple-silicon
+`macos-15` runner. Measure queue delay separately from execution time; a runner
+label alone does not prove the complete feedback budget.
+Run the source-input, component-contract, source-workflow and Go evidence
+tests after changes; hosted capture and complete feedback timing remain separate
+proof. See [source evidence](docs/ci/source-evidence.md).
+
+Volumetric capture installs the exact Mesa archive selected by fresh APT
+metadata from Ubuntu's HTTPS origin, verifying its size and SHA-256 before
+package execution. Run `bash tools/install-ci-lavapipe.test.sh` and the lavapipe
+selector/workflow tests after changes. Preserve all capture views, settling,
+renderer and image guards; measured complete native runs establish performance,
+not an installer setting or synthetic package fixture.
+
 The product-owned PR admission action accepts only the canonical shared
 reviewed-base invocation and an exact GitHub integration identity. Candidate
 bytes remain anonymous data for the complete contained regression controller.

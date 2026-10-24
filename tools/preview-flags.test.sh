@@ -7,7 +7,7 @@
 # by sourcing the real output under `set -a` and reading the environment back,
 # because the shape the capture depends on is "these variables are set in the
 # child process" — not "this text looks right". And the WIRING is asserted against
-# ci.yaml, since a resolver that is correct but unwired passes every one of its
+# ci.yaml, since an unwired resolver passes every one of its
 # own tests while the capture silently photographs the default path.
 #
 # The refusals matter more than the acceptance here. A list this script cannot
@@ -276,8 +276,10 @@ else
   # the wiring detectable.
   #
   # The editor capture must OBTAIN its flags from this resolver...
-  yq '.jobs."frame-capture"' "$WORKFLOW" >"$SCRATCH_DIR/editor-capture-job"
-  if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
+  yq -o=json '.jobs."frame-capture-head".steps' "$WORKFLOW" |
+    jq -er '.[] | select(.name=="Capture the opted-in ground previews") | .run' \
+      >"$SCRATCH_DIR/editor-capture-job"
+  if ! grep -qE '^[[:space:]]*tools/preview-flags\.sh --env[[:space:]]*>' \
     "$SCRATCH_DIR/editor-capture-job"; then
     t_fail "the editor capture does not resolve its flags from tools/preview-flags.sh --env — its opt-in evidence can only show the default world"
   fi
