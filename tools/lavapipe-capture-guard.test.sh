@@ -21,7 +21,7 @@ make_valid_fixture() {
 	local fixture="$SCRATCH_DIR/$name"
 	mkdir -p "$fixture/shots"
 	cat >"$fixture/capture.log" <<'EOF'
-Godot Engine v4.7.1.stable.official
+Godot Engine v4.7.2.stable.official
 Vulkan 1.4.318 - Forward+ - Using Device #0: Unknown - llvmpipe (LLVM 20.1.2, 256 bits)
 VOLUMETRICS on — R32_Uint atomic storage image supported
 HOLLOW FOG on — 3 ash pools with whole-pool density swell

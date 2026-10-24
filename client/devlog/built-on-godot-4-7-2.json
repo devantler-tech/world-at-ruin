@@ -1,0 +1,9 @@
+{
+	"date": "2026-10-24",
+	"notes": [
+		"The game is now built on Godot 4.7.2, the engine's latest maintenance release, instead of 4.7.1. It carries the engine's own fixes, among them where soft shadows start to blur and how resources are released.",
+		"Nothing about your character changes: the same saves load, and the world, controls and previews behave as before."
+	],
+	"title": "Built on the latest engine maintenance release",
+	"version": "next"
+}

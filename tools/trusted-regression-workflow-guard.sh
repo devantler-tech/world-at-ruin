@@ -17,7 +17,7 @@ if ! yq -o=json '.' "$workflow" | jq -e --arg installer "$installer" --arg selec
   and .name == "World owned trusted regressions"
   and .on == {pull_request:{},merge_group:{}}
   and .permissions == {}
-  and .env == {GODOT_VERSION:"4.7.1",GODOT_SHA512:"4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"}
+  and .env == {GODOT_VERSION:"4.7.2",GODOT_SHA512:"9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65"}
   and (.jobs | keys) == ["trusted-client-regressions"]
   and (.jobs["trusted-client-regressions"] |
     keys == ["if","name","permissions","runs-on","steps","timeout-minutes"]
