@@ -20,6 +20,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT/tools/preview-flags.sh"
 WORKFLOW="$ROOT/.github/workflows/ci.yaml"
+CAPTURE_ACTION="$ROOT/.github/actions/capture-exported-head/action.yaml"
 
 failures=0
 SCRATCH_DIR=''
@@ -286,7 +287,12 @@ else
   # The shipped artifact has its own capture job and must resolve the same
   # source of truth there. A resolver call in the editor-only job cannot prove
   # an exported build ever rendered the treatments.
-  yq '.jobs."frame-capture-exported-head"' "$WORKFLOW" >"$SCRATCH_DIR/exported-capture-job"
+  yq -o=json '.jobs."client-export-macos".steps' "$WORKFLOW" |
+    jq -e '[.[]|select(.id=="capture-exported")]|
+      length==1 and (.[0]|(.uses|test("^devantler-tech/world-at-ruin/\\.github/actions/capture-exported-head@[0-9a-f]{40}$")) and
+        .if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and (has("continue-on-error")|not))' >/dev/null ||
+    t_fail "the selected exported capture does not invoke its owner-local component"
+  yq '.runs.steps' "$CAPTURE_ACTION" >"$SCRATCH_DIR/exported-capture-job"
   # shellcheck disable=SC2016 # workflow variables are matched as literal source
   if ! grep -qE '^[[:space:]]+tools/preview-flags\.sh --env[[:space:]]*>' \
     "$SCRATCH_DIR/exported-capture-job"; then
@@ -320,7 +326,7 @@ else
   # pipeline reports FAILURE — so the match reads as "no hard-coded flag found"
   # and this guard silently stops firing. ci.yaml carries the same warning
   # about the same shape; this file reproduced the bug before adopting it.
-  grep -vE '^[[:space:]]*#' "$WORKFLOW" >"$SCRATCH_DIR/workflow-nocomments" || true
+  grep -h -vE '^[[:space:]]*#' "$WORKFLOW" "$CAPTURE_ACTION" >"$SCRATCH_DIR/workflow-nocomments" || true
   while IFS= read -r listed_flag; do
     if grep -q "${listed_flag}=1" "$SCRATCH_DIR/workflow-nocomments"; then
       t_fail "ci.yaml hard-codes ${listed_flag}=1 — tools/preview-flags.txt is not the source of truth"
