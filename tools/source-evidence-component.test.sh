@@ -1,30 +1,35 @@
 #!/usr/bin/env bash
-# Exercise the owner-local source component before its separate caller activation.
+# Exercise active inline source capture and its reviewed historical recipe.
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-for surface in inline component; do
+for surface in workflow reference; do
   work="$scratch/$surface"
   mkdir "$work"
-  if [[ $surface == inline ]]; then
-    # The active inline recipe remains covered until separate caller activation.
-    # Normalize only its expression names to the component interface; the capture
-    # shell below is still read from and exercised against this actual surface.
-    yq -o=json '.jobs."frame-capture-head"' "$root/.github/workflows/ci.yaml" |
-      jq 'walk(if type=="string" then
-      gsub("matrix.group";"inputs.group") |
-      gsub("needs.detect-visual-changes.outputs.first_run";"inputs.first-run") |
-      gsub("needs.detect-visual-changes.outputs.visual";"inputs.visual") |
-      gsub("needs.detect-visual-changes.outputs.gpu_gated";"inputs.gpu-gated")
-      else . end)' >"$work/action.json"
+  if [[ $surface == workflow ]]; then
+    # Normalize only expression names so exactly the same controls execute on
+    # both surfaces. The frozen scene suite still reads the real inline YAML.
+    yq -o=json '.jobs."frame-capture-head".steps' "$root/.github/workflows/ci.yaml" |
+      jq '{steps: .[:19]} | walk(if type=="string" then
+        gsub("matrix[.]group";"inputs.group") |
+        gsub("needs[.]detect-visual-changes[.]outputs[.]first_run";"inputs.first-run") |
+        gsub("needs[.]detect-visual-changes[.]outputs[.]gpu_gated";"inputs.gpu-gated") |
+        gsub("needs[.]detect-visual-changes[.]outputs[.]visual";"inputs.visual")
+        else . end)' >"$work/action.json"
   else
-    yq -o=json '.runs' "$root/.github/actions/capture-source-head/action.yaml" >"$work/action.json"
+    # Data-only regression oracle, reachable from protected main. This recipe
+    # is not a runtime dependency; removing its unused action loses no control.
+    git --no-replace-objects -C "$root" show \
+      '7d411bb93302afde81006c39aaca32a1b541b76f:.github/actions/capture-source-head/action.yaml' |
+      yq -o=json '.runs' >"$work/action.json"
   fi
   contract() {
     # Protect group ownership and forwarding, not each capture implementation.
     # shellcheck disable=SC2016 # Literal GitHub expressions are parsed as data.
     jq -e '
+    (.steps|length)==19 and
+    .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false} and
     all(.steps[]; (has("continue-on-error")|not)) and
     any(.steps[];.run?=="bash tools/source-capture-inputs.sh" and .env=={
       CAPTURE_GROUP:"${{ inputs.group }}",FIRST_RUN:"${{ inputs.first-run }}",
@@ -86,5 +91,5 @@ for surface in inline component; do
       } ;;
     esac
   done
-  echo 'PASS: owner-local source component routing and actual renderer failure guards'
+  echo "PASS: $surface source routing and actual renderer failure guards"
 done

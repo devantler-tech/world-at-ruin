@@ -4,22 +4,26 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-yq -o=json '.' "$root/.github/workflows/ci.yaml" >"$work/workflow.json"
+yq -o=json '.' "$root/.github/workflows/ci.yaml" >"$work/dag.json"
+jq '. + {source_head:{runs:{steps:.jobs["frame-capture-head"].steps[:19]}}}' \
+  "$work/dag.json" >"$work/workflow.json"
 admit() {
   # shellcheck disable=SC2016 # Literal GitHub expressions are the data under test.
   jq -e '
     def checkout: .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false};
     def safe: (.permissions // {contents:"read"})=={contents:"read"} and
       (has("continue-on-error")|not) and (has("container")|not);
-    .jobs as $jobs |
-    all(["client-export-macos","frame-capture-head","frame-capture-base",
-      "frame-capture-cloth","frame-capture-exported-base"][];
+    .jobs as $jobs | .source_head.runs as $head | {steps:$jobs["frame-capture-head"].steps[19:]} as $base |
+    all(["client-export-macos","frame-capture-head","frame-capture-cloth"][];
       . as $job | $jobs[$job]."runs-on"=="macos-15") and
     $jobs["frame-capture-exported-head"]."runs-on"=="ubuntu-latest" and
+    all(["frame-capture-base","frame-capture-exported-base"][]; . as $job |
+      $jobs[$job]."runs-on"=="ubuntu-latest") and
     ($jobs["frame-capture-head"] | safe and checkout and
       .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
-      .strategy=={"fail-fast":false,matrix:{group:["world","activity"]}} and
+      .strategy=={"fail-fast":false,matrix:{group:["world","activity"]}}) and
+    ($head | checkout and
       all(.steps[]; (has("continue-on-error")|not)) and
       all(.steps[]|select(has("if")); (.name|startswith("Capture "))) and
       any(.steps[];.run?=="bash tools/source-capture-inputs.sh" and .env=={
@@ -34,12 +38,13 @@ admit() {
         "gait-drive/","replication/","mob-chase/"
         ]|map(. as $dir|["png","txt"][]|"${{ runner.temp }}/shots/"+$dir+"*."+.)|
         .+["${{ runner.temp }}/shots/evidence.json","${{ runner.temp }}/shots/logs/*.log"]|sort)) and
-    ($jobs["frame-capture-base"] | safe and checkout and
-      .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
-      .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
+    ($jobs["frame-capture-base"] | safe and
+      .needs==["detect-visual-changes","frame-capture-head"] and ."runs-on"=="ubuntu-latest" and ."timeout-minutes"==1 and
+      .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''") and
+    ($base | checkout and
       .steps[1]["timeout-minutes"]==1 and
       any(.steps[];.id?=="install" and ."timeout-minutes"==2 and ."continue-on-error"==true) and
-      any(.steps[];.id?=="base" and .run=="bash tools/render-source-base.sh" and ."continue-on-error"==true and ."timeout-minutes"==8 and .if=="steps.install.outcome == '\''success'\''") and
+      any(.steps[];.id?=="base" and .run=="bash tools/render-source-base.sh" and ."continue-on-error"==true and ."timeout-minutes"==8 and (.if // ""|endswith(" && steps.install.outcome == '\''success'\''"))) and
       any(.steps[];.run?=="bash tools/source-evidence-package.sh base" and
         .env.INSTALL_RESULT=="${{ steps.install.outcome }}" and .env.RENDER_RESULT=="${{ steps.base.outcome }}" and ."timeout-minutes"==1) and
       .steps[-1]["timeout-minutes"]==1 and
@@ -75,10 +80,10 @@ for mutation in \
   '.jobs["client-export-macos"]["runs-on"]="macos-latest"' \
   '.jobs["frame-capture-cloth"]["runs-on"]="macos-26"' \
   '.jobs["frame-capture-exported-head"]["runs-on"]="macos-15-intel"' \
-  '.jobs["frame-capture-exported-base"]["runs-on"]="ubuntu-latest"' \
-  '.jobs["frame-capture-head"].steps[2]["continue-on-error"]=true' \
-  'del(.jobs["frame-capture-base"].steps[3]["timeout-minutes"])' \
-  '.jobs["frame-capture-base"].needs += ["frame-capture-head"]' \
+  '.jobs["frame-capture-exported-base"]["runs-on"]="macos-15"' \
+  '.source_head.runs.steps[2]["continue-on-error"]=true' \
+  'del(.jobs["frame-capture-head"].steps[22]["timeout-minutes"])' \
+  '.jobs["frame-capture-base"].needs += ["frame-capture"]' \
   '.jobs["frame-capture"].needs -= ["frame-capture-base"]' \
   '.jobs["frame-capture"].if="true"' \
   '.jobs["frame-capture"].steps[0].with.ref="main"' \

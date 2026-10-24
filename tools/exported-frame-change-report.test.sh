@@ -223,7 +223,7 @@ fi
 
 # The behavior above earns no value if the exported capture job never calls it.
 producer_block="$(yq '.jobs."client-export-macos"' "$WORKFLOW")"
-base_block="$(yq '.jobs."frame-capture-exported-base"' "$WORKFLOW")"
+base_block="$(yq '.jobs."client-export-macos".steps[10:15] | {"steps": .}' "$WORKFLOW")"
 report_block="$(yq '.jobs."frame-capture-exported"' "$WORKFLOW")"
 export_gate="$(sed -n '/# Export-affecting paths get a THIRD/,/# A FOURTH gate/p' "$WORKFLOW")"
 if ! printf '%s\n' "$base_block" |
@@ -253,11 +253,13 @@ if ! printf '%s\n' "$base_block" |
   t_fail "the added Godot and export-template installation cost is not recorded"
 fi
 
-# Actual fork/join source: neither capture waits on the other, and the stable
-# terminal check cannot pass without the HEAD result and source-bound BASE data.
+# Native producer co-location retains independent BASE outcomes. The stable
+# terminal check cannot pass without HEAD and source-bound BASE data.
 yq -o=json '.' "$WORKFLOW" >"$SCRATCH_DIR/workflow.json"
 yq -o=json '.' "$ROOT/.github/actions/capture-exported-head/action.yaml" >"$SCRATCH_DIR/component.json"
-jq --slurpfile component "$SCRATCH_DIR/component.json" '. + {exported_head_component:$component[0]}' \
+yq -o=json '.jobs."client-export-macos".steps[10:15] | {"steps": .}' "$WORKFLOW" >"$SCRATCH_DIR/base-component.json"
+jq --slurpfile component "$SCRATCH_DIR/component.json" --slurpfile base "$SCRATCH_DIR/base-component.json" \
+  '. + {exported_head_component:$component[0],exported_base_recipe:$base[0]}' \
   "$SCRATCH_DIR/workflow.json" >"$SCRATCH_DIR/parallel.json"
 parallel_contract() {
   # shellcheck disable=SC2016 # jq owns these bound variables and literal expressions.
@@ -267,14 +269,14 @@ parallel_contract() {
 		($producer.steps[]|select(.id=="capture-exported")) as $capture |
 		.jobs["frame-capture-exported-base"] as $base |
 		.jobs["frame-capture-exported"] as $join |
-		.exported_head_component as $component |
+		.exported_head_component as $component | .exported_base_recipe as $base_recipe |
 		all([$head,$base,$join][]; (has("continue-on-error") or has("defaults") or has("permissions"))|not) and
-		all([$producer,$base,$join][]; .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false}) and
+		all([$producer,$base_recipe,$join][]; .steps[0].with=={ref:"${{ github.sha }}","fetch-depth":0,"persist-credentials":false}) and
 		$head.needs==["detect-visual-changes","client-export-macos"] and
-		$base.needs==["detect-visual-changes"] and
+		$base.needs==["detect-visual-changes","client-export-macos"] and
 		$head.if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
 		$base.if==$head.if and $producer.env.EXPORTED_CAPTURE_RESOLUTION=="1024x576" and $base.env==$producer.env and
-		$head["runs-on"]=="ubuntu-latest" and $producer["runs-on"]=="macos-15" and $base["runs-on"]=="macos-15" and
+		$head["runs-on"]=="ubuntu-latest" and $producer["runs-on"]=="macos-15" and $base["runs-on"]=="ubuntu-latest" and
 		all($head.steps[];(has("continue-on-error") or has("if"))|not) and
 		($head.steps|length)==1 and $head.steps[0].env=={EXPORT_RESULT:"${{ needs.client-export-macos.result }}",CAPTURED:"${{ needs.client-export-macos.outputs.captured }}"} and
 		($capture.uses|test("^devantler-tech/world-at-ruin/\\.github/actions/capture-exported-head@[0-9a-f]{40}$")) and
@@ -283,17 +285,17 @@ parallel_contract() {
 		all($component.runs.steps[];(has("continue-on-error") or has("if"))|not) and
 		($component.runs.steps[]|select(.id=="upload").with.name)=="exported-head-${{ github.sha }}-${{ github.run_attempt }}" and
 		($component.runs.steps[]|select(.id=="upload").with["if-no-files-found"])=="error" and
-		$base.steps[1].id=="base-engine" and $base.steps[1]["continue-on-error"]==true and
-		$base.steps[2].id=="base-capture" and $base.steps[2]["continue-on-error"]==true and
-		$base["timeout-minutes"]==15 and
-		$base.steps[1]["timeout-minutes"]==2 and $base.steps[2]["timeout-minutes"]==9 and
-		$base.steps[2].if=="steps.base-engine.outcome == '\''success'\''" and
-		$base.steps[3]["timeout-minutes"]==1 and $base.steps[4]["timeout-minutes"]==1 and
-		$base.steps[2].env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}"} and
-		$base.steps[3].env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}",ENGINE_OUTCOME:"${{ steps.base-engine.outcome }}",CAPTURE_OUTCOME:"${{ steps.base-capture.outcome }}"} and
-		($base.steps[3].run|contains(" record-source ")) and
-		$base.steps[4].with.name=="exported-base-${{ github.sha }}-${{ github.run_attempt }}" and
-		$base.steps[4].with["if-no-files-found"]=="error" and
+		$base_recipe.steps[1].id=="base-engine" and $base_recipe.steps[1]["continue-on-error"]==true and
+		$base_recipe.steps[2].id=="base-capture" and $base_recipe.steps[2]["continue-on-error"]==true and
+		$base["timeout-minutes"]==1 and
+		$base_recipe.steps[1]["timeout-minutes"]==2 and $base_recipe.steps[2]["timeout-minutes"]==9 and
+		($base_recipe.steps[2].if // ""|endswith(" && steps.base-engine.outcome == '\''success'\''")) and
+		$base_recipe.steps[3]["timeout-minutes"]==1 and $base_recipe.steps[4]["timeout-minutes"]==1 and
+		$base_recipe.steps[2].env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}"} and
+		$base_recipe.steps[3].env=={BASE_SHA:"${{ github.event.pull_request.base.sha }}",ENGINE_OUTCOME:"${{ steps.base-engine.outcome }}",CAPTURE_OUTCOME:"${{ steps.base-capture.outcome }}"} and
+		($base_recipe.steps[3].run|contains(" record-source ")) and
+		$base_recipe.steps[4].with.name=="exported-base-${{ github.sha }}-${{ github.run_attempt }}" and
+		$base_recipe.steps[4].with["if-no-files-found"]=="error" and
 		$join.needs==["detect-visual-changes","frame-capture-exported-head","frame-capture-exported-base"] and
 		$join.if=="always() && needs.detect-visual-changes.result == '\''success'\'' && needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
 		$join["runs-on"]=="ubuntu-latest" and
@@ -316,13 +318,13 @@ else
     '.jobs["frame-capture-exported-head"]["continue-on-error"]=true' \
     '.jobs["frame-capture-exported-head"].steps[0]["continue-on-error"]=true' \
     '(.exported_head_component.runs.steps[]|select(.id=="upload")).with.name="unbound-head"' \
-    '.jobs["frame-capture-exported-base"].steps[2].env.BASE_SHA="wrong"' \
-    'del(.jobs["frame-capture-exported-base"].steps[1]["timeout-minutes"])' \
-    '.jobs["frame-capture-exported-base"].steps[2]["timeout-minutes"]=15' \
-    'del(.jobs["frame-capture-exported-base"].steps[2].if)' \
-    'del(.jobs["frame-capture-exported-base"].steps[3]["timeout-minutes"])' \
-    'del(.jobs["frame-capture-exported-base"].steps[4]["timeout-minutes"])' \
-    '.jobs["frame-capture-exported-base"].steps[4].with.name="unbound-base"' \
+    '.exported_base_recipe.steps[2].env.BASE_SHA="wrong"' \
+    'del(.exported_base_recipe.steps[1]["timeout-minutes"])' \
+    '.exported_base_recipe.steps[2]["timeout-minutes"]=15' \
+    'del(.exported_base_recipe.steps[2].if)' \
+    'del(.exported_base_recipe.steps[3]["timeout-minutes"])' \
+    'del(.exported_base_recipe.steps[4]["timeout-minutes"])' \
+    '.exported_base_recipe.steps[4].with.name="unbound-base"' \
     '.jobs["frame-capture-exported"].if="true"' \
     '.jobs["frame-capture-exported"].needs |= .[:-1]' \
     '.jobs["frame-capture-exported"].steps[1].env.HEAD_RESULT="success"' \
