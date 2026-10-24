@@ -1,0 +1,32 @@
+name: Native admission event control
+
+# Temporary, read-only control. This does not produce a trusted admission verdict.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  observe:
+    name: Observe native event identity preconditions
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Report identity predicates without printing the event payload
+        shell: bash
+        run: |
+          jq -c --arg candidate "$GITHUB_SHA" '
+            def sha: type == "string" and test("^[0-9a-f]{40}$");
+            {
+              repository_matches: (.repository.full_name == "devantler-tech/world-at-ruin"),
+              default_branch_matches: (.repository.default_branch == "main"),
+              base_repository_matches: (.pull_request.base.repo.full_name == "devantler-tech/world-at-ruin"),
+              base_branch_matches: (.pull_request.base.ref == "main"),
+              base_is_immutable: (.pull_request.base.sha | sha),
+              head_is_immutable: (.pull_request.head.sha | sha),
+              merge_field_present: (.pull_request | has("merge_commit_sha")),
+              merge_is_immutable: (.pull_request.merge_commit_sha | sha),
+              merge_matches_candidate: (.pull_request.merge_commit_sha == $candidate)
+            }
+          ' "$GITHUB_EVENT_PATH"
