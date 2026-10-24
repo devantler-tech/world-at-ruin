@@ -12,15 +12,17 @@ fail() {
   ${GITHUB_WORKFLOW_SHA:-} =~ ^[0-9a-f]{40}$ &&
   ${GITHUB_SHA:-} =~ ^[0-9a-f]{40}$ && ${CANDIDATE_SHA:-} == "$GITHUB_SHA" ]] ||
   fail 'requires canonical shared source and matching integration identity'
-context=$(bash "$root/tools/resolve-trusted-regression-event.sh" --json) || fail 'event has no matching immutable product identities'
+context=$(bash "$root/tools/resolve-trusted-regression-event.sh" --shared-event-json) || fail 'event has no matching immutable product identities'
 base=$(jq -ser --arg candidate "$CANDIDATE_SHA" '
   select(length==1) | .[0] |
-  select(keys==["candidate_sha","trusted_sha"] and .candidate_sha==$candidate) | .trusted_sha
+  select(keys==["candidate_sha","event_head_sha","trusted_sha"] and .candidate_sha==$candidate) | .trusted_sha
 ' <<<"$context") || fail 'event resolution is incomplete'
+event_head=$(jq -er '.event_head_sha | select(type=="string" and test("^[0-9a-f]{40}$"))' <<<"$context") ||
+  fail 'event head identity is incomplete'
 actual=$(git --no-replace-objects -C "$root" rev-parse --verify HEAD) || fail 'reviewed checkout unavailable'
 [[ $actual == "$base" ]] || fail 'action checkout is not the GitHub-supplied product base'
 git --no-replace-objects -C "$root" diff --quiet HEAD -- || fail 'reviewed product files changed'
-printf 'Verified reviewed product base %s and candidate integration %s\n' "$base" "$CANDIDATE_SHA"
+printf 'Verified reviewed product base %s and GitHub candidate context %s\n' "$base" "$CANDIDATE_SHA"
 [[ $1 == run ]] || exit 0
 [[ ${RUNNER_TEMP:-} == /* && -d $RUNNER_TEMP && ! -L $RUNNER_TEMP ]] || fail 'private runner directory unavailable'
 # The complete existing contained controller retains runtime and verdict authority.
@@ -40,4 +42,17 @@ trap 'trusted_cleanup_status=$?; trusted_cleanup_started=true; cleanup' EXIT
 trap 'trap ":" INT TERM; trusted_request_cancel' INT TERM
 cd "$scratch"
 trusted_wait bash "$root/tools/fetch-trusted-regression-data.sh" candidate "$CANDIDATE_SHA"
+candidate_root="$scratch/candidate"
+candidate_actual=$(git --no-replace-objects -C "$candidate_root" rev-parse --verify HEAD) || fail 'candidate checkout unavailable'
+[[ $candidate_actual == "$CANDIDATE_SHA" ]] || fail 'candidate checkout does not match the GitHub integration identity'
+if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+  # Native event payloads can retain a different merge_commit_sha snapshot. Read
+  # the actual Git object, including parents hidden by a depth-one fetch. Drain
+  # the message without interpreting it so a long message cannot cause SIGPIPE.
+  parents=$(git --no-replace-objects -C "$candidate_root" cat-file commit "$CANDIDATE_SHA" |
+    awk 'BEGIN { header=1 } /^$/ { header=0 } header && /^parent / { print $2 }') ||
+    fail 'candidate integration object unavailable'
+  [[ $parents == "$base"$'\n'"$event_head" ]] || fail 'candidate parents do not match the immutable event base and head'
+fi
+printf 'Verified fetched integration object %s against immutable event identities\n' "$CANDIDATE_SHA"
 trusted_wait bash "$root/tools/run-sandboxed-trusted-regressions.sh" "$root" "$scratch/candidate"

@@ -16,7 +16,13 @@ cat >"$work/trusted/tools/fetch-trusted-regression-data.sh" <<'FETCH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $1 == candidate && $2 == "$GITHUB_SHA" && ! -e candidate ]]
-mkdir candidate
+git -c core.hooksPath=/dev/null clone --quiet --no-hardlinks --no-checkout "$EXPECTED_TRUSTED" candidate
+checkout_sha=${FETCH_SHA:-$GITHUB_SHA}
+git -C candidate -c core.hooksPath=/dev/null checkout --quiet --detach "$checkout_sha"
+# Match the production depth-one fetch: graph-format output hides its parents,
+# but the immutable commit object's header must remain available to the witness.
+printf '%s\n' "$checkout_sha" >candidate/.git/shallow
+[[ -z $(git -C candidate show -s --format=%P HEAD) ]]
 printf 'fetched\n' >>"$TRACE"
 FETCH
 cat >"$work/trusted/tools/run-sandboxed-trusted-regressions.sh" <<'CONTROL'
@@ -37,9 +43,25 @@ git -C "$work/trusted" init -q
 git -C "$work/trusted" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false add tools
 git -C "$work/trusted" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm trusted
 base=$(git -C "$work/trusted" rev-parse HEAD)
-candidate=1111111111111111111111111111111111111111
+# Real Git objects independently witness the event's base/head pair. Put fake
+# parent text and more than a pipe buffer in the message: it is data, not headers.
+tree=$(git -C "$work/trusted" rev-parse 'HEAD^{tree}')
+commit_object() {
+  git -C "$work/trusted" -c user.name=fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit-tree "$tree" "$@"
+}
+head=$(printf 'candidate head\n' | commit_object -p "$base")
+extra_head=$(printf 'another head\n' | commit_object -p "$base")
+printf 'integration\n\nparent 0000000000000000000000000000000000000000\n' >"$work/message"
+printf '%100000s\n' '' >>"$work/message"
+candidate=$(commit_object -p "$base" -p "$head" <"$work/message")
+reversed=$(printf 'reversed parents\n' | commit_object -p "$head" -p "$base")
+extra_parent=$(printf 'extra parent\n' | commit_object -p "$base" -p "$head" -p "$extra_head")
+# An indented signature continuation is not a second top-level parent header.
+signature_parent=$(printf 'tree %s\nparent %s\nauthor fixture <fixture@example.invalid> 1700000000 +0000\ncommitter fixture <fixture@example.invalid> 1700000000 +0000\ngpgsig fixture\n parent %s\n\nnot a merge\n' \
+  "$tree" "$base" "$head" | git -C "$work/trusted" hash-object -t commit -w --stdin)
 workflow=2222222222222222222222222222222222222222
-jq -n --arg base "$base" --arg candidate "$candidate" '{repository:{full_name:"devantler-tech/world-at-ruin",default_branch:"main"},pull_request:{base:{repo:{full_name:"devantler-tech/world-at-ruin"},ref:"main",sha:$base},head:{sha:$candidate},merge_commit_sha:$candidate},merge_group:{base_ref:"refs/heads/main",base_sha:$base,head_sha:$candidate}}' >"$work/event.json"
+jq -n --arg base "$base" --arg head "$head" --arg candidate "$candidate" '{repository:{full_name:"devantler-tech/world-at-ruin",default_branch:"main"},pull_request:{base:{repo:{full_name:"devantler-tech/world-at-ruin"},ref:"main",sha:$base},head:{sha:$head},merge_commit_sha:$candidate},merge_group:{base_ref:"refs/heads/main",base_sha:$base,head_sha:$candidate}}' >"$work/event.json"
 invoke() {
   env GITHUB_REPOSITORY=devantler-tech/world-at-ruin \
     GITHUB_WORKFLOW_REF=devantler-tech/.github/.github/workflows/repository-pr-admission.yaml@refs/heads/main \
@@ -51,6 +73,13 @@ invoke() {
 mode=check
 invoke
 invoke GITHUB_EVENT_NAME=merge_group
+# Native PR events can retain another integration snapshot in merge_commit_sha.
+# Check the event context here; run must independently bind the fetched commit.
+jq '.pull_request.merge_commit_sha="3333333333333333333333333333333333333333"' "$work/event.json" >"$work/native-event.json"
+invoke GITHUB_EVENT_PATH="$work/native-event.json" || {
+  echo 'FAIL: valid native event context rejected a different merge snapshot' >&2
+  exit 1
+}
 for mode in check run; do
   for invalid in GITHUB_REPOSITORY=other/repository GITHUB_WORKFLOW_REF=untrusted \
     GITHUB_WORKFLOW_REF=devantler-tech/world-at-ruin/.github/workflows/trusted-regressions.yaml@refs/heads/main \
@@ -63,7 +92,7 @@ for mode in check run; do
   done
   for mutation in '.repository.default_branch="candidate"' '.pull_request.base.ref="candidate"' \
     '.pull_request.base.repo.full_name="other/repository"' '.pull_request.base.sha="0000000000000000000000000000000000000000"' \
-    '.pull_request.head.sha="main"' '.pull_request.merge_commit_sha="0000000000000000000000000000000000000000"'; do
+    '.pull_request.head.sha="main"'; do
     jq "$mutation" "$work/event.json" >"$work/changed.json"
     if invoke GITHUB_EVENT_PATH="$work/changed.json" >"$work/log" 2>&1; then
       echo "FAIL: accepted $mutation" >&2
@@ -94,6 +123,41 @@ invoke
   echo 'FAIL: successful run retained private candidate state' >&2
   exit 1
 }
+# A stale, missing or null payload merge pointer is harmless only because the
+# fetched object's exact two ordered parents independently bind base and head.
+for mutation in '.pull_request.merge_commit_sha=null' 'del(.pull_request.merge_commit_sha)' \
+  '.pull_request.merge_commit_sha="3333333333333333333333333333333333333333"'; do
+  jq "$mutation" "$work/event.json" >"$work/native-event.json"
+  rm "$work/trace"
+  invoke GITHUB_EVENT_PATH="$work/native-event.json"
+  [[ $(paste -sd, "$work/trace") == fetched,contained ]] || exit 1
+done
+# Valid-looking but wrong event heads, wrong checkouts, wrong parent order and
+# extra parents must fail after the real fetch and before contained execution.
+for control in event-head checkout parent-order extra-parent signature-parent; do
+  rm "$work/trace"
+  case "$control" in
+  event-head)
+    jq '.pull_request.head.sha="0000000000000000000000000000000000000000"' "$work/event.json" >"$work/changed.json"
+    args=(GITHUB_EVENT_PATH="$work/changed.json")
+    ;;
+  checkout) args=(FETCH_SHA="$base") ;;
+  parent-order) args=(GITHUB_SHA="$reversed" CANDIDATE_SHA="$reversed") ;;
+  extra-parent) args=(GITHUB_SHA="$extra_parent" CANDIDATE_SHA="$extra_parent") ;;
+  signature-parent) args=(GITHUB_SHA="$signature_parent" CANDIDATE_SHA="$signature_parent") ;;
+  esac
+  if invoke "${args[@]}" >"$work/log" 2>&1; then
+    echo "FAIL: admitted mismatched integration: $control" >&2
+    exit 1
+  fi
+  [[ $(cat "$work/trace") == fetched ]] || {
+    echo "FAIL: $control did not reach the real object check or executed candidate code" >&2
+    exit 1
+  }
+  # Refusal retains uncertain scratch for diagnosis; this fixture owns it all.
+  rm -rf "$work/temp"
+  mkdir "$work/temp"
+done
 result=0
 invoke CONTROL_EXIT=19 >"$work/log" 2>&1 || result=$?
 [[ $result == 19 ]] || {
