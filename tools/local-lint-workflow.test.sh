@@ -13,6 +13,8 @@ check() {
       length == 1 and (.[0] |
         (has("if") or has("continue-on-error") or has("shell") | not))) and
     (.jobs["ci-required-checks"].needs | index("lint")) != null and
+    (.jobs["ci-required-checks"].steps[-1].with["job-results"] |
+      contains("${{ needs.lint.result }}")) and
     (.jobs.lint |
       (has("uses") | not) and ."runs-on" == "ubuntu-latest" and
       .permissions == {contents:"read"} and (has("secrets") | not) and
@@ -28,7 +30,9 @@ check() {
           .env.MEGALINTER_CONFIG == "${{ github.workspace }}/.mega-linter.yml" and
           .env.ACTION_ACTIONLINT_ARGUMENTS == "-ignore code-quality -ignore unexpected.key..queue..for..concurrency..section" and
           .env.APPLY_FIXES == "none" and .env.GOTOOLCHAIN == "local")) and
-      ([.steps[] | (.env // {}) | keys[] | select(test("TOKEN|SECRET|PRIVATE_KEY"))] | length) == 0)
+      ([.steps[] | (.env // {}) | keys[] | select(test("TOKEN|SECRET|PRIVATE_KEY"))] | length) == 0) and
+    ([((.env // {}), .jobs.lint) | .. | strings |
+      select(test("(?i)secrets[[:space:]]*(\\.|\\[)|github[[:space:]]*(\\.[[:space:]]*token|\\[[[:space:]]*[\"\\x27]token[\"\\x27][[:space:]]*\\])|tojson[[:space:]]*\\([[:space:]]*(secrets|github)"))] | length) == 0
   ' >/dev/null
 }
 
@@ -36,6 +40,7 @@ check "$root/.github/workflows/ci.yaml" || {
   echo 'FAIL: local lint must cover the complete repository without fixes or write credentials' >&2
   exit 1
 }
+# shellcheck disable=SC2016 # GitHub expressions remain literal mutant data.
 for mutation in \
   'del(.jobs.lint)' \
   '.jobs.lint.permissions.contents = "write"' \
@@ -48,6 +53,13 @@ for mutation in \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES))["continue-on-error"] = true' \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).if = "false"' \
   '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).env.ACTION_ACTIONLINT_ARGUMENTS = "-ignore .*"' \
+  '.jobs.lint.env.PAT = "${{ secrets.APP_PRIVATE_KEY }}"' \
+  '.jobs["ci-required-checks"].steps[-1].with["job-results"] |= (split("${{ needs.lint.result }}") | join(""))' \
+  '(.jobs.lint.steps[] | select(.env.APPLY_FIXES)).env.PAT = "${{ secrets.APP_PRIVATE_KEY }}"' \
+  '.env.PAT = "${{ secrets.APP_PRIVATE_KEY }}"' \
+  '.jobs.lint.env.PAT = "${{ GITHUB.TOKEN }}"' \
+  '.jobs.lint.env.PAT = "${{ github['"'"'token'"'"'] }}"' \
+  '.jobs.lint.env.PAT = "${{ toJson(Secrets) }}"' \
   '.jobs["client-ordinary"].steps |= map(select(.run != "bash tools/local-lint-workflow.test.sh"))' \
   '(.jobs["client-ordinary"].steps[] | select(.run == "bash tools/local-lint-workflow.test.sh")).if = "false"' \
   '(.jobs["client-ordinary"].steps[] | select(.run == "bash tools/local-lint-workflow.test.sh"))["continue-on-error"] = true' \
