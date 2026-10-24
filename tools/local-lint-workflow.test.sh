@@ -5,6 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
+# Admit only the complete, unconditional, read-only native lint job declared in $1.
 check() {
   # shellcheck disable=SC2016 # GitHub expressions are literal configuration data.
   yq -o=json '.' "$1" | jq -e '
