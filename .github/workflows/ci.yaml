@@ -1161,8 +1161,10 @@ jobs:
 
   client-export-macos:
     name: Client export (macOS)
+    needs: [detect-visual-changes]
     outputs:
       archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
+      captured: ${{ steps.capture-exported.outputs.captured }}
     # BUILD VERIFICATION, not distribution: this proves a change still exports
     # and that the exported .app actually boots, so a broken export is caught on
     # the PR rather than at release time. The shipped, version-stamped build is
@@ -1174,12 +1176,25 @@ jobs:
     # launch — a Linux-exported unsigned zip would be dead on arrival on the
     # maintainer's Apple-Silicon machine.
     runs-on: macos-15
+    env:
+      EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # This job uploads an artifact — never let the checked-out token
           # ride along in it (zizmor artipacked).
           persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Admit complete export selection
+        id: export-selection
+        env:
+          EXPORT_SELECTED: ${{ needs.detect-visual-changes.outputs.export_affecting }}
+        run: |
+          case "$EXPORT_SELECTED" in
+            true|false) ;;
+            *) echo '::error::export capture selection is unknown'; exit 1 ;;
+          esac
       - name: Retained v1 reader artifact consumes the shipped recovery golden
         # The writer may emit recovery v1 only because v0.51.1 is the retained
         # monolithic rollback target. BOOT_OK alone is insufficient: recovery
@@ -1225,9 +1240,14 @@ jobs:
         # pipefail: without it, tee masks a nonzero exit from the app itself
         # (a crash with no matching error line would upload a broken artifact).
         run: |
-          set -o pipefail
+          set -euo pipefail
           unzip -q build/WorldAtRuin.zip -d build/app
-          "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" --headless --quit-after 60 2>&1 | tee exported-smoke.log
+          smoke_state="$(mktemp -d "$RUNNER_TEMP/exported-smoke.XXXXXX")"
+          WAR_SAVE_PATH="$smoke_state/save.json" \
+          WAR_VAULT_PATH="$smoke_state/vault.json" \
+          WAR_BOOT_RECOVERY_PATH="$smoke_state/recovery.json" \
+          WAR_UPDATE_HISTORY_PATH="$smoke_state/update-history.json" \
+            "build/app/World at Ruin.app/Contents/MacOS/World at Ruin" --headless --quit-after 60 2>&1 | tee exported-smoke.log
           if grep -qE "SCRIPT ERROR|^ERROR" exported-smoke.log; then
             echo "::error::Errors booting the exported app"; exit 1
           fi
@@ -1236,6 +1256,17 @@ jobs:
           name: WorldAtRuin-macOS-universal
           path: build/WorldAtRuin.zip
           if-no-files-found: error
+      - name: Capture the exact exported HEAD
+        id: capture-exported
+        if: needs.detect-visual-changes.outputs.export_affecting == 'true'
+        # The native capture retains its own complete fifteen-minute
+        # budget. Pin its reviewed control code independently of the app's
+        # already-executed workspace; the archive and integration are checked
+        # again immediately before the fresh evidence app is extracted.
+        timeout-minutes: 15
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@8868b4c00b0e9ff330b83f200a6c87a100e51635
+        with:
+          archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
 
   license-guard:
     name: IP guard (licences, provenance, originality boundary)
@@ -2654,68 +2685,20 @@ jobs:
 
   frame-capture-exported-head:
     name: Frame capture (exported HEAD)
-    # The ordinary frame-capture job photographs the EDITOR project, but what a
-    # player installs is the separately exported .app — a change to export-only
-    # behaviour (resource filters, feature tags, packed-resource resolution,
-    # high-res flags) can pass the editor capture on settings the shipped build
-    # never uses. The export job already proves the shipped build STARTS; this
-    # one proves it still LOOKS RIGHT (#174).
-    #
-    # It REUSES the HEAD artifact client-export-macos already built. A second,
-    # base-tip export runs independently because comparing editor frames cannot
-    # expose an export-only regression: the change report must photograph the
-    # same shipped entry path on both sides (#296). That extra work remains
-    # reporting-only, records its own wall-clock cost, and runs only when
-    # export-affecting paths changed, so every other PR pays nothing for it.
-    #
-    # The exported binary CANNOT take the positional scene argument the editor
-    # run uses: the official export template is compiled with
-    # disable_path_overrides and aborts on any scene path (settled empirically
-    # against the 4.7.1 template before this job landed). Entry is therefore
-    # WAR_CAPTURE=1, which main.gd answers by redirecting its own boot into
-    # the capture scene — shipped in the pck, since export_filter is
-    # "all_resources". The timeout exists because a windowed game that reaches
-    # its normal boot instead of the capture tool has no quit path, and a hang
-    # class this job cannot fully rule out must cost minutes, not the runner's
-    # 6-hour default.
-    #
-    # macOS runner + windowed run for the same reason as frame-capture: the
-    # capture tool refuses a headless run rather than photograph nothing.
-    #
-    # REQUIRED since #214, on its own measured window rather than by borrowing
-    # frame-capture's: 13 consecutive successes, the single failure before them
-    # root-caused as a real defect this job caught (the export template refuses
-    # a positional scene path, fixed inside #210 by the WAR_CAPTURE=1 entry) —
-    # not a flake. That is the same trigger #142 used, measured independently
-    # because this job runs a different entry path and a different scene.
+    # Stable required acknowledgement, not another native allocation. The Mac
+    # producer runs every original exported capture through WAR_CAPTURE=1 and
+    # acknowledges only its complete uploaded evidence. The independent BASE
+    # export and final source-bound artifact comparison remain separate.
     needs: [detect-visual-changes, client-export-macos]
     if: needs.detect-visual-changes.outputs.export_affecting == 'true'
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      # The hosted display cannot realise the shipped 1600x900 window and has
-      # clamped identical exports to both 1024x642 and 1024x645. Pin a smaller
-      # 16:9 viewport on BOTH sides so frame_diff measures product pixels
-      # instead of refusing a runner-window mismatch.
-      EXPORTED_CAPTURE_RESOLUTION: 1024x576
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The head game still comes exclusively from the export artifact.
-          ref: ${{ github.sha }}
-          # Keep the same exact integration source on both capture workers.
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: WorldAtRuin-macOS-universal
-          path: build
-      - name: Capture the exact exported HEAD
-        # Immutable owner-local source, independent of workspace contents.
-        # actionlint#711 tracks support for GitHub's newer $/ spelling.
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6
-        with:
-          archive-sha256: ${{ needs.client-export-macos.outputs.archive-sha256 }}
+      - name: Require complete native exported evidence
+        env:
+          EXPORT_RESULT: ${{ needs.client-export-macos.result }}
+          CAPTURED: ${{ needs.client-export-macos.outputs.captured }}
+        run: '[[ "$EXPORT_RESULT" == success && "$CAPTURED" == true ]]'
 
   frame-capture-exported-base:
     name: Frame capture (exported BASE)

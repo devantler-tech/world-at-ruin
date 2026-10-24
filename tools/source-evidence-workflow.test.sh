@@ -13,8 +13,9 @@ admit() {
       (has("continue-on-error")|not) and (has("container")|not);
     .jobs as $jobs |
     all(["client-export-macos","frame-capture-head","frame-capture-base",
-      "frame-capture-cloth","frame-capture-exported-head","frame-capture-exported-base"][];
+      "frame-capture-cloth","frame-capture-exported-base"][];
       . as $job | $jobs[$job]."runs-on"=="macos-15") and
+    $jobs["frame-capture-exported-head"]."runs-on"=="ubuntu-latest" and
     ($jobs["frame-capture-head"] | safe and checkout and
       .needs==["detect-visual-changes"] and ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
       .if=="needs.detect-visual-changes.outputs.visual == '\''true'\''" and
