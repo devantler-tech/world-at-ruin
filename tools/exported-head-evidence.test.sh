@@ -19,9 +19,12 @@ jq -e '
   ."runs-on"=="macos-15" and ."timeout-minutes"==15 and
   .if=="needs.detect-visual-changes.outputs.export_affecting == '\''true'\''" and
   (.steps|length)==3 and
-  .steps[2]=={name:"Capture the exact exported HEAD",uses:"./.github/actions/capture-exported-head",
+  .steps[2]=={name:"Capture the exact exported HEAD",uses:"devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6",
     with:{"archive-sha256":"${{ needs.client-export-macos.outputs.archive-sha256 }}"}}
 ' "$work/ci.json" >/dev/null || fail 'the native capture call changed source, selection or deadline'
+capture_ref=$(jq -r '.jobs["frame-capture-exported-head"].steps[2].uses|split("@")[1]' "$work/ci.json")
+git -C "$root" show "$capture_ref:.github/actions/capture-exported-head/action.yaml" >"$work/pinned-action.yaml"
+cmp -s "$work/pinned-action.yaml" "$root/.github/actions/capture-exported-head/action.yaml" || fail 'tested capture differs from its immutable executed source'
 jq -e '
   .inputs|keys==["archive-sha256"]
 ' "$work/action.json" >/dev/null || fail 'unexpected capture interface'

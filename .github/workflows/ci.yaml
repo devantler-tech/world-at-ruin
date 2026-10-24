@@ -2711,7 +2711,9 @@ jobs:
           name: WorldAtRuin-macOS-universal
           path: build
       - name: Capture the exact exported HEAD
-        uses: ./.github/actions/capture-exported-head
+        # Immutable owner-local source, independent of workspace contents.
+        # actionlint#711 tracks support for GitHub's newer $/ spelling.
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6
         with:
           archive-sha256: ${{ needs.client-export-macos.outputs.archive-sha256 }}
 

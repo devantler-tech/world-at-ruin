@@ -274,7 +274,7 @@ parallel_contract() {
 		$base.if==$head.if and $head.env.EXPORTED_CAPTURE_RESOLUTION=="1024x576" and $base.env==$head.env and
 		$head["runs-on"]=="macos-15" and $base["runs-on"]=="macos-15" and
 		all($head.steps[];(has("continue-on-error") or has("if"))|not) and
-		$head.steps[-1].uses=="./.github/actions/capture-exported-head" and
+		$head.steps[-1].uses=="devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6" and
 		$head.steps[-1].with=={"archive-sha256":"${{ needs.client-export-macos.outputs.archive-sha256 }}"} and
 		all($component.runs.steps[];(has("continue-on-error") or has("if"))|not) and
 		($component.runs.steps[]|select(.id=="upload").with.name)=="exported-head-${{ github.sha }}-${{ github.run_attempt }}" and

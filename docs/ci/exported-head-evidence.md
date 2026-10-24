@@ -5,6 +5,10 @@ built. The selected Mac evidence worker consumes that exact same-attempt artifac
 and verifies the archive bytes, immutable integration checkout and clean tracked
 source before running the owner-local capture component.
 
+The component reference is pinned to immutable reviewed source rather than
+resolved from the runtime workspace. The regression suite verifies that this
+executed component is byte-identical to the local implementation it tests.
+
 The component extracts a fresh app copy and requires fresh save and image paths.
 It runs the complete default world, opt-in previews and first-run UI through the
 exported entry point. Every capture retains its boot, renderer-error, image,

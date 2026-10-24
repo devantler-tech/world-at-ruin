@@ -7,7 +7,9 @@ general-purpose publisher or an install source.
 The caller supplies an immutable integration checkout, the built archive at
 `build/WorldAtRuin.zip`, and the existing `1024x576` capture resolution. The action
 refuses a wrong archive digest, dirty or mismatched source, and stale capture
-state. Completion is acknowledged only after all evidence uploads successfully.
+state. Its control code is pinned independently of the workspace and must match
+the local tested implementation. Completion is acknowledged only after all
+evidence uploads successfully.
 
 | Interface              | Meaning                                                   |
 | ---------------------- | --------------------------------------------------------- |

@@ -288,7 +288,7 @@ else
   # source of truth there. A resolver call in the editor-only job cannot prove
   # an exported build ever rendered the treatments.
   yq -o=json '.jobs."frame-capture-exported-head".steps' "$WORKFLOW" |
-    jq -e '[.[]|select(.uses?=="./.github/actions/capture-exported-head")]|
+    jq -e '[.[]|select(.uses?=="devantler-tech/world-at-ruin/.github/actions/capture-exported-head@0dd297465cd05ab4f3999fc458f184482058bee6")]|
       length==1 and (.[0]|(has("if") or has("continue-on-error"))|not)' >/dev/null ||
     t_fail "the selected exported capture does not invoke its owner-local component"
   yq '.runs.steps' "$CAPTURE_ACTION" >"$SCRATCH_DIR/exported-capture-job"
