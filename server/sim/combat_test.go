@@ -52,6 +52,26 @@ func TestStandStillTargetIsCaught(t *testing.T) {
 	}
 }
 
+// TestMobPaintsOnlyAPositiveRadius pins the extent rule (ADR 0059, #1451). The
+// client draws only a circle with a positive radius, and a zero radius still
+// catches the exact centre here, so a mob without a positive radius never starts
+// a cast: the server never resolves a warning the client cannot paint, and never
+// sends a cast that catches nothing. The 1 mm control proves the same mob casts
+// as soon as its radius can be drawn.
+func TestMobPaintsOnlyAPositiveRadius(t *testing.T) {
+	for _, tc := range []struct {
+		radius int64
+		paints bool
+	}{{-1, false}, {0, false}, {1, true}} {
+		w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 2, CircleRadiusMM: tc.radius})
+		w.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}})
+		steps(w, 6)
+		if painted := len(w.DrainHits()) > 0; painted != tc.paints {
+			t.Errorf("radius %d: mob resolved a cast = %v, want %v", tc.radius, painted, tc.paints)
+		}
+	}
+}
+
 func TestWalkOutEscapesAndAnchorStaysPut(t *testing.T) {
 	w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 4, CooldownTicks: 600, CircleRadiusMM: 2_000})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}, MaxSpeed: 30_000})
@@ -550,10 +570,11 @@ func TestMobChaseReachesZeroRangeWithoutTruncating(t *testing.T) {
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 31}})
 	w.AddMob(100, MobParams{
-		AggroRadiusMM: 1_000,
-		CastRangeMM:   0,
-		ChaseSpeedMM:  3_000,
-		CastTicks:     2,
+		AggroRadiusMM:  1_000,
+		CastRangeMM:    0,
+		CircleRadiusMM: 1_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      2,
 	})
 
 	steps(w, 100)
@@ -570,10 +591,11 @@ func TestMobChaseCastsAtCapsuleContact(t *testing.T) {
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000, Radius: 300})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 2_000}, Radius: 300})
 	w.AddMob(100, MobParams{
-		AggroRadiusMM: 10_000,
-		CastRangeMM:   0,
-		ChaseSpeedMM:  3_000,
-		CastTicks:     2,
+		AggroRadiusMM:  10_000,
+		CastRangeMM:    0,
+		CircleRadiusMM: 1_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      2,
 	})
 
 	for range 100 {
@@ -590,10 +612,11 @@ func TestMobChaseLowSpeedDiagonalStillAdvances(t *testing.T) {
 	w.Add(Entity{ID: 100, MaxSpeed: TickHz})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 40, Z: 40}})
 	w.AddMob(100, MobParams{
-		AggroRadiusMM: 1_000,
-		CastRangeMM:   0,
-		ChaseSpeedMM:  1,
-		CastTicks:     2,
+		AggroRadiusMM:  1_000,
+		CastRangeMM:    0,
+		CircleRadiusMM: 1_000,
+		ChaseSpeedMM:   1,
+		CastTicks:      2,
 	})
 
 	startDist2 := horizontalDist2(w.Get(100).Pos, w.Get(1).Pos)

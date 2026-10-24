@@ -40,10 +40,34 @@ type coneAuthorityCase struct {
 	CanonicalCosHalf int64            `json:"canonical_cos_half_scaled"`
 }
 
+// extentAuthorityCase is one circle radius or cone range from the shared extent
+// vectors (#1451).
+type extentAuthorityCase struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	OuterMM   int64  `json:"outer_mm"`
+	WireValid bool   `json:"wire_valid"`
+}
+
+// shape builds the raw cast the case describes, with a real heading and an
+// in-range threshold for a cone so only the extent decides validity.
+func (c extentAuthorityCase) shape(t *testing.T) sim.Telegraph {
+	t.Helper()
+	switch c.Kind {
+	case "circle":
+		return sim.Telegraph{Kind: sim.ShapeCircle, Outer: c.OuterMM}
+	case "cone":
+		return sim.Telegraph{Kind: sim.ShapeCone, Facing: sim.Vec3{Z: -1_000}, Outer: c.OuterMM, CosHalf: 707_107}
+	}
+	t.Fatalf("%s: unknown extent kind %q", c.Name, c.Kind)
+	return sim.Telegraph{}
+}
+
 type coneAuthorityFixture struct {
-	CosScale int64               `json:"cos_scale"`
-	RangeMM  int64               `json:"range_mm"`
-	Cases    []coneAuthorityCase `json:"cases"`
+	CosScale    int64                 `json:"cos_scale"`
+	RangeMM     int64                 `json:"range_mm"`
+	Cases       []coneAuthorityCase   `json:"cases"`
+	ExtentCases []extentAuthorityCase `json:"extent_cases"`
 }
 
 func loadConeAuthorityFixture(t *testing.T) coneAuthorityFixture {
@@ -140,5 +164,58 @@ func TestCanonicalFacingResolvesLikeTheFallback(t *testing.T) {
 	}
 	if caught == 0 || caught == len(probes) {
 		t.Fatalf("probes caught %d of %d — they cannot tell a wedge from a constant", caught, len(probes))
+	}
+}
+
+// TestExtentAuthorityMatchesTheWireBoundary pins which circle radii and cone
+// ranges the server's wire boundary accepts (#1451). The client half asserts the
+// same answers for its codec and its cast factory. The vectors must hold a
+// positive, a zero and a negative extent for both kinds.
+func TestExtentAuthorityMatchesTheWireBoundary(t *testing.T) {
+	covered := map[string]bool{}
+	for _, c := range loadConeAuthorityFixture(t).ExtentCases {
+		err := validateCastShape(c.shape(t))
+		if got := err == nil; got != c.WireValid {
+			t.Errorf("%s: wire accepts %s extent %d = %v (err %v), want %v", c.Name, c.Kind, c.OuterMM, got, err, c.WireValid)
+		}
+		switch {
+		case c.WireValid && c.OuterMM > 0:
+			covered[c.Kind+"/positive"] = true
+		case !c.WireValid && c.OuterMM == 0:
+			covered[c.Kind+"/zero"] = true
+		case !c.WireValid && c.OuterMM < 0:
+			covered[c.Kind+"/negative"] = true
+		}
+	}
+	for _, class := range []string{"circle/positive", "circle/zero", "circle/negative", "cone/positive", "cone/zero", "cone/negative"} {
+		if !covered[class] {
+			t.Errorf("extent vectors have no %s case", class)
+		}
+	}
+}
+
+// TestMobPaintsExactlyTheWireValidRadii ties the authority to the same vectors:
+// a mob starts a circle exactly when both tiers accept its radius, and the
+// circle it starts passes the wire, so the server never resolves a warning the
+// client refuses to paint.
+func TestMobPaintsExactlyTheWireValidRadii(t *testing.T) {
+	for _, c := range loadConeAuthorityFixture(t).ExtentCases {
+		if c.Kind != "circle" {
+			continue
+		}
+		w := sim.NewWorld(sim.DemoBounds)
+		w.Add(sim.Entity{ID: 1, Pos: sim.Vec3{X: 1_000}})
+		w.Add(sim.Entity{ID: 100, Radius: 300})
+		w.AddMob(100, sim.MobParams{AggroRadiusMM: 10_000, CastTicks: 3, CircleRadiusMM: c.OuterMM})
+		w.Step()
+		casts := w.ActiveCasts()
+		if started := len(casts) > 0; started != c.WireValid {
+			t.Errorf("%s: mob with radius %d started a cast = %v, want %v", c.Name, c.OuterMM, started, c.WireValid)
+		}
+		for _, cast := range casts {
+			if err := validateCastShape(cast.Shape); err != nil {
+				t.Errorf("%s: the mob's own circle is refused by the wire: %v", c.Name, err)
+			}
+		}
 	}
 }

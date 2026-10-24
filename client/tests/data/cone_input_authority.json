@@ -67,5 +67,16 @@
       "canonical_facing_mm": { "x": 0, "y": 0, "z": -1 },
       "canonical_cos_half_scaled": 707107
     }
+  ],
+  "_extent_comment": "Shared extent authority vectors (ADR 0059, #1451). For each circle radius or cone range in millimetres, wire_valid says whether BOTH wire codecs accept a cast carrying it and the client cast factory builds it. The server starts a mob circle only for a radius whose wire_valid is true, so it never resolves a cast the client cannot paint or sends one that catches nothing.",
+  "extent_cases": [
+    { "name": "circle_smallest_radius", "kind": "circle", "outer_mm": 1, "wire_valid": true },
+    { "name": "circle_at_extent_cap", "kind": "circle", "outer_mm": 4000000, "wire_valid": true },
+    { "name": "circle_zero_radius", "kind": "circle", "outer_mm": 0, "wire_valid": false },
+    { "name": "circle_negative_radius", "kind": "circle", "outer_mm": -1, "wire_valid": false },
+    { "name": "cone_smallest_range", "kind": "cone", "outer_mm": 1, "wire_valid": true },
+    { "name": "cone_at_extent_cap", "kind": "cone", "outer_mm": 4000000, "wire_valid": true },
+    { "name": "cone_zero_range", "kind": "cone", "outer_mm": 0, "wire_valid": false },
+    { "name": "cone_negative_range", "kind": "cone", "outer_mm": -1, "wire_valid": false }
   ]
 }

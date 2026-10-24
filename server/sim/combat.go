@@ -98,8 +98,10 @@ type MobParams struct {
 	CooldownTicks uint64
 
 	// CircleRadiusMM is the painted circle's radius. Clamped exactly as the
-	// telegraph constructors clamp an extent; a negative radius survives as
-	// the degenerate catches-nothing circle, matching the telegraph law.
+	// telegraph constructors clamp an extent. A mob whose radius is zero or
+	// negative never starts a cast: the client paints only a positive radius,
+	// so such a circle would be either an undrawn warning or a cast that
+	// catches nothing (ADR 0059).
 	CircleRadiusMM int64
 
 	// Damage is how much health each caught entity loses when a cast
@@ -286,7 +288,8 @@ func (w *World) resolveDueCasts() {
 // target until the capsule gap reaches CastRangeMM, then stops before painting;
 // it also stops while a cast is in flight or no target is eligible. Zero
 // preserves the stationary-caster contract and paints at the target's current
-// position as soon as cooldown allows. Cooldown is measured from cast start.
+// position as soon as cooldown allows. Cooldown is measured from cast start. A
+// mob without a positive CircleRadiusMM never paints.
 func (w *World) decideMobCasts() {
 	for _, id := range w.mobOrder {
 		st := w.mobs[id]
@@ -312,7 +315,7 @@ func (w *World) decideMobCasts() {
 		if w.Tick < st.nextCastTick {
 			continue
 		}
-		if target == nil {
+		if target == nil || st.params.CircleRadiusMM <= 0 {
 			continue
 		}
 		w.casts = append(w.casts, ActiveCast{
