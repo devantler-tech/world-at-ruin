@@ -259,10 +259,7 @@ func TestAuthenticationFailureNeverAllocates(t *testing.T) {
 		AccountErr: status.Error(codes.Unauthenticated, "rejected "+testSession),
 	}
 	allocator := &recordingAllocator{allocation: validAllocation()}
-	service := serviceAgainst(t, nakama, allocator, validConfig())
-
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	requireFailedHandoff(t, got, err)
+	err := refusedHandoff(t, nakama, allocator)
 	if len(allocator.requests) != 0 {
 		t.Fatalf(
 			"allocator requests = %+v, want no allocation after auth failure",
@@ -473,10 +470,7 @@ func TestAllocationFailureReturnsNoHandoff(t *testing.T) {
 	allocator := &recordingAllocator{
 		err: status.Error(codes.ResourceExhausted, "allocator unavailable for "+testSession),
 	}
-	service := serviceAgainst(t, nakama, allocator, validConfig())
-
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	requireFailedHandoff(t, got, err)
+	err := refusedHandoff(t, nakama, allocator)
 	if len(allocator.requests) != 1 ||
 		allocator.requests[0].UserID != "player-42" ||
 		allocator.requests[0].ReservationID != testReservationID {
@@ -622,10 +616,7 @@ func TestReleaseFailureRemainsClosedAndSanitized(t *testing.T) {
 		allocation: allocation,
 		releaseErr: status.Error(codes.Unavailable, "release failed for "+testSession),
 	}
-	service := serviceAgainst(t, nakama, allocator, validConfig())
-
-	got, err := service.CreateHandoff(context.Background(), validRequest())
-	requireFailedHandoff(t, got, err)
+	err := refusedHandoff(t, nakama, allocator)
 	requireReleasedAllocation(t, allocator)
 	if strings.Contains(err.Error(), testSession) {
 		t.Fatalf("handoff error leaked a credential: %q", err)
@@ -739,6 +730,15 @@ func requireFailedHandoff(t *testing.T, got Handoff, err error) {
 	if got != (Handoff{}) {
 		t.Fatalf("failed handoff = %+v, want zero value", got)
 	}
+}
+
+// refusedHandoff sends the canonical request through a service composed against nakama and
+// allocator, fails unless it is refused with the zero handoff, and returns the refusal.
+func refusedHandoff(t *testing.T, nakama *accountServer, allocator Allocator) error {
+	t.Helper()
+	got, err := serviceAgainst(t, nakama, allocator, validConfig()).CreateHandoff(context.Background(), validRequest())
+	requireFailedHandoff(t, got, err)
+	return err
 }
 
 // serviceAgainst composes the real handoff service with the fixture account transport and the
