@@ -280,17 +280,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "1a3af414d83b84299db348b5c8032294cda1fcebbb7764a3dcc9faec268a616c",
-      "format": "go",
-      "files": [
-        "server/zonesock/movement_test.go",
-        "server/zonesock/movement_test.go"
-      ],
-      "fragmentSHA256": "23984c434b398d1f93993e8b8750e9fd4061a180b4e81fe7b14d896c5b1b5955",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "1b25a001f36bbbf5c4f8f8d1cb9adc0ff7ec745590651893ec05887e5db2d8a8",
       "format": "go",
       "files": [
