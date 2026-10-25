@@ -591,11 +591,11 @@
   `.tscn`) on its own line in the optional `client/tests/ci-skip.txt` (blank/`#`-comment lines
   ignored) — a rarely-edited escape hatch, so the run line itself stops changing per-test.
   **That candidate-owned discovery loop is not the product-law boundary.** The organization ruleset
-  `Require workflow - World at Ruin trusted regressions`, managed declaratively by
-  `devantler-tech/.github`, separately requires
-  `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml` at
-  `refs/heads/main`. The external workflow checks out the proposed product bytes as the candidate and
-  the GitHub-supplied pull-request or merge-group base SHA as trusted World at Ruin bytes. It copies
+  managed declaratively by `devantler-tech/.github`, separately requires
+  `devantler-tech/.github/.github/workflows/repository-pr-admission.yaml` at
+  `refs/heads/main`. This shared runner invokes World's fixed admission action from the
+  immutable reviewed base; [ADR 0062](../adr/0062-retire-unused-app-publisher-after-shared-admission.md)
+  records native adoption and the old World-only rule's retirement. The product controller copies
   only the candidate's product tree into a throwaway evaluation root, replaces `client/tests/` with
   the trusted base's snapshot (apart from the narrowly validated capability declaration described
   under [CI, CD and releases](ci-and-evidence.md#ci-cd-and-releases)), and invokes the trusted base's `tools/run-client-test.sh` over every
@@ -604,7 +604,7 @@
   aggregate required gate for both `pull_request` and `merge_group`.
   provider-upjet-github v0.20.0 cannot express GitHub's immutable required-workflow SHA selector, so
   the live rule binds the reviewed Actions `main` branch. Change the external workflow only through
-  an exact-head-reviewed Actions PR; preserve compatibility with the World base controller and
+  an exact-head-reviewed `.github` PR; preserve compatibility with the World base controller and
   harness, pass `tools/required-regression-control.test.sh`, and run live positive and missing-input
   controls. Change the rule itself only through the declarative `.github` release path, then read the
   live ruleset back. The product-owned `.github/workflows/trusted-regressions.yaml` is a latent

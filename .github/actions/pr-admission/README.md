@@ -28,16 +28,17 @@ is not the witness for the commit GitHub selected for this run. Missing checkout
 different heads, reversed or extra parents still fail. The older local controller's
 resolver interface retains its existing behavior.
 
-The closed `.github/pr-admission.json` contract gives the additive consumer a
-15-minute outer bound. An exceeded deadline fails the new gate; it cannot count
-as complete evidence. This setting is not a successful runtime measurement.
-The existing required source remains unchanged through adoption proof.
+The closed `.github/pr-admission.json` contract gives the consumer a
+15-minute outer bound. An exceeded deadline fails the gate; it cannot count as
+complete evidence. This setting is not a whole-PR runtime measurement.
 
-Source presence does not activate enforcement. Organization enrollment,
-passing/tampering overlap controls and retirement of the old required source
-are managed separately in [the shared migration](https://github.com/devantler-tech/.github/issues/693).
-Existing protection must remain active until those gates pass.
+The shared required runner is enrolled and native positive/refusal controls passed
+both before and after the old World-only rule's managed retirement.
+[ADR 0062](../../../docs/adr/0062-retire-unused-app-publisher-after-shared-admission.md)
+records that evidence and the retirement of the unused App producer. Future
+protection changes remain owned by [the declarative shared migration](https://github.com/devantler-tech/.github/issues/693);
+source presence alone never proves live enforcement.
 
 Validate with `bash tools/shared-product-admission.test.sh` and the existing
-trusted workflow, lifecycle, deadline and containment tests. Native consumer
-execution remains a separate adoption requirement.
+trusted workflow, lifecycle, deadline and containment tests. Native execution and protection
+readback remain required whenever enforcement routing changes.
