@@ -6,6 +6,8 @@ trap 'rm -rf "$control"' EXIT
 mkdir "$control/.github"
 cp .github/retired-repo-links.json "$control/.github/"
 cp README.md AGENTS.md "$control/"
+mkdir "$control/docs"
+cp -R docs/agents "$control/docs/"
 [[ "$VALIDATOR_SOURCE" == /* ]]
 test -f "$VALIDATOR_SOURCE/go.mod"
 test -f "$VALIDATOR_SOURCE/main.go"
