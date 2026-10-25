@@ -10,7 +10,7 @@ driver="$root/tools/shared-product-admission.sh"
 work=$(mktemp -d)
 work=$(cd "$work" && pwd -P)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/trusted/tools" "$work/temp"
+mkdir -p "$work/trusted/tools" "$work/temp" "$work/bin"
 cp "$driver" "$root/tools/trusted-regression-lifecycle.sh" "$root/tools/resolve-trusted-regression-event.sh" "$work/trusted/tools/"
 cat >"$work/trusted/tools/fetch-trusted-regression-data.sh" <<'FETCH'
 #!/usr/bin/env bash
@@ -29,6 +29,7 @@ cat >"$work/trusted/tools/run-sandboxed-trusted-regressions.sh" <<'CONTROL'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $1 == "$EXPECTED_TRUSTED" && $2 == "$PWD/candidate" && -d $2 ]]
+[[ -z ${GH_TOKEN+x} && -z ${GITHUB_TOKEN+x} ]]
 printf 'contained\n' >>"$TRACE"
 if [[ ${CONTROL_WAIT:-false} == true ]]; then
   sleep 60 &
@@ -39,6 +40,20 @@ if [[ ${CONTROL_WAIT:-false} == true ]]; then
 fi
 exit "${CONTROL_EXIT:-0}"
 CONTROL
+cat >"$work/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# == 15 && $1 == --disable && $2 == --fail && $3 == --silent && $4 == --show-error &&
+  $5 == --connect-timeout && $6 == 5 && $7 == --max-time && $8 == 30 &&
+  $9 == --header && ${10} == 'Authorization: Bearer fixture-read-token' &&
+  ${11} == --header && ${12} == 'Accept: application/vnd.github+json' &&
+  ${13} == --header && ${14} == 'X-GitHub-Api-Version: 2026-03-10' ]]
+[[ ${!#} == "https://api.github.com/repos/devantler-tech/world-at-ruin/compare/$EXPECTED_BASE...$EXPECTED_PARENT?per_page=1" ]]
+printf 'compared\n' >>"$TRACE"
+cat "$COMPARISON_BODY"
+exit "${COMPARISON_EXIT:-0}"
+CURL
+chmod +x "$work/bin/curl"
 git -C "$work/trusted" init -q
 git -C "$work/trusted" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false add tools
 git -C "$work/trusted" -c user.name=fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm trusted
@@ -52,6 +67,8 @@ commit_object() {
 }
 head=$(printf 'candidate head\n' | commit_object -p "$base")
 extra_head=$(printf 'another head\n' | commit_object -p "$base")
+advanced_base=$(printf 'main advanced after the event base\n' | commit_object -p "$base")
+advanced_candidate=$(printf 'rebuilt native integration\n' | commit_object -p "$advanced_base" -p "$head")
 printf 'integration\n\nparent 0000000000000000000000000000000000000000\n' >"$work/message"
 printf '%100000s\n' '' >>"$work/message"
 candidate=$(commit_object -p "$base" -p "$head" <"$work/message")
@@ -67,7 +84,7 @@ invoke() {
     GITHUB_WORKFLOW_REF=devantler-tech/.github/.github/workflows/repository-pr-admission.yaml@refs/heads/main \
     GITHUB_WORKFLOW_SHA="$workflow" GITHUB_SHA="$candidate" CANDIDATE_SHA="$candidate" \
     GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$work/event.json" RUNNER_TEMP="$work/temp" \
-    TRACE="$work/trace" EXPECTED_TRUSTED="$work/trusted" "$@" \
+    TRACE="$work/trace" EXPECTED_TRUSTED="$work/trusted" PATH="$work/bin:$PATH" "$@" \
     bash "$work/trusted/tools/shared-product-admission.sh" "$mode"
 }
 mode=check
@@ -131,6 +148,63 @@ for mutation in '.pull_request.merge_commit_sha=null' 'del(.pull_request.merge_c
   rm "$work/trace"
   invoke GITHUB_EVENT_PATH="$work/native-event.json"
   [[ $(paste -sd, "$work/trace") == fetched,contained ]] || exit 1
+done
+# An event's base can predate the current main parent of a rebuilt integration.
+# Keep its reviewed implementation, bind the second parent exactly, and prove
+# the first parent's ancestry through the canonical read-only comparison API.
+jq -n --arg base "$base" --arg parent "$advanced_base" \
+  '{url:("https://api.github.com/repos/devantler-tech/world-at-ruin/compare/"+$base+"..."+$parent),
+    status:"ahead",ahead_by:1,behind_by:0,total_commits:1,
+    base_commit:{sha:$base},merge_base_commit:{sha:$base}}' >"$work/comparison.json"
+rm "$work/trace"
+invoke GITHUB_SHA="$advanced_candidate" CANDIDATE_SHA="$advanced_candidate" \
+  GH_TOKEN=fixture-read-token GITHUB_TOKEN=fixture-other-token \
+  EXPECTED_BASE="$base" EXPECTED_PARENT="$advanced_base" \
+  COMPARISON_BODY="$work/comparison.json"
+[[ $(paste -sd, "$work/trace") == fetched,compared,contained ]] || {
+  echo 'FAIL: advanced integration did not prove canonical base ancestry before containment' >&2
+  exit 1
+}
+for mutation in '.status="behind"' '.status="diverged"' '.status="identical"' \
+  '.base_commit.sha="0000000000000000000000000000000000000000"' \
+  '.merge_base_commit.sha="0000000000000000000000000000000000000000"' \
+  '.url="https://example.invalid/comparison"' '.ahead_by=0' '.ahead_by=-1' \
+  '.ahead_by=1.5' '.ahead_by="1"' '.behind_by=1' '.total_commits=2' '{}'; do
+  jq "$mutation" "$work/comparison.json" >"$work/invalid-comparison.json"
+  rm "$work/trace"
+  if invoke GITHUB_SHA="$advanced_candidate" CANDIDATE_SHA="$advanced_candidate" \
+    GH_TOKEN=fixture-read-token EXPECTED_BASE="$base" EXPECTED_PARENT="$advanced_base" \
+    COMPARISON_BODY="$work/invalid-comparison.json" >"$work/log" 2>&1; then
+    echo "FAIL: inconsistent ancestry admitted: $mutation" >&2
+    exit 1
+  fi
+  [[ $(paste -sd, "$work/trace") == fetched,compared ]] || exit 1
+  rm -rf "$work/temp"
+  mkdir "$work/temp"
+done
+for control in malformed multiple operational-error missing-token; do
+  args=()
+  case "$control" in
+  malformed) printf '{broken' >"$work/invalid-comparison.json" ;;
+  multiple) cat "$work/comparison.json" "$work/comparison.json" >"$work/invalid-comparison.json" ;;
+  operational-error)
+    cp "$work/comparison.json" "$work/invalid-comparison.json"
+    args=(COMPARISON_EXIT=22)
+    ;;
+  missing-token) args=(GH_TOKEN=) ;;
+  esac
+  rm "$work/trace"
+  if invoke GITHUB_SHA="$advanced_candidate" CANDIDATE_SHA="$advanced_candidate" \
+    GH_TOKEN=fixture-read-token EXPECTED_BASE="$base" EXPECTED_PARENT="$advanced_base" \
+    COMPARISON_BODY="$work/invalid-comparison.json" "${args[@]}" >"$work/log" 2>&1; then
+    echo "FAIL: incomplete ancestry evidence admitted: $control" >&2
+    exit 1
+  fi
+  expected=fetched,compared
+  [[ $control != missing-token ]] || expected=fetched
+  [[ $(paste -sd, "$work/trace") == "$expected" ]] || exit 1
+  rm -rf "$work/temp"
+  mkdir "$work/temp"
 done
 # Valid-looking but wrong event heads, wrong checkouts, wrong parent order and
 # extra parents must fail after the real fetch and before contained execution.
@@ -215,13 +289,15 @@ contract() {
     .runs.steps[0].run=="bash \"$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh\" check" and
     .runs.steps[1].uses=="actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" and
     .runs.steps[1].with=={"go-version":"1.27.3",cache:false} and
-    .runs.steps[2].shell=="bash" and .runs.steps[2].env=={CANDIDATE_SHA:"${{ inputs.candidate-sha }}"} and
+    .runs.steps[2].shell=="bash" and .runs.steps[2].env=={
+      CANDIDATE_SHA:"${{ inputs.candidate-sha }}",GH_TOKEN:"${{ github.token }}"} and
     .runs.steps[2].run=="bash \"$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh\" run"' "$1" >/dev/null
 }
 contract "$work/action.json"
 for mutation in '.runs.steps[0].run="true"' '.runs.steps[0].env.CANDIDATE_SHA="main"' \
   '.runs.steps[1].with.cache=true' '.runs.steps[2].run="true"' \
-  '.runs.steps[2]["continue-on-error"]=true' '.runs.steps[2].if="false"' '.runs.steps[2].shell="true {0}"'; do
+  '.runs.steps[2]["continue-on-error"]=true' '.runs.steps[2].if="false"' '.runs.steps[2].shell="true {0}"' \
+  '.runs.steps[2].env.GH_TOKEN="other"' 'del(.runs.steps[2].env.GH_TOKEN)'; do
   jq "$mutation" "$work/action.json" >"$work/changed.json"
   if contract "$work/changed.json"; then
     echo "FAIL: action bypass admitted: $mutation" >&2
