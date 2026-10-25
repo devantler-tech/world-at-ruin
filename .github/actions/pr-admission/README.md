@@ -8,8 +8,11 @@ product base before loading this action.
 The entrypoint verifies the canonical shared workflow origin and uses the existing
 reviewed event resolver, then verifies unchanged reviewed-base files. Candidate
 bytes are fetched anonymously into private state and executed only by the existing complete contained regression
-controller. The pinned host Go toolchain builds the controller; Godot and its
-package/archive checks belong to the reviewed contained runtime. Cleanup and
+controller. The pinned host Go toolchain builds the controller. Before invoking
+it, the action installs the reviewed Godot version with the existing SHA-512
+verification script, from a private temporary download directory. The runtime
+builder copies that engine into the contained runtime and retains all existing
+package/archive checks. Candidate inputs cannot select the installer or pins. Cleanup and
 unknown outcomes retain their existing fail-closed behavior.
 
 For pull requests, the fetched integration commit must have exactly two ordered
