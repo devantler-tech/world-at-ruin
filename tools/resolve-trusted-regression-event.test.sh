@@ -82,4 +82,22 @@ for ref in \
 done
 printf '{broken' >"$tmp/event.json"
 refuse
+
+# Shared admission resolves primary event identities before fetching and verifying
+# the actual integration object; the payload merge snapshot is not that witness.
+for expression in '.pull_request.merge_commit_sha=null' \
+  'del(.pull_request.merge_commit_sha)' \
+  '.pull_request.merge_commit_sha="3333333333333333333333333333333333333333"'; do
+  jq "$expression" "$tmp/pr.json" >"$tmp/event.json"
+  run pull_request 'devantler-tech/.github/.github/workflows/repository-pr-admission.yaml@refs/heads/main' "$merge" --shared-event-json || {
+    cat "$tmp/log"
+    exit 1
+  }
+  jq -e --arg base "$base" --arg candidate "$merge" --arg head "$head" \
+    '.=={trusted_sha:$base,candidate_sha:$candidate,event_head_sha:$head}' "$tmp/log" >/dev/null
+  # Keep the older local controller and its existing JSON interface unchanged.
+  refuse pull_request "$workflow" "$merge"
+done
+cp "$tmp/pr.json" "$tmp/event.json"
+refuse pull_request "$workflow" "$merge" --shared-event-json
 echo 'TEST PASS -- required-main PR and merge-group identities bind the integration candidate'
