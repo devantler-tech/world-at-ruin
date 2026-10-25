@@ -22,6 +22,7 @@ func main() {
 	}
 }
 
+// execute admits only bounded, read-only historical inspection.
 func execute(args []string, env map[string]string, client *Client, out io.Writer) error {
 	if len(args) == 0 || args[0] != "inspect" {
 		return errors.New("only inspect is supported; the resolve and publish commands are retired")

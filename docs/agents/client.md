@@ -629,8 +629,9 @@
   The real-container refusal test pins that execution boundary. Its ordinary skipped job is
   preparation, never enforcement proof. Game-specific enforcement belongs at repository scope;
   do not add another World-only organization rule to select this latent source.
-  The external catalogue required workflow remains active throughout activation; no ruleset cutover
-  is implied by these source bytes.
+  The active required source is the shared `repository-pr-admission.yaml` workflow. The retired
+  World-only catalogue workflow and App activation are not part of current protection; source
+  changes alone do not alter the live ruleset.
 - **Boot tests go through `IsolatedBoot` — booting and isolating are ONE act:** a test that
   instantiates `main.tscn` runs the real launch path, which reads — and on the first-run path
   writes — every file the player's state lives in: `user://character.json` and the progression

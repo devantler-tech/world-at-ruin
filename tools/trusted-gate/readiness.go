@@ -14,6 +14,7 @@ const retainedOrganizationGateID int64 = 21102220
 const TrustedContext = "World trusted regressions"
 const knownActionsAppID int64 = 15368
 
+// publisherAppID excludes Actions from the historical independent publisher identity.
 func publisherAppID(id int64) bool { return id > 0 && id != knownActionsAppID }
 
 type rulesetRecord struct {

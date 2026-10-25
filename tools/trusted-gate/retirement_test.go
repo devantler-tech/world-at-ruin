@@ -14,6 +14,7 @@ import (
 	"testing"
 )
 
+// recordingInspectorClient records requests without granting a live API capability.
 func recordingInspectorClient(t *testing.T) (*Client, *atomic.Int32) {
 	t.Helper()
 	calls := new(atomic.Int32)
@@ -25,6 +26,7 @@ func recordingInspectorClient(t *testing.T) (*Client, *atomic.Int32) {
 	return &Client{BaseURL: server.URL, Token: "read-fixture", HTTP: server.Client()}, calls
 }
 
+// TestRetiredCommandsNeverContactAPIOrWriteOutput refuses legacy commands before side effects.
 func TestRetiredCommandsNeverContactAPIOrWriteOutput(t *testing.T) {
 	for _, command := range []string{"resolve", "publish"} {
 		for _, activation := range []string{"", "false", "true", "TRUE", "1"} {
@@ -57,6 +59,7 @@ func TestRetiredCommandsNeverContactAPIOrWriteOutput(t *testing.T) {
 	}
 }
 
+// TestRetiredProducerSourcesAreAbsent prevents reintroducing the unused publisher.
 func TestRetiredProducerSourcesAreAbsent(t *testing.T) {
 	for _, name := range []string{
 		".github/workflows/repository-trusted-regressions.yaml",
@@ -71,6 +74,7 @@ func TestRetiredProducerSourcesAreAbsent(t *testing.T) {
 	}
 }
 
+// TestInspectorTransportRefusesWritesBeforeNetwork keeps the diagnostic transport read-only.
 func TestInspectorTransportRefusesWritesBeforeNetwork(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodGet} {
 		t.Run(method, func(t *testing.T) {
