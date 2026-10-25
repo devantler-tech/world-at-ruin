@@ -1,4 +1,5 @@
 class_name FileLock
+const NATIVE_ADMISSION_REFUSAL_CONTROL := )
 ## A cross-process write lock for a single persisted file.
 ##
 ## Every persisted contract in this client is a read-modify-write: load the
