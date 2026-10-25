@@ -316,7 +316,7 @@ wording; read the one a task names before doing that kind of work.
   [`docs/design/originality-boundary.md`](docs/design/originality-boundary.md). External PRs cannot
   be merged until their author signs the CLA (`CLA.md`; the `CLA` workflow enforces this, with the
   ledger on the permanent `cla-signatures` branch).
-- **Roadmap:** GitHub Issues on this repo (`roadmap` label for epics). The plan is **phase-gated**
+- **Roadmap:** GitHub Issues on this repo (native `Epic` issue type for epics). The plan is **phase-gated**
   — Phase 0 (art-pipeline taste gate, #1) through Phase 8 (platforms, #15), each phase's exit
   criteria unlocking the next, plus the standing risk register (#16). Keep issues **agent-shaped**
   — small, specified, testable, art-free; every issue should be agent-completable without a human
