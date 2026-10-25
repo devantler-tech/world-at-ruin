@@ -283,21 +283,61 @@ yq -o=json . "$root/.github/actions/pr-admission/action.yaml" >"$work/action.jso
 contract() {
   # shellcheck disable=SC2016 # GitHub expressions are literal interface data.
   jq -e '.inputs=={"candidate-sha":{description:"Immutable candidate integration commit supplied by GitHub.",required:true}} and
-    .runs.using=="composite" and (.runs.steps|length)==3 and
+    .runs.using=="composite" and (.runs.steps|length)==4 and
     all(.runs.steps[]; (has("if") or has("continue-on-error"))|not) and
     .runs.steps[0].shell=="bash" and .runs.steps[0].env=={CANDIDATE_SHA:"${{ inputs.candidate-sha }}"} and
     .runs.steps[0].run=="bash \"$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh\" check" and
     .runs.steps[1].uses=="actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" and
     .runs.steps[1].with=={"go-version":"1.27.3",cache:false} and
     .runs.steps[2].shell=="bash" and .runs.steps[2].env=={
+      GODOT_VERSION:"4.7.1",
+      GODOT_SHA512:"4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"} and
+    .runs.steps[2].run=="engine_dir=$(mktemp -d \"$RUNNER_TEMP/world-admission-engine.XXXXXX\")\ntrap '\''rm -rf \"$engine_dir\"'\'' EXIT\ncd \"$engine_dir\"\nbash \"$GITHUB_ACTION_PATH/../../../tools/install-ci-godot.sh\"\n" and
+    .runs.steps[3].shell=="bash" and .runs.steps[3].env=={
       CANDIDATE_SHA:"${{ inputs.candidate-sha }}",GH_TOKEN:"${{ github.token }}"} and
-    .runs.steps[2].run=="bash \"$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh\" run"' "$1" >/dev/null
+    .runs.steps[3].run=="bash \"$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh\" run"' "$1" >/dev/null
 }
 contract "$work/action.json"
+# Exercise the actual composite shell step with a cold, unrelated working
+# directory. Only the reviewed installer is substituted; its pins, lookup,
+# temporary download directory and cleanup remain the production step's own.
+engine_base="$work/engine-base"
+mkdir -p "$engine_base/.github/actions/pr-admission" "$engine_base/tools" "$work/engine-runner" "$work/unrelated"
+cat >"$engine_base/tools/install-ci-godot.sh" <<'INSTALL'
+set -euo pipefail
+[[ $GODOT_VERSION == 4.7.1 && ${#GODOT_SHA512} == 128 ]]
+[[ $PWD == "$RUNNER_TEMP"/world-admission-engine.* && -d $PWD ]]
+[[ $GITHUB_ACTION_PATH == "$ENGINE_BASE/.github/actions/pr-admission" ]]
+printf '%s\n' "$PWD" >"$ENGINE_RECEIPT"
+exit "${ENGINE_INSTALL_STATUS:-0}"
+INSTALL
+jq -r '.runs.steps[2].run' "$work/action.json" >"$work/install-engine-step.sh"
+run_engine_step() (
+  cd "$work/unrelated"
+  export GITHUB_ACTION_PATH="$engine_base/.github/actions/pr-admission" RUNNER_TEMP="$work/engine-runner"
+  export ENGINE_BASE="$engine_base" ENGINE_RECEIPT="$work/engine-receipt"
+  export GODOT_VERSION GODOT_SHA512
+  GODOT_VERSION=$(jq -r '.runs.steps[2].env.GODOT_VERSION' "$work/action.json")
+  GODOT_SHA512=$(jq -r '.runs.steps[2].env.GODOT_SHA512' "$work/action.json")
+  bash -e -o pipefail "$work/install-engine-step.sh"
+)
+run_engine_step
+[[ -s $work/engine-receipt && ! -e $(cat "$work/engine-receipt") ]]
+engine_status=0
+ENGINE_INSTALL_STATUS=19 run_engine_step || engine_status=$?
+[[ $engine_status == 19 && ! -e $(cat "$work/engine-receipt") ]] || {
+  echo 'FAIL: engine installer failure or temporary cleanup lost' >&2
+  exit 1
+}
+# shellcheck disable=SC2016 # Candidate expressions are literal refusal fixtures.
 for mutation in '.runs.steps[0].run="true"' '.runs.steps[0].env.CANDIDATE_SHA="main"' \
-  '.runs.steps[1].with.cache=true' '.runs.steps[2].run="true"' \
-  '.runs.steps[2]["continue-on-error"]=true' '.runs.steps[2].if="false"' '.runs.steps[2].shell="true {0}"' \
-  '.runs.steps[2].env.GH_TOKEN="other"' 'del(.runs.steps[2].env.GH_TOKEN)'; do
+  '.runs.steps[1].with.cache=true' 'del(.runs.steps[2])' \
+  '.runs.steps[2].run="true"' '.runs.steps[2].env.GODOT_VERSION="latest"' \
+  '.runs.steps[2].env.GODOT_SHA512="unchecked"' '.runs.steps[2].env.GODOT_SHA512="${{ inputs.digest }}"' \
+  '.runs.steps[2]["continue-on-error"]=true' '.runs.steps[2].if="false"' \
+  '.runs.steps |= .[0:2] + [.[3], .[2]]' '.runs.steps[3].run="true"' \
+  '.runs.steps[3]["continue-on-error"]=true' '.runs.steps[3].if="false"' '.runs.steps[3].shell="true {0}"' \
+  '.runs.steps[3].env.GH_TOKEN="other"' 'del(.runs.steps[3].env.GH_TOKEN)'; do
   jq "$mutation" "$work/action.json" >"$work/changed.json"
   if contract "$work/changed.json"; then
     echo "FAIL: action bypass admitted: $mutation" >&2
