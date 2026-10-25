@@ -1354,6 +1354,8 @@ jobs:
         # because it is another objective repository-fact guard and the job is
         # already required, so the check costs no extra runner.
         run: ./tools/agents-core-size.test.sh
+      - name: Keep new ADR numbers unique
+        run: bash tools/adr-numbering.test.sh
 
   # Repo-wide linting for JSON, Markdown, YAML, shell, workflows, spelling and secrets.
   # MegaLinter ships no GDScript linter in any flavour; the dedicated gdscript-lint job

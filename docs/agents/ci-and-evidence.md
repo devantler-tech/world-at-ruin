@@ -178,6 +178,12 @@ the permanent blocking policy.
 
 ## CI, CD and releases
 
+- **ADR numbering:** `bash tools/adr-numbering.test.sh` runs in the existing
+  required repository-fact guard job. New ADR numbers must be unique. Only the
+  two exact historical filename pairs for `0002` and `0013` are exceptions;
+  adding a third record or replacing a filename is rejected. Keep the real
+  repository check and its positive, collision and incomplete-inventory controls.
+
 - **CI, CD and releases:**
   - **Link checking remains blocking under rate limits.** `lychee.toml` permits five retries
     with exponential backoff while retaining Godot-specific request pacing. A fatal MegaLinter
