@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,26 +10,25 @@ import (
 	"testing"
 )
 
+// TestDoJSONAuthenticatedBoundedRequest verifies a scoped, authenticated body-free read.
 func TestDoJSONAuthenticatedBoundedRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/devantler-tech/world-at-ruin/statuses/abc" || r.Method != http.MethodPost {
+		if r.URL.Path != "/repos/devantler-tech/world-at-ruin/rulesets" || r.Method != http.MethodGet {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer private-test-token" {
 			t.Error("missing independent authentication")
 		}
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["state"] != "pending" {
-			t.Errorf("incorrect JSON body: %v %v", body, err)
+		if r.ContentLength != 0 || r.Header.Get("Content-Type") != "" {
+			t.Error("read-only inspection sent a request body or content type")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, `{"id":73}`)
 	}))
 	defer srv.Close()
 	client := Client{BaseURL: srv.URL, Token: "private-test-token", HTTP: srv.Client()}
 	var result struct{ ID int }
-	if err := client.DoJSON(context.Background(), http.MethodPost, "/repos/devantler-tech/world-at-ruin/statuses/abc", map[string]string{"state": "pending"}, &result); err != nil {
+	if err := client.DoJSON(context.Background(), http.MethodGet, "/repos/devantler-tech/world-at-ruin/rulesets", nil, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.ID != 73 {

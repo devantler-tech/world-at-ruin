@@ -5,6 +5,11 @@
 - Updated: 2026-10-09 — reuse the existing organization App
 - Decision issue: [#745](https://github.com/devantler-tech/world-at-ruin/issues/745)
 
+> Superseded routing, 2026-10-25: The unactivated App-publisher alternative below is superseded and its producer source is retired. The read-only historical inspector remains.
+> See [ADR 0062](0062-retire-unused-app-publisher-after-shared-admission.md) for
+> the active shared runner and independently observed retirement. The original
+> decision below is retained as history.
+
 ## Context
 
 World at Ruin owns its game-specific regression policy. Generic lint, release

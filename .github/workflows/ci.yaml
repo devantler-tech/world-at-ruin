@@ -118,8 +118,6 @@ jobs:
           bash tools/fetch-trusted-regression-data.test.sh
           bash tools/verify-trusted-regression-checkouts.test.sh
           bash tools/trusted-regression-workflow-guard.test.sh
-          bash tools/repository-trusted-gate-workflow-guard.test.sh
-          bash tools/repository-trusted-gate-admission.test.sh
           bash tools/sandbox-godot.test.sh
           bash tools/trusted-regression-deadlines.test.sh
           GOTOOLCHAIN=local GOWORK=off go test tools/trusted-regression-cache.go tools/trusted-regression-cache_test.go
@@ -1776,7 +1774,7 @@ jobs:
       - name: Native bundle requires explicit opt-in and preserves existing output
         working-directory: server
         run: go test -race -count=1 -timeout=2m ../tools/nakama-runtime-build/*.go
-      - name: Repository trusted identity and App verdicts fail closed
+      - name: Historical overlap inspection and retired writer refusal fail closed
         run: go -C tools/trusted-gate test -race -count=1 -timeout=2m ./...
       - name: Every shipped server save schema and fixture is permanent
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
