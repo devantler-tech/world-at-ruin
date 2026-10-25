@@ -12,6 +12,19 @@ controller. The pinned host Go toolchain builds the controller; Godot and its
 package/archive checks belong to the reviewed contained runtime. Cleanup and
 unknown outcomes retain their existing fail-closed behavior.
 
+For pull requests, the fetched integration commit must have exactly two ordered
+parents, with its second parent matching the event's immutable head. This uses the
+raw Git object, including after a depth-one fetch. Its first parent must equal the
+event base or have canonical GitHub comparison evidence that it descends from that
+base; a frozen event base can predate GitHub's rebuilt integration. The read uses
+the job's existing contents-read token, a fixed repository and a 30-second bound.
+Missing credentials, failed reads or inconsistent ancestry fail before candidate
+execution, and the credential is cleared before the contained controller starts.
+The payload's `merge_commit_sha` can describe a different integration snapshot and
+is not the witness for the commit GitHub selected for this run. Missing checkouts,
+different heads, reversed or extra parents still fail. The older local controller's
+resolver interface retains its existing behavior.
+
 The closed `.github/pr-admission.json` contract gives the additive consumer a
 15-minute outer bound. An exceeded deadline fails the new gate; it cannot count
 as complete evidence. This setting is not a successful runtime measurement.

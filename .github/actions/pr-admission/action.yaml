@@ -22,4 +22,5 @@ runs:
       shell: bash
       env:
         CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+        GH_TOKEN: ${{ github.token }}
       run: bash "$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh" run
