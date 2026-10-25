@@ -555,7 +555,7 @@
 
 ## Run and validate
 
-- **Run:** `godot client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot client`).
+- **Run:** `godot --path client` (macOS: `/Applications/Godot.app/Contents/MacOS/Godot --path client`).
   - **Experimental content-pack builds:** `bash tools/build-contentpack.sh --experimental
     client <new-output-directory>` stages a trusted local project privately, imports it natively and
     produces a cumulative PCK plus exact-byte build evidence. Recovery owners and their remaps stay
