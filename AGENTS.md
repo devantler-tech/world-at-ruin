@@ -303,8 +303,10 @@ wording; read the one a task names before doing that kind of work.
   [Client → Run and validate](docs/agents/client.md#run-and-validate), and the server commands in
   [Server → Validate the server](docs/agents/server.md#validate-the-server).
 - **Required regressions are not candidate-controlled:** the organization ruleset requires
-  `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml` at
-  `refs/heads/main`; [Client → Tests](docs/agents/client.md#tests) describes what it runs.
+  `devantler-tech/.github/.github/workflows/repository-pr-admission.yaml` at
+  `refs/heads/main`, invoking World's fixed admission action from the immutable reviewed base.
+  [Client → Tests](docs/agents/client.md#tests) describes the complete suite;
+  [ADR 0062](docs/adr/0062-retire-unused-app-publisher-after-shared-admission.md) records the cutover.
 
 - **Scripting:** GDScript in the Godot project; **bash or Go everywhere else — never Python**
   (portfolio constitution). The Phase-0 Blender pipeline is the sole, explicitly-settled exception

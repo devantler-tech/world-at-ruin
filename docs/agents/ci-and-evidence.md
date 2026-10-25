@@ -156,24 +156,18 @@ the permanent blocking policy.
   `bash tools/trusted-regression-deadlines.test.sh` and the existing controller/containment tests
   when changing this boundary. Phase and CI budgets are in
   [trusted regression deadlines](../../docs/ci/trusted-regression-budgets.md).
-- **Repository-owned verdicts are default-off:**
-  `.github/workflows/repository-trusted-regressions.yaml` treats completed `CI` runs only as
-  notifications. Reviewed main independently resolves current PR/integration or queue identities,
-  executes the frozen suite in the existing sandbox, and publishes in a separate main-only
-  `world-trusted-gate-publisher` job. It reuses the existing organization App through `APP_ID`,
-  `APP_CLIENT_ID` and `APP_PRIVATE_KEY`; do not ask for a separate World App or private key.
-  The evaluator never receives the App key. The publisher requests a World-only token with
-  Checks write and Actions, Contents and Pull Requests read, and verifies current identity and
-  exact App/head/verdict readback. Keep `WAR_REPOSITORY_TRUSTED_GATE_ENABLED` unset/off until
-  activation facts and canaries are verified. Do not change shared App permissions or credentials
-  as part of source preparation.
-  Run `go -C tools/trusted-gate test -race ./...` plus the admission and workflow mutation tests
-  when changing it. ADR 0027 defines publication, scope, overlap and recovery. The read-only
-  `inspect` command reports `protection_overlap_verified=true` and `activation_ready=unknown`:
-  rule shape does not establish publisher credential confinement or live behavior. A shared App
-  key available to other workflows can publish the same App/context, so App binding alone cannot
-  authenticate workflow origin. Retain the established organization gate until permission,
-  credential-boundary, nonzero-scene and tamper-canary proof supports a reviewed cutover.
+- **Trusted verdict ownership:** the cross-product required
+  `devantler-tech/.github/.github/workflows/repository-pr-admission.yaml` source invokes
+  World's fixed local action from the immutable reviewed base. Complete selection,
+  fixture checks, containment, cleanup and deadlines remain World-owned. Native positive
+  and tampering controls passed before and after the old World-only rule's managed retirement.
+  [ADR 0062](../../docs/adr/0062-retire-unused-app-publisher-after-shared-admission.md)
+  records the source and evidence. The unused default-off App producer is retired;
+  do not enable its old flag, restore its workflow or request an App to complete adoption.
+  `tools/trusted-gate inspect` remains a GET-only historical App-overlap diagnostic,
+  not a current shared-protection or activation check. It is expected to refuse once
+  the old active overlap is absent. Run `go -C tools/trusted-gate test -race ./...`
+  for inspection, transport and retired-command refusal controls.
 - **Workflow ownership:** release creation and result aggregation use the canonical
   `devantler-tech/.github` catalogue because they have independent production consumers. The
   single-consumer, read-only MegaLinter job lives directly in this repository's `ci.yaml`.
@@ -246,11 +240,11 @@ the permanent blocking policy.
     with `yq` and `jq` to check routing, credentials and required-check wiring, including
     rejection controls; use ShellCheck on that script and actionlint on both workflow files.
     Hosted runs provide the actual PR and post-merge main execution proof.
-  - `devantler-tech/.github/.github/workflows/world-at-ruin-required-regressions.yaml`
-    (`pull_request` + `merge_group`, invoked by the organization ruleset) runs trusted client
-    regressions against the candidate product tree. Its workflow/controller selection comes from the
-    reviewed catalogue source and its scenes, harness and runner come from the GitHub-supplied World at
-    Ruin base SHA, not from the candidate checkout. `tools/required-regression-control.test.sh`
+  - `devantler-tech/.github/.github/workflows/repository-pr-admission.yaml`
+    (`pull_request` + `merge_group`, invoked by the organization ruleset) resolves the immutable
+    World base and invokes its fixed local admission action. The action runs complete trusted
+    client regressions against the candidate product tree. Its scenes, harness and runner come
+    from that reviewed base, not from the candidate checkout. `tools/required-regression-control.test.sh`
     proves candidate deletion/skip content cannot remove a trusted scene, runner failure reaches the
     aggregate, an empty trusted suite fails closed, and only the structurally pinned base-controlled local workflow may invoke the controller.
     The candidate test-data exceptions are exact reviewed declarations: unchanged capability
@@ -262,12 +256,12 @@ the permanent blocking policy.
     7/vault5; the planned reader requires writer 7/vault5. The active writer passes trusted mastery
     mutation, retry, stale-session,
     real-boot and exit-flush probes. The stage selector does not replace
-    the retained-reader release proof required by #658; see ADR 0003.
+    the retained-reader release proof required by #658; see ADR 0003 and the active routing in ADR 0062.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
     toolchains. It is the post-merge liveness signal for newly published advisories against code
     already on the default branch.
   - `release.yaml` (`push` to `main`) calls the shared
-    `devantler-tech/actions/.github/workflows/create-release.yaml`, which runs **semantic-release**
+    `devantler-tech/.github/.github/workflows/create-release.yaml`, which runs **semantic-release**
     against the root `.releaserc`. Conventional-Commit types decide the bump (`fix:` → patch,
     `feat:` → minor, `type!:` or a `BREAKING CHANGE:` footer → major; `chore:`/`docs:`/`ci:` cut
     nothing). **The `type!:` form only works because `.releaserc` configures it**
