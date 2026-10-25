@@ -14,17 +14,22 @@ import (
 	"testing"
 )
 
+func recordingInspectorClient(t *testing.T) (*Client, *atomic.Int32) {
+	t.Helper()
+	calls := new(atomic.Int32)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+	return &Client{BaseURL: server.URL, Token: "read-fixture", HTTP: server.Client()}, calls
+}
+
 func TestRetiredCommandsNeverContactAPIOrWriteOutput(t *testing.T) {
 	for _, command := range []string{"resolve", "publish"} {
 		for _, activation := range []string{"", "false", "true", "TRUE", "1"} {
 			t.Run(command+"/"+strconv.Quote(activation), func(t *testing.T) {
-				var calls atomic.Int32
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					calls.Add(1)
-					fmt.Fprint(w, `{}`)
-				}))
-				defer srv.Close()
-				client := Client{BaseURL: srv.URL, Token: "retired-fixture", HTTP: srv.Client()}
+				client, calls := recordingInspectorClient(t)
 				env := map[string]string{
 					"WAR_REPOSITORY_TRUSTED_GATE_ENABLED": activation,
 					"TRUSTED_GATE_APP_ID":                 "123456",
@@ -41,7 +46,7 @@ func TestRetiredCommandsNeverContactAPIOrWriteOutput(t *testing.T) {
 					args = []string{"publish", "--identity", identity, "--verdict", "success"}
 				}
 				var out bytes.Buffer
-				if err := execute(args, env, &client, &out); err == nil || calls.Load() != 0 || out.Len() != 0 {
+				if err := execute(args, env, client, &out); err == nil || calls.Load() != 0 || out.Len() != 0 {
 					t.Fatalf("retired command reached a side effect: err=%v calls=%d output=%q", err, calls.Load(), out.String())
 				}
 				if _, err := os.Lstat(output); !os.IsNotExist(err) {
@@ -69,13 +74,7 @@ func TestRetiredProducerSourcesAreAbsent(t *testing.T) {
 func TestInspectorTransportRefusesWritesBeforeNetwork(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodGet} {
 		t.Run(method, func(t *testing.T) {
-			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				fmt.Fprint(w, `{}`)
-			}))
-			defer srv.Close()
-			client := Client{BaseURL: srv.URL, Token: "read-fixture", HTTP: srv.Client()}
+			client, calls := recordingInspectorClient(t)
 			var payload any
 			if method == http.MethodGet {
 				payload = map[string]string{"state": "success"}

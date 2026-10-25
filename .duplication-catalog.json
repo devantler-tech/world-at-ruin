@@ -93,17 +93,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "075361971df972ca1c8bcc2420ca7518db81b7630922ed1d649a61f297695922",
-      "format": "bash",
-      "files": [
-        "tools/repository-trusted-gate-workflow-guard.sh",
-        "tools/trusted-regression-workflow-guard.sh"
-      ],
-      "fragmentSHA256": "c747f70b6c3b4c5cdad1591cb8ead76720e51c94e7b002ca85ac1a0db8e01c3f",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "07e3fd2cfeb7677fe4c3e171b48c0ad55d5bcd6d192fc15040053164e61d9c3f",
       "format": "gdscript",
       "files": [
@@ -232,17 +221,6 @@
         "client/tests/controller_input_test.gd"
       ],
       "fragmentSHA256": "957f0517c3edffac1f06f13f78e227a373b09c37a70ca629ac011db74357298c",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "163b34a268599a8bda0fe9372b29691926e507b644f455904477647be03e1c10",
-      "format": "go",
-      "files": [
-        "tools/trusted-gate/publisher_test.go",
-        "tools/trusted-gate/readiness_test.go"
-      ],
-      "fragmentSHA256": "f70cd7c9075e63b567d28985e25dc3bd378b682ff7ecfcd24b8118dbc537e17c",
       "occurrences": 1,
       "cleanupIssue": 276
     },
@@ -1365,17 +1343,6 @@
         "server/claimrpc/session_end_test.go"
       ],
       "fragmentSHA256": "dc306acde833f89bfaabe4c4e1c974d2417ba6961b8de072319a949d1c6f98a3",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "bfdaa3ab009c4c073d115f3715f231a8d584295f8ba14c724b2db0c40585eb22",
-      "format": "bash",
-      "files": [
-        "tools/repository-trusted-gate-workflow-guard.sh",
-        "tools/repository-trusted-gate-workflow-guard.sh"
-      ],
-      "fragmentSHA256": "737174ee3e8073e91d1af1b52f17c2e30d236869d5b293529d0b0f47d11a47b2",
       "occurrences": 1,
       "cleanupIssue": 276
     },
