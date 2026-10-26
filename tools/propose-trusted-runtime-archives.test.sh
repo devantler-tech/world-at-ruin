@@ -89,7 +89,7 @@ if ! jq -e '
     and ."runs-on" == "ubuntu-latest"
     and ."timeout-minutes" == 30
     and (.steps | length) == 6
-    and .steps[0] == {name:"Harden runner",uses:"step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25",with:{"egress-policy":"audit"}}
+    and .steps[0] == {name:"Harden runner",uses:"step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2",with:{"egress-policy":"audit"}}
     and .steps[1] == {uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",with:{"fetch-depth":0,"persist-credentials":false}}
     and .steps[2] == {name:"Require an explicit maintenance selection",env:{CONFIRMATION:"${{ inputs.confirmation }}"},run:"test \"$CONFIRMATION\" = PROPOSE"}
     and .steps[3] == {name:"Install Godot (pinned, checksum-verified)",run:"bash tools/install-ci-godot.sh"}
