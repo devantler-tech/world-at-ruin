@@ -1,0 +1,32 @@
+{
+  "bone_girth": {
+    "calf": 1.05,
+    "lowerarm": 1.06
+  },
+  "bone_scale": {
+    "foot": 1.05,
+    "hand": 1.1
+  },
+  "comment": "The wanderer — the player's default body: heroic but human, waking in the ragged clothes the Ruin left them. Recipes are forward-only: names used here may never disappear from the kit.",
+  "equipment": {
+    "feet": "shoes_cloth",
+    "legs": "pants_wool",
+    "torso": "shirt_ragged"
+  },
+  "joint_push": {
+    "upperarm": 1.05
+  },
+  "shapes": {
+    "arms_muscle": 0.55,
+    "chin_prominent": 0.3,
+    "jaw_wide": 0.25,
+    "legs_muscle": 0.45,
+    "neck_thick": 0.3,
+    "shoulders_broad": 0.5,
+    "torso_muscle": 0.6,
+    "torso_vshape": 0.7,
+    "waist_slim": 0.35
+  },
+  "skin": "skin_male_light",
+  "version": 3.0
+}
