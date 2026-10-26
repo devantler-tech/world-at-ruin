@@ -60,12 +60,12 @@ jobs:
     permissions:
       contents: read # build and exercise repo-controlled code without a release-write token
     env:
-      GODOT_VERSION: 4.7.1
+      GODOT_VERSION: 4.7.2
       # macOS universal editor + export templates, same SHA512-SUMS.txt
       # provenance as ci.yaml's pins. Keep these scoped to the unprivileged
       # build job: workflow-level env also reaches the release-write jobs.
-      GODOT_MACOS_SHA512: a5c6443e193829de9a3237b57ef5e01c23839888900e241543da0dd4bac1050125e19469f0cca9a9958ac346070d98cab8e5d6aee16b181c6d06cda86bd07224
-      GODOT_TEMPLATES_SHA512: afcc83d8d3d298038f19c58744a0d660fa75dd4baa33cb55d1011bb2565a2a8c2381728924564cb909e37c205a23f21b521b23bd057993afd43ae4da0b2f9d47
+      GODOT_MACOS_SHA512: 38aa16e5bba2083941fc5b3e54be0089bd4cc35e32415f5b9fd9a8a6a7b9818255d44532ea8ef94b5aef56c4b407c2d634fa4f657e4ebe681ebbf59b7bac69ca
+      GODOT_TEMPLATES_SHA512: ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079
     outputs:
       sha256: ${{ steps.sha.outputs.sha256 }}
       manifest_sha256: ${{ steps.manifest.outputs.sha256 }}

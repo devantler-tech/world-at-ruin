@@ -137,7 +137,7 @@ cat >"$scratch/setup-bin/command-double" <<'SETUP'
 set -euo pipefail
 case "${0##*/}" in
   curl)
-    [[ "$*" == "-fsSL -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_macos.universal.zip" ]] || exit 91
+    [[ "$*" == "-fsSL -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_macos.universal.zip" ]] || exit 91
     echo download >>"$SETUP_TRACE"
     exit "${DOWNLOAD_EXIT:-0}"
     ;;
@@ -171,7 +171,7 @@ for command in curl shasum unzip sudo; do ln -s command-double "$scratch/setup-b
 run_setup() {
   : >"$scratch/setup-trace"
   (cd "$scratch" && PATH="$scratch/setup-bin:$PATH" SETUP_TRACE="$scratch/setup-trace" \
-    GODOT_VERSION=4.7.1 GODOT_MACOS_SHA512=expected-checksum bash "$root/tools/install-ci-macos-godot.sh")
+    GODOT_VERSION=4.7.2 GODOT_MACOS_SHA512=expected-checksum bash "$root/tools/install-ci-macos-godot.sh")
 }
 run_setup || fail 'verified installer failed'
 [[ $(paste -sd, "$scratch/setup-trace") == download,checksum,extract,wrapper,executable ]] || fail 'installer skipped or reordered verification'

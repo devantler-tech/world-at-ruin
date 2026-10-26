@@ -156,7 +156,7 @@ func fixtureReport(t *testing.T, root string) map[string]any {
 			},
 		},
 		"recipe_files":          recipes,
-		"caller_engine_version": "4.7.1", "caller_engine_archive_sha512": strings.Repeat("3", 128),
+		"caller_engine_version": "4.7.2", "caller_engine_archive_sha512": strings.Repeat("3", 128),
 	}
 }
 

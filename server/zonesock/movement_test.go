@@ -106,7 +106,7 @@ func TestMovementProtocolViolationAfterInputBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeConnection(t, c)
-	waitMovement(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.pending) > 0 })
+	waitMovementSockets(t, h, 1)
 	h.BeforeStep(w)
 	_ = readMessage(t, c)
 	for seq := uint64(1); seq <= 64; seq++ {
@@ -148,7 +148,7 @@ func TestMovementTLSAppliesOnlyOwnedActorAndAcknowledgesCompletedStep(t *testing
 		t.Fatal(err)
 	}
 	defer closeConnection(t, c)
-	waitMovement(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.pending) > 0 })
+	waitMovementSockets(t, h, 1)
 	stepper.BeforeStep(w)
 	if got := readMessage(t, c); got.Kind != wire.KindSnapshot {
 		t.Fatal("own ack preceded join")
@@ -203,7 +203,7 @@ func TestMovementTLSAppliesOnlyOwnedActorAndAcknowledgesCompletedStep(t *testing
 	if err := duplicate.Write(t.Context(), websocket.MessageBinary, b); err != nil {
 		t.Fatal(err)
 	}
-	waitMovement(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.pending) > 0 })
+	waitMovementSockets(t, h, 2)
 	stepper.BeforeStep(w)
 	w.Step()
 	h.Tick(w)
@@ -216,7 +216,9 @@ func TestMovementTLSAppliesOnlyOwnedActorAndAcknowledgesCompletedStep(t *testing
 		t.Fatalf("duplicate was not refused: %v", err)
 	}
 	closeConnection(t, c)
-	waitMovement(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.pending) > 0 })
+	// A refused duplicate can leave its own detach queued. Wait for both
+	// transport workers to retire so the owned observer's detach is queued too.
+	waitMovementSockets(t, h, 0)
 	sim.DriveDemoTick(w)
 	stepper.BeforeStep(w)
 	w.Step()
@@ -232,7 +234,9 @@ func TestMovementTLSAppliesOnlyOwnedActorAndAcknowledgesCompletedStep(t *testing
 		t.Fatal(err)
 	}
 	defer closeConnection(t, reconnected)
-	waitMovement(t, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return len(h.pending) > 0 })
+	// Registration queues this socket's attach under the same lock. A leftover
+	// detach therefore cannot stand in for the reconnect's admission.
+	waitMovementSockets(t, h, 1)
 	stepper.BeforeStep(w)
 	w.Step()
 	h.Tick(w)
@@ -249,6 +253,17 @@ func TestMovementTLSAppliesOnlyOwnedActorAndAcknowledgesCompletedStep(t *testing
 	if h.Connected() != 0 || w.Get(1).Intent != (sim.Vec3{}) {
 		t.Fatal("terminal shutdown left movement authority")
 	}
+}
+
+// waitMovementSockets observes completed registration or worker retirement;
+// an unrelated queued callback cannot satisfy this lifecycle boundary.
+func waitMovementSockets(t *testing.T, h *Hub, want int) {
+	t.Helper()
+	waitMovement(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.sockets) == want
+	})
 }
 
 func movementReceived(h *Hub, sequence uint64) bool {

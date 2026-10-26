@@ -290,8 +290,8 @@ contract() {
     .runs.steps[1].uses=="actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" and
     .runs.steps[1].with=={"go-version":"1.27.3",cache:false} and
     .runs.steps[2].shell=="bash" and .runs.steps[2].env=={
-      GODOT_VERSION:"4.7.1",
-      GODOT_SHA512:"4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"} and
+      GODOT_VERSION:"4.7.2",
+      GODOT_SHA512:"9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65"} and
     .runs.steps[2].run=="engine_dir=$(mktemp -d \"$RUNNER_TEMP/world-admission-engine.XXXXXX\")\ntrap '\''rm -rf \"$engine_dir\"'\'' EXIT\ncd \"$engine_dir\"\nbash \"$GITHUB_ACTION_PATH/../../../tools/install-ci-godot.sh\"\n" and
     .runs.steps[3].shell=="bash" and .runs.steps[3].env=={
       CANDIDATE_SHA:"${{ inputs.candidate-sha }}",GH_TOKEN:"${{ github.token }}"} and
@@ -305,7 +305,7 @@ engine_base="$work/engine-base"
 mkdir -p "$engine_base/.github/actions/pr-admission" "$engine_base/tools" "$work/engine-runner" "$work/unrelated"
 cat >"$engine_base/tools/install-ci-godot.sh" <<'INSTALL'
 set -euo pipefail
-[[ $GODOT_VERSION == 4.7.1 && ${#GODOT_SHA512} == 128 ]]
+[[ $GODOT_VERSION == 4.7.2 && ${#GODOT_SHA512} == 128 ]]
 [[ $PWD == "$RUNNER_TEMP"/world-admission-engine.* && -d $PWD ]]
 [[ $GITHUB_ACTION_PATH == "$ENGINE_BASE/.github/actions/pr-admission" ]]
 printf '%s\n' "$PWD" >"$ENGINE_RECEIPT"
