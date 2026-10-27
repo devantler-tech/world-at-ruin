@@ -9,9 +9,9 @@ export HARNESS_RECORD="$scratch/commands" HARNESS_SCENARIOS="$scratch/scenarios"
 export HARNESS_PROFILE=native HARNESS_FAILURE=''
 # Declaration discovery is independent of the wrapper's required-name list.
 for file in "$root"/server/internal/nakamatrial/*_test.go; do
-  if head -1 "$file" | grep -qx '//go:build war_native_trial'; then
-    sed -nE '/^func TestMain\(/d; s/^func (Test[A-Za-z0-9_]+)\(.*/\1/p' "$file"
-  fi
+	if head -1 "$file" | grep -qx '//go:build war_native_trial'; then
+		sed -nE '/^func TestMain\(/d; s/^func (Test[A-Za-z0-9_]+)\(.*/\1/p' "$file"
+	fi
 done >"$HARNESS_SCENARIOS"
 [[ $(wc -l <"$HARNESS_SCENARIOS" | tr -d ' ') == 41 ]]
 cat >"$scratch/bin/docker" <<'DOCKER'
@@ -68,29 +68,30 @@ DOCKER
 chmod +x "$scratch/bin/docker"
 export PATH="$scratch/bin:$PATH" TMPDIR="$scratch"
 for profile in native issued issued-spire; do
-  export HARNESS_PROFILE=$profile HARNESS_FAILURE=''
-  args=()
-  if [[ $profile == issued ]]; then args+=(--issued); elif [[ $profile == issued-spire ]]; then args+=(--spire); fi
-  if ! bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then
-    cat "$scratch/result"
-    exit 1
-  fi
-  grep -Fq 'rm -f trial-id' "$HARNESS_RECORD"
-  failures=(start missing-base)
-  if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); elif [[ $profile == issued-spire ]]; then failures+=(missing-verdict missing-custody missing-cut remove unreadable retained); fi
-  for failure in "${failures[@]}"; do
-    export HARNESS_FAILURE=$failure
-    if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then
-      echo "TEST FAIL: $profile accepted $failure" >&2
-      exit 1
-    fi
-  done
+	export HARNESS_PROFILE=$profile HARNESS_FAILURE=''
+	args=()
+	if [[ $profile == issued ]]; then args+=(--issued); elif [[ $profile == issued-spire ]]; then args+=(--spire); fi
+	if ! bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then
+		cat "$scratch/result"
+		exit 1
+	fi
+	grep -Fq 'rm -f trial-id' "$HARNESS_RECORD"
+	failures=(start missing-base)
+	if [[ $profile == issued ]]; then failures+=(missing-sdk missing-verdict missing-claims missing-claims-verdict); elif [[ $profile == issued-spire ]]; then failures+=(missing-verdict missing-custody missing-cut remove unreadable retained); fi
+	for failure in "${failures[@]}"; do
+		export HARNESS_FAILURE=$failure
+		if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental ${args[@]+"${args[@]}"} >"$scratch/result" 2>&1; then
+			echo "TEST FAIL: $profile accepted $failure" >&2
+			exit 1
+		fi
+	done
 done
 : >"$HARNESS_RECORD"
 if bash "$root/tools/smoke-nakama-native.sh" fixture --experimental --arbitrary >"$scratch/result" 2>&1; then
-  echo 'TEST FAIL: arbitrary profile accepted' >&2
-  exit 1
+	echo 'TEST FAIL: arbitrary profile accepted' >&2
+	exit 1
 fi
 [[ ! -s $HARNESS_RECORD ]]
 bash "$root/tools/nakama-native-shard-harness.test.sh"
+bash "$root/tools/native-worker-resources.test.sh"
 echo 'TEST PASS: three native profiles refuse partial or failed acceptance; issued cleanup observations required'

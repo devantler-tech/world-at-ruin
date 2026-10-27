@@ -30,6 +30,18 @@ and unknown retirement observations fail closed. Final success is reported only
 after the disposable database and network are also retired. The complete receipt
 binds the profile, resolved image, integration source, run and attempt.
 
+Resource observations are diagnostic and separate from the complete test verdict.
+Before each worker exits, its unprivileged wrapper reads its private cgroup-v2 peak
+memory in bytes and cumulative CPU use in microseconds. The receipt retains each
+worker's observation beside its elapsed time, plus the runner's observed logical
+CPU count and total memory. Unavailable, invalid or ambiguous counters remain
+`null` with `complete: false`; they are never zero or a claimed measurement.
+The receipt also retains each verified top-level scenario's name and duration,
+grouped by worker, so retiring the temporary logs does not erase timing evidence.
+The test process's exit status and all existing retirement checks remain binding.
+Configured limits are not measured use, and the sum of worker peaks is not a
+simultaneous whole-runner peak. See the [kernel counter definitions](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+
 The ordinary serial path remains an explicit recovery option, not an automatic
 fallback that could hide a failed parallel observation. CI selects four workers
 for native and issued profiles on both architectures. This does not activate a
