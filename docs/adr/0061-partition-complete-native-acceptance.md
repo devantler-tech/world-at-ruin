@@ -36,6 +36,8 @@ memory in bytes and cumulative CPU use in microseconds. The receipt retains each
 worker's observation beside its elapsed time, plus the runner's observed logical
 CPU count and total memory. Unavailable, invalid or ambiguous counters remain
 `null` with `complete: false`; they are never zero or a claimed measurement.
+The receipt also retains each verified top-level scenario's name and duration,
+grouped by worker, so retiring the temporary logs does not erase timing evidence.
 The test process's exit status and all existing retirement checks remain binding.
 Configured limits are not measured use, and the sum of worker peaks is not a
 simultaneous whole-runner peak. See the [kernel counter definitions](https://docs.kernel.org/admin-guide/cgroup-v2.html).

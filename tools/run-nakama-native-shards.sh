@@ -103,6 +103,9 @@ for shard in 0 1 2 3; do
 	LC_ALL=C sort "$state/shards/expected-$shard" >"$state/shards/expected-sorted-$shard"
 	cmp "$state/shards/expected-sorted-$shard" "$state/shards/actual-$shard"
 	[[ $(grep -c '^--- PASS: Test' "$log") == $(wc -l <"$state/shards/expected-$shard" | tr -d ' ') ]]
+	# Retain each verified top-level scenario's duration before owned log retirement.
+	sed -nE 's/^--- PASS: (Test[A-Za-z0-9_]+) \(([0-9]+(\.[0-9]+)?)s\)$/\{"name":"\1","seconds":\2\}/p' "$log" |
+		jq -sc '.' >"$state/shards/scenario-seconds-$shard.json"
 	# A measurement failure is explicit diagnostic uncertainty, never zero or a new passing verdict.
 	sed -n 's/^NATIVE WORKER RESOURCES: //p' "$log" >"$state/shards/raw-resources-$shard"
 	# shellcheck disable=SC2016 # Literal jq schema, with no shell expansion.
@@ -126,7 +129,8 @@ jq -n --arg source "$source_sha" --arg run "$run" --arg attempt "$attempt" --arg
 	--arg profile "$profile" --argjson scenarios "${#scenarios[@]}" \
 	--slurpfile runnerResources "$state/shards/runner-resources.json" \
 	--argjson resources "$(jq -s '.' "$state/shards/resources-0.json" "$state/shards/resources-1.json" "$state/shards/resources-2.json" "$state/shards/resources-3.json")" \
+	--argjson scenarioSeconds "$(jq -s '.' "$state/shards/scenario-seconds-0.json" "$state/shards/scenario-seconds-1.json" "$state/shards/scenario-seconds-2.json" "$state/shards/scenario-seconds-3.json")" \
 	--argjson seconds "$(jq -s '.' "$state/shards/seconds-0" "$state/shards/seconds-1" "$state/shards/seconds-2" "$state/shards/seconds-3")" \
-	'{source:$source,run:$run,attempt:$attempt,image:$image,profile:$profile,workers:4,scenarios:$scenarios,seconds:$seconds,runnerResources:$runnerResources[0],resources:$resources,complete:true}' \
+	'{source:$source,run:$run,attempt:$attempt,image:$image,profile:$profile,workers:4,scenarios:$scenarios,seconds:$seconds,scenarioSeconds:$scenarioSeconds,runnerResources:$runnerResources[0],resources:$resources,complete:true}' \
 	>"$state/parallel-pending.json"
 worker_execution_complete=1

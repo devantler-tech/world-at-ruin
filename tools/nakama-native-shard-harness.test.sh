@@ -150,7 +150,9 @@ for profile in native issued; do
         (.logicalCPUs==null or ((.logicalCPUs|type)=="number" and .logicalCPUs>0)) and
         (.memoryTotalBytes==null or ((.memoryTotalBytes|type)=="number" and .memoryTotalBytes>0)) and
         .complete==(.logicalCPUs!=null and .memoryTotalBytes!=null)) and
-      (.resources | length)==4 and all(.resources[]; .complete==true and .memoryPeakBytes==104857600 and .cpuUsageUsec==2500000)' >/dev/null || {
+      (.resources | length)==4 and all(.resources[]; .complete==true and .memoryPeakBytes==104857600 and .cpuUsageUsec==2500000) and
+      (.scenarioSeconds | length)==4 and ([.scenarioSeconds[][]] | length)==.scenarios and
+      all(.scenarioSeconds[][]; (.name | test("^Test[A-Za-z0-9_]+$")) and .seconds==0.1)' >/dev/null || {
 		echo 'FAIL: complete native receipts must retain runner capacity and each worker resource observation' >&2
 		exit 1
 	}

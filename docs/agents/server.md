@@ -168,7 +168,8 @@
   success. Keep the one-worker default and the independent serial issued-SPIRE profile;
   never cache a test verdict or shorten scenario deadlines to meet a feedback target.
   Worker receipts also retain actual cgroup-v2 peak memory and cumulative CPU use,
-  with observed runner CPU count and total memory. Missing or invalid resource
+  each verified scenario's duration, and observed runner CPU count and total memory.
+  Missing or invalid resource
   observations stay explicitly unknown and cannot support a resource claim.
   Run `bash tools/nakama-native-harness.test.sh` and
   `bash tools/native-acceptance-workflow.test.sh`; these hermetic controls do not replace
