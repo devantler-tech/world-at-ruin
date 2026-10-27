@@ -25,6 +25,7 @@ rm "$scratch/cgroup/cpu.stat"
 native_worker_resources "$scratch/cgroup" | jq -e \
 	'.memoryPeakBytes==104857600 and .cpuUsageUsec==null and .complete==false' >/dev/null
 # An errored read that already produced a plausible number must remain unknown.
+# Simulate a partial counter read whose exit status invalidates its output.
 cat() {
 	printf '12345\n'
 	return 42
@@ -47,10 +48,8 @@ cat >"$scratch/exit-worker" <<'EXIT_WORKER'
 exit "$1"
 EXIT_WORKER
 for result in 0 23; do
-	set +e
-	native_worker_run bash "$scratch/exit-worker" "$result" >"$scratch/result"
-	actual=$?
-	set -e
+	actual=0
+	native_worker_run bash "$scratch/exit-worker" "$result" >"$scratch/result" || actual=$?
 	[[ $actual == "$result" ]] || {
 		echo 'FAIL: resource observation changed worker exit status' >&2
 		exit 1

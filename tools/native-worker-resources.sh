@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Diagnostic observations only; missing counters never become zero or a test verdict.
+# Read this worker's cgroup counters, keeping invalid or unavailable values unknown.
 native_worker_resources() {
 	local directory=$1 memory=null cpu=null text line matches=0 complete=false
 	if text=$(cat "$directory/memory.peak" 2>/dev/null) && [[ $text =~ ^[1-9][0-9]{0,14}$ ]]; then
@@ -18,6 +19,7 @@ native_worker_resources() {
 	printf '{"memoryPeakBytes":%s,"cpuUsageUsec":%s,"complete":%s}\n' "$memory" "$cpu" "$complete"
 }
 
+# Report observed host capacity without inventing values when a read fails.
 native_runner_resources() {
 	local file=$1 cpus=$2 memory=null text line matches=0 complete=false
 	if [[ ! $cpus =~ ^[1-9][0-9]{0,5}$ ]]; then cpus=null; fi
@@ -36,6 +38,7 @@ native_runner_resources() {
 	printf '{"logicalCPUs":%s,"memoryTotalBytes":%s,"complete":%s}\n' "$cpus" "$memory" "$complete"
 }
 
+# Emit diagnostics after the test exits and preserve its original success or failure.
 native_worker_run() {
 	local result=0 observation
 	"$@" || result=$?

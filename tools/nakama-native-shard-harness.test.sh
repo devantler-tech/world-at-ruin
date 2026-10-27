@@ -122,11 +122,13 @@ DOCKER
 chmod +x "$scratch/bin/docker"
 export PATH="$scratch/bin:$PATH" TMPDIR="$scratch" WAR_NATIVE_WORKERS=4
 unset GITHUB_SHA GITHUB_RUN_ID GITHUB_RUN_ATTEMPT
+# Give each refusal scenario fresh observations while retaining the same harness setup.
 reset_observation() {
 	rm -f "$scratch/"*.started "$scratch/"*.expected
 	: >"$scratch/commands"
 	: >"$scratch/created"
 }
+# Exercise the shipping wrapper with the selected profile and controlled Docker boundary.
 run_wrapper() {
 	args=()
 	if [[ $SHARD_PROFILE == issued ]]; then args+=(--issued); fi
@@ -144,8 +146,12 @@ for profile in native issued; do
 	grep -Fq 'NAKAMA NATIVE PASS:' "$scratch/result"
 	sed -n 's/^NATIVE WORKER RECEIPT: //p' "$scratch/result" | jq -e --arg sha "$(git -C "$root" rev-parse HEAD)" \
 		'.complete==true and .workers==4 and .source==$sha and .run=="local" and .attempt=="local" and (.seconds|length)==4 and
+      (.runnerResources | type=="object" and has("logicalCPUs") and has("memoryTotalBytes") and has("complete") and
+        (.logicalCPUs==null or ((.logicalCPUs|type)=="number" and .logicalCPUs>0)) and
+        (.memoryTotalBytes==null or ((.memoryTotalBytes|type)=="number" and .memoryTotalBytes>0)) and
+        .complete==(.logicalCPUs!=null and .memoryTotalBytes!=null)) and
       (.resources | length)==4 and all(.resources[]; .complete==true and .memoryPeakBytes==104857600 and .cpuUsageUsec==2500000)' >/dev/null || {
-		echo 'FAIL: complete native receipts must retain each worker resource observation' >&2
+		echo 'FAIL: complete native receipts must retain runner capacity and each worker resource observation' >&2
 		exit 1
 	}
 	for failure in inventory-missing inventory-extra inventory-duplicate inventory-malformed inventory-producer duplicate-id worker-start worker-missing worker-extra worker-duplicate worker-skipped worker-failed worker-no-pass worker-two-pass worker-producer worker-exit remove unreadable retained network-remove network-unreadable network-retained; do
