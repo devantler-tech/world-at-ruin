@@ -1240,7 +1240,7 @@ jobs:
         id: capture-exported
         if: needs.detect-visual-changes.outputs.export_affecting == 'true'
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@672083b3af95cf6f654980a58d741c1d346575c7
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@875a8e49e79297f322c50f6ee0187a071066563f
         with:
           archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
