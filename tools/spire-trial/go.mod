@@ -13,7 +13,7 @@ require (
 	agones.dev/agones v1.61.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
