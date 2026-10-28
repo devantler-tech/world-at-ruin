@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	agones.dev/agones v1.61.0
 	github.com/aws/aws-sdk-go-v2 v1.47.3
-	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.71.0
+	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.72.0
 	github.com/coder/websocket v1.8.15
 	github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime v0.0.0-20261014211334-319e59eaf107
 	github.com/gofrs/uuid/v5 v5.5.1
