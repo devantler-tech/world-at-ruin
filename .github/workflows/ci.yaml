@@ -101,7 +101,9 @@ jobs:
       - name: Client test runner is portable and verdicts are non-vacuous
         run: ./tools/run-client-test.test.sh
       - name: Ordinary entry cancellation retires nested engine groups
-        run: bash tools/client-proof-phase.test.sh
+        run: |
+          bash tools/gnu-coreutils.test.sh
+          bash tools/client-proof-phase.test.sh
       - name: Protected controllers preserve cleanup acknowledgments
         run: bash tools/trusted-regression-lifecycle.test.sh
       - name: Same-invocation runtime handoff retains build and cleanup authority

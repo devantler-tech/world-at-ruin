@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runner="${1:-$root/tools/run-client-test.sh}"
 phase_runner="$root/tools/trusted-regression-phase.sh"
-kinds=(phase runner nested parallel watchdog)
+kinds=(phase runner nested parallel watchdog slow-inspection)
 causes=(timeout INT TERM capture)
 if [[ ${1:-} == --capture-phase ]]; then
   phase_runner="${2:?baseline phase required}"
@@ -16,6 +16,7 @@ if [[ ${1:-} == --nested-int ]]; then runner="$root/tools/run-client-test.sh"; k
 tmp="$(mktemp -d)"
 canary=''
 real_ps="$(command -v ps)"
+fixture_path="$PATH"
 # Remove only recorded test-owned processes, the canary and this invocation's fixtures.
 cleanup() {
   local record owned_pid
@@ -70,6 +71,7 @@ terminal() {
 for kind in "${kinds[@]}"; do
   for cause in "${causes[@]}"; do
     if [[ $kind == watchdog && $cause != capture ]]; then continue; fi
+    if [[ $kind == slow-inspection && $cause != timeout ]]; then continue; fi
     echo "CONTROL START -- $kind/$cause"
     case_start=$SECONDS
     case_root="$tmp/$kind-$cause"
@@ -77,10 +79,21 @@ for kind in "${kinds[@]}"; do
     export FAKE_ENGINE="$case_root/engine" FAKE_CHILD="$case_root/child"
     export FAKE_WATCHDOG="$case_root/watchdog"
     unset BASH_ENV CAPTURE_TARGET CAPTURE_COMMAND CAPTURE_ONCE
-    export TMPDIR="$case_root/state" PATH="$tmp/bin:$PATH"
+    export TMPDIR="$case_root/state" PATH="$tmp/bin:$fixture_path"
+    if [[ $kind == slow-inspection ]]; then
+      mkdir "$case_root/bin"
+      export WAR_REAL_PS="$real_ps"
+      cat > "$case_root/bin/ps" <<'SLOW_PS'
+#!/usr/bin/env bash
+if [[ ${1:-} == -axo && ${2:-} == pgid=,stat= ]]; then sleep 0.2; fi
+exec "$WAR_REAL_PS" "$@"
+SLOW_PS
+      chmod +x "$case_root/bin/ps"
+      export PATH="$case_root/bin:$PATH"
+    fi
     export WAR_TRUSTED_TERMINATION_SECONDS=1 WAR_CLIENT_STEP_SECONDS=1 RUN_CLIENT_TEST_TIMEOUT_SECONDS=1
     if [[ $cause != timeout ]]; then WAR_CLIENT_STEP_SECONDS=60; RUN_CLIENT_TEST_TIMEOUT_SECONDS=60; fi
-    if [[ $kind == nested || $kind == parallel ]]; then
+    if [[ $kind == nested || $kind == parallel || $kind == slow-inspection ]]; then
       WAR_TRUSTED_TERMINATION_SECONDS=5
       RUN_CLIENT_TEST_TIMEOUT_SECONDS=60
     fi
@@ -91,7 +104,7 @@ for kind in "${kinds[@]}"; do
     else
       entry=(bash "$runner" held)
     fi
-    if [[ $kind == nested ]]; then
+    if [[ $kind == nested || $kind == slow-inspection ]]; then
       printf 'cd "%s/fixture"\nexec bash "%s" held\n' "$tmp" "$runner" > "$case_root/step.sh"
       if [[ ${1:-} == --nested-int || ${CLIENT_PROOF_TRACE:-0} == 1 ]]; then printf 'cd "%s/fixture"\nexec bash -x "%s" held\n' "$tmp" "$runner" > "$case_root/step.sh"; fi
       entry=(bash "$root/tools/client-proof-step.sh" "$case_root/step.sh")
@@ -152,6 +165,7 @@ done
 unset BASH_ENV CAPTURE_TARGET CAPTURE_COMMAND CAPTURE_ONCE
 if [[ ${1:-} == --capture-phase || ${1:-} == --nested-int ]]; then echo 'TEST PASS -- targeted phase cancellation owns the launched child'; exit 0; fi
 # Inspection failure cannot certify absence or permit scratch removal.
+export PATH="$tmp/bin:$fixture_path"
 case_root="$tmp/unreadable"
 mkdir -p "$case_root/state"
 export FAKE_ENGINE="$case_root/engine" FAKE_CHILD="$case_root/child" TMPDIR="$case_root/state"
