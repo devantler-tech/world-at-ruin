@@ -4,13 +4,21 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-REAL_GNU_TIMEOUT="$(command -v gtimeout || command -v gnutimeout || command -v timeout)"
-REAL_GNU_ENV="$(command -v genv || command -v gnuenv || command -v env)"
+find_gnu_provider() {
+  local candidate executable version
+  for candidate in "$@"; do
+    if executable="$(command -v "$candidate")" &&
+      version="$("$executable" --version 2>/dev/null)" &&
+      [[ "$version" == *'GNU coreutils'* ]]; then
+      printf '%s\n' "$executable"
+      return 0
+    fi
+  done
+  return 1
+}
+REAL_GNU_TIMEOUT="$(find_gnu_provider gtimeout gnutimeout timeout)" || { echo 'GNU-provider control: no qualified timeout' >&2; exit 1; }
+REAL_GNU_ENV="$(find_gnu_provider genv gnuenv env)" || { echo 'GNU-provider control: no qualified env' >&2; exit 1; }
 export REAL_GNU_TIMEOUT REAL_GNU_ENV
-"$REAL_GNU_TIMEOUT" --version >"$scratch/timeout-version"
-"$REAL_GNU_ENV" --version >"$scratch/env-version"
-grep 'GNU coreutils' "$scratch/timeout-version" >/dev/null
-grep 'GNU coreutils' "$scratch/env-version" >/dev/null
 mkdir "$scratch/bin" "$scratch/records"
 export GNU_PROVIDER_TRACE="$scratch/trace"
 : >"$GNU_PROVIDER_TRACE"
@@ -64,6 +72,7 @@ PATH="$scratch/bin:$PATH" bash "$root/tools/trusted-regression-phase.sh" 'ordina
 grep 'GNU coreutils timeout is required' "$scratch/refusal" >/dev/null
 status=0
 PATH="$scratch/bin:$PATH" bash "$root/tools/trusted-phase-command.sh" "$scratch/verdict" bash -c 'exit 0' >"$scratch/env-refusal" 2>&1 || status=$?
-[ "$status" = 2 ] && [ ! -e "$scratch/verdict" ]
+[ "$status" = 2 ]
+[ ! -e "$scratch/verdict" ]
 grep 'requires GNU coreutils env' "$scratch/env-refusal" >/dev/null
 printf 'TEST PASS -- GNU Ubuntu providers preserve status, signals and cleanup; failed probes refuse\n'
