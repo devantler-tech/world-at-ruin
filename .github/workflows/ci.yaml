@@ -2760,13 +2760,13 @@ jobs:
     steps:
       - name: Capture the first complete cloth mode
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@875a8e49e79297f322c50f6ee0187a071066563f
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@9f0393472b415da8b5730fb2f45b0111431dc3a8
         with:
           mode: ${{ matrix.first }}
       - name: Capture the second complete cloth mode
         if: always() && !cancelled()
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@875a8e49e79297f322c50f6ee0187a071066563f
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@9f0393472b415da8b5730fb2f45b0111431dc3a8
         with:
           mode: ${{ matrix.second }}
 
@@ -2944,7 +2944,7 @@ jobs:
           CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@f558e3ababb474ac0e6f27d988ce8c876a525196 # v13.4.0
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@582f136a7a85530ea8204e239e87b03bd8bfce75 # v15.0.0
         with:
           # The capture jobs and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible
