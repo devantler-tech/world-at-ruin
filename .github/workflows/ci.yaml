@@ -2946,7 +2946,7 @@ jobs:
           CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@582f136a7a85530ea8204e239e87b03bd8bfce75 # v15.0.0
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@2082a0ac4616cf809fadc0ce737a91641358eb07 # v19.0.0
         with:
           # The capture jobs and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible
