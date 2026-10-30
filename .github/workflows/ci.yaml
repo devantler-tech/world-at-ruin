@@ -1242,7 +1242,7 @@ jobs:
         id: capture-exported
         if: needs.detect-visual-changes.outputs.export_affecting == 'true'
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@9f0393472b415da8b5730fb2f45b0111431dc3a8
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@dd28ac3c6005da5ec0bdb208bf634f1389f133a1
         with:
           archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -2762,13 +2762,13 @@ jobs:
     steps:
       - name: Capture the first complete cloth mode
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@9f0393472b415da8b5730fb2f45b0111431dc3a8
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@dd28ac3c6005da5ec0bdb208bf634f1389f133a1
         with:
           mode: ${{ matrix.first }}
       - name: Capture the second complete cloth mode
         if: always() && !cancelled()
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@9f0393472b415da8b5730fb2f45b0111431dc3a8
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@dd28ac3c6005da5ec0bdb208bf634f1389f133a1
         with:
           mode: ${{ matrix.second }}
 
