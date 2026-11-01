@@ -3,7 +3,9 @@ package gameservercommit
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatorjournal"
 	"github.com/devantler-tech/world-at-ruin/server/internal/custodywitness"
 	"github.com/devantler-tech/world-at-ruin/server/nakamastorage/nakamastoragetest"
+	"github.com/heroiclabs/nakama-common/runtime"
 )
 
 var witnessTableID = custodywitness.TableIdentity{ID: "witness-table", CreatedAt: time.Unix(1700000000, 0).UTC()}
@@ -78,10 +81,15 @@ func witnessClient(t *testing.T, table *witnessTable) *custodywitness.Client {
 
 func witnessedGeneration(t *testing.T, table *witnessTable) (*Generation, error) {
 	t.Helper()
+	return witnessedGenerationOn(t, table, nakamastoragetest.New())
+}
+
+func witnessedGenerationOn(t *testing.T, table *witnessTable, storage allocatoradmission.RecoveryStorage) (*Generation, error) {
+	t.Helper()
 	_, cfg := generationFixture(t, generationAPI(t, ""))
 	return NewDurableGeneration(context.Background(), DurableGenerationConfig{
 		Enabled: true, Commit: cfg.Commit, Record: cfg.Record, IncarnationID: "incarnation-1",
-		Storage: nakamastoragetest.New(),
+		Storage: storage,
 		Witness: GenerationWitnessConfig{Enabled: true, Witness: clientWitness{witnessClient(t, table)}},
 	})
 }
@@ -266,13 +274,14 @@ func toCustody(r WitnessRecord) custodywitness.GenerationRecord {
 	return custodywitness.GenerationRecord{
 		GenerationKey: r.GenerationKey, Stage: custodywitness.GenerationStage(r.Stage), GrantCount: r.GrantCount,
 		IssuedDigest: r.IssuedDigest, RegistrationPin: r.RegistrationPin, DrainPin: r.DrainPin, HandoffPin: r.HandoffPin,
+		OwnerPin: r.OwnerPin,
 	}
 }
 
 // The local stage names are the witness family's own.
 func TestWitnessStagesAreTheGenerationFamilyStages(t *testing.T) {
 	if WitnessRegistered != string(custodywitness.GenerationRegistered) || WitnessDrained != string(custodywitness.GenerationDrained) ||
-		WitnessHandoff != string(custodywitness.GenerationHandoff) {
+		WitnessHandoff != string(custodywitness.GenerationHandoff) || allocatoradmission.WitnessOwner != string(custodywitness.GenerationOwner) {
 		t.Fatal("local witness stage names drifted from the generation family")
 	}
 }
@@ -356,7 +365,11 @@ func (f *faultAfter) WriteGeneration(ctx context.Context, previous, next Witness
 	}
 	if f.fault == "conflicting" {
 		rival := next
-		rival.HandoffPin = next.RegistrationPin
+		if next.Stage == allocatoradmission.WitnessOwner {
+			rival.OwnerPin = next.RegistrationPin
+		} else {
+			rival.HandoffPin = next.RegistrationPin
+		}
 		if err := f.next.WriteGeneration(ctx, previous, rival); err != nil {
 			return err
 		}
@@ -379,4 +392,143 @@ func grantedWitnessedGeneration(t *testing.T) (*Generation, *witnessTable) {
 		t.Fatal(err)
 	}
 	return g, table
+}
+
+// closedWitnessedGeneration closes one witnessed grant for recovery on storage
+// and returns a recovery owner configuration holding its witnessed handoff.
+func closedWitnessedGeneration(t *testing.T, storage allocatoradmission.RecoveryStorage, id string) (allocatoradmission.RecoveryOwnerConfig, *witnessTable) {
+	t.Helper()
+	table := newWitnessTable()
+	g, err := witnessedGenerationOn(t, table, storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = g.Prepare(context.Background(), "pod-a", "zone-a", "attempt-a"); err != nil {
+		t.Fatal(err)
+	}
+	binding, version, err := g.CloseForRecovery(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return allocatoradmission.RecoveryOwnerConfig{
+		Enabled: true, Storage: storage, Binding: binding, HandoffVersion: version, OwnerID: id,
+		Witness: allocatoradmission.RecoveryOwnerWitnessConfig{
+			Enabled: true, Witness: clientWitness{witnessClient(t, table)}, Handoff: g.state.durable.witness.acked,
+		},
+	}, table
+}
+
+// The chain registered, drained, handoff, owner is one the real witness client
+// accepts step by step, and it ends at exactly the recoverer's own record.
+func TestWitnessedOwnerChainMatchesTheRecoverersRecord(t *testing.T) {
+	cfg, table := closedWitnessedGeneration(t, nakamastoragetest.New(), "recoverer-1")
+	puts := table.puts
+	owner, err := allocatoradmission.NewRecoveryOwner(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := owner.Reserve(context.Background())
+	if err != nil {
+		t.Fatalf("witnessed owner refused: %v", err)
+	}
+	own, err := reservation.WitnessedOwner()
+	if err != nil || own.Stage != allocatoradmission.WitnessOwner || own.OwnerPin == "" || own.OwnerPin == own.HandoffPin || table.puts != puts+1 {
+		t.Fatalf("witnessed owner record: %+v after %d writes: %v", own, table.puts-puts, err)
+	}
+	client := witnessClient(t, table)
+	if got := client.CompareGeneration(context.Background(), toCustody(own)); got != custodywitness.Verified {
+		t.Fatalf("witness disagrees with the recoverer's record: %s", got)
+	}
+	if got := client.CompareGeneration(context.Background(), toCustody(cfg.Witness.Handoff)); got != custodywitness.WitnessAhead {
+		t.Fatalf("witness did not move past the handoff: %s", got)
+	}
+}
+
+// A refused, conflicting, unavailable or lost-then-unreadable owner witness
+// returns no reservation and ends the attempt, keeping the row as the permanent
+// exclusion; a lost reply the exact re-read finds is acknowledged.
+func TestWitnessRefusalAtOwnerReturnsNoReservation(t *testing.T) {
+	for _, fault := range []string{"rejected", "conflicting", "unavailable", "lost-uncommitted", "lost-unreadable", "lost-committed"} {
+		t.Run(fault, func(t *testing.T) {
+			storage := nakamastoragetest.New()
+			cfg, table := closedWitnessedGeneration(t, storage, "recoverer-1")
+			cfg.Witness.Witness = &faultAfter{cfg.Witness.Witness, 0, table, fault}
+			owner, err := allocatoradmission.NewRecoveryOwner(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reservation, err := owner.Reserve(context.Background())
+			if fault == "lost-committed" {
+				if own, witnessed := reservation.WitnessedOwner(); err != nil || witnessed != nil || own.Stage != allocatoradmission.WitnessOwner {
+					t.Fatalf("committed owner with a lost reply refused: %v, %v", err, witnessed)
+				}
+				return
+			}
+			if !errors.Is(err, allocatoradmission.ErrUnknown) || reservation != (allocatoradmission.RecoveryReservation{}) {
+				t.Fatalf("unwitnessed reservation returned: %v", err)
+			}
+			if _, err = owner.Accept(reservation); err == nil {
+				t.Fatal("unwitnessed owner accepted")
+			}
+			if _, err = owner.Reserve(context.Background()); !errors.Is(err, allocatoradmission.ErrClosed) {
+				t.Fatalf("refused attempt retried: %v", err)
+			}
+			if _, found := storage.Get(allocatoradmission.RecoveryOwnerCollection, allocatoradmission.RecoveryOwnerKey(cfg.Binding.GenerationID), ""); !found {
+				t.Fatal("owner row did not stay as the exclusion")
+			}
+		})
+	}
+}
+
+// After a Nakama restore drops the owner row, a second recoverer's create
+// succeeds again, and only the witness still knows who won. It gets no
+// reservation, so it reaches no target.
+func TestWitnessRefusesTheSecondRecovererAfterARestoreDropsTheOwnerRow(t *testing.T) {
+	storage := nakamastoragetest.New()
+	cfg, table := closedWitnessedGeneration(t, storage, "recoverer-1")
+	first, err := allocatoradmission.NewRecoveryOwner(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := first.Reserve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	won, err := reservation.WitnessedOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := allocatoradmission.RecoveryOwnerKey(cfg.Binding.GenerationID)
+	if err = storage.StorageDelete(context.Background(), []*runtime.StorageDelete{{Collection: allocatoradmission.RecoveryOwnerCollection, Key: key}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := storage.Get(allocatoradmission.RecoveryOwnerCollection, key, ""); found {
+		t.Fatal("restore control: the owner row survived")
+	}
+	cfg.OwnerID = "recoverer-2"
+	second, err := allocatoradmission.NewRecoveryOwner(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost, err := second.Reserve(context.Background())
+	if !errors.Is(err, allocatoradmission.ErrUnknown) || lost != (allocatoradmission.RecoveryReservation{}) {
+		t.Fatalf("second recoverer reserved: %v", err)
+	}
+	if _, found := storage.Get(allocatoradmission.RecoveryOwnerCollection, key, ""); !found {
+		t.Fatal("control: the second create never reached the witness")
+	}
+	if got := witnessClient(t, table).CompareGeneration(context.Background(), toCustody(won)); got != custodywitness.Verified {
+		t.Fatalf("witness no longer names the first recoverer: %s", got)
+	}
+	var requests atomic.Int32
+	_, gen := generationFixture(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
+	commit := gen.Commit
+	commit.Enabled = true
+	recovery, err := NewRecovery(commit, lost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = recovery.Fence(context.Background()); err == nil || requests.Load() != 0 {
+		t.Fatalf("refused recoverer reached a target: %v after %d requests", err, requests.Load())
+	}
 }

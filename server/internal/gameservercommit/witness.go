@@ -2,47 +2,26 @@ package gameservercommit
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"reflect"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatoradmission"
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatorjournal"
 )
 
-// The generation witness stages this package writes. They are the custody
-// witness generation family's stage names (#1444); later stages belong to
-// later slices.
+// The generation witness stages this package writes, by the names and in the
+// record the admission package declares.
 const (
-	WitnessRegistered = "registered"
-	WitnessDrained    = "drained"
-	WitnessHandoff    = "handoff"
+	WitnessRegistered = allocatoradmission.WitnessRegistered
+	WitnessDrained    = allocatoradmission.WitnessDrained
+	WitnessHandoff    = allocatoradmission.WitnessHandoff
 )
 
-// WitnessRecord is one allocator generation's witness record, field for field
-// the custody witness generation record. It is declared here so the commit
-// authority, which the native trial command composes, never imports the
-// witness client: that composition is a separate delivery, and the normal and
-// trial artifacts are guarded against composing the witness.
-type WitnessRecord struct {
-	GenerationKey   string
-	Stage           string
-	GrantCount      int
-	IssuedDigest    string
-	RegistrationPin string
-	DrainPin        string
-	HandoffPin      string
-}
+// WitnessRecord is one allocator generation's witness record.
+type WitnessRecord = allocatoradmission.WitnessRecord
 
-// GenerationWitness moves the witness record from previous to next in one
-// conditional write. It returns nil only when this call's own write is known
-// to be stored; a lost reply is settled by one strongly consistent exact
-// re-read (custody witness WriteGeneration), so any error means the stage is
-// not witnessed.
-type GenerationWitness interface {
-	WriteGeneration(ctx context.Context, previous, next WitnessRecord) error
-}
+// GenerationWitness moves the witness record in one conditional write; see the
+// admission package's declaration.
+type GenerationWitness = allocatoradmission.GenerationWitness
 
 // GenerationWitnessConfig opts the durable generation into persist-before-ACK
 // witnessing of its root registration, every grant registration, its drain
@@ -85,19 +64,6 @@ type generationWitness struct {
 	acked  WitnessRecord
 }
 
-// witnessPinDomain separates generation witness pins from every other digest.
-const witnessPinDomain = "world-at-ruin/allocator-generation-witness-pin/v1\n"
-
-// witnessPin digests one stage's originating Nakama acknowledgement.
-func witnessPin(parts ...any) (string, error) {
-	encoded, err := json.Marshal(parts)
-	if err != nil {
-		return "", ErrUnknown
-	}
-	digest := sha256.Sum256(append([]byte(witnessPinDomain), encoded...))
-	return hex.EncodeToString(digest[:]), nil
-}
-
 // advance witnesses stage for the acknowledged Nakama snapshot, conditional on
 // the previously witnessed record. A registration replaces the registration
 // fields with the snapshot's complete issued set; a drain keeps them and adds
@@ -105,9 +71,9 @@ func witnessPin(parts ...any) (string, error) {
 // acknowledgement. Only an acknowledged write moves the retained record.
 func (w *generationWitness) advance(ctx context.Context, stage string, snapshot *allocatoradmission.Snapshot) error {
 	binding := snapshot.Observation().Journal.Binding
-	pin, err := witnessPin(stage, allocatoradmission.Collection, w.key, binding.Version, binding.IssuedCount, binding.IssuedDigest)
+	pin, err := allocatoradmission.WitnessStagePin(stage, binding)
 	if err != nil {
-		return err
+		return ErrUnknown
 	}
 	next := w.acked
 	switch stage {
@@ -137,15 +103,13 @@ func (w *generationWitness) handoff(ctx context.Context, binding allocatorjourna
 	}
 	// The drain pin also binds the journal version, so only the exact drained
 	// binding re-derives it.
-	drainPin, err := witnessPin(WitnessDrained, allocatoradmission.Collection, w.key,
-		binding.Version, binding.IssuedCount, binding.IssuedDigest)
+	drainPin, err := allocatoradmission.WitnessStagePin(WitnessDrained, binding)
 	if err != nil || drainPin != w.acked.DrainPin {
 		return ErrInvalid
 	}
-	pin, err := witnessPin(WitnessHandoff, allocatoradmission.HandoffCollection, allocatoradmission.HandoffKey(binding.GenerationID),
-		binding.Version, binding.IssuedCount, binding.IssuedDigest, version)
+	pin, err := allocatoradmission.WitnessHandoffPin(binding, version)
 	if err != nil {
-		return err
+		return ErrUnknown
 	}
 	next := w.acked
 	next.Stage, next.HandoffPin = WitnessHandoff, pin

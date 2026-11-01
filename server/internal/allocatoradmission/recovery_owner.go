@@ -30,6 +30,8 @@ type RecoveryOwnerConfig struct {
 	Binding        allocatorjournal.JournalBinding
 	HandoffVersion string
 	OwnerID        string
+	// Witness opts into persist-before-ACK witnessing (#1444); zero is off.
+	Witness RecoveryOwnerWitnessConfig
 }
 
 // RecoveryOwner copies share one local attempt. Even an unsuccessful read
@@ -47,6 +49,7 @@ type recoveryOwnerState struct {
 type RecoveryReservation struct {
 	owner       *recoveryOwnerState
 	observation *RecoveryOwnerObservation
+	witnessed   WitnessRecord
 }
 
 type RecoveryOwnerObservation struct {
@@ -68,7 +71,7 @@ func NewRecoveryOwner(cfg RecoveryOwnerConfig) (*RecoveryOwner, error) {
 	if !cfg.Enabled {
 		return nil, ErrDisabled
 	}
-	if isNil(cfg.Storage) || !validVersion(cfg.Binding.Version) || !validVersion(cfg.HandoffVersion) || !handoffidentity.OpaqueUTF8(cfg.OwnerID, 128) {
+	if isNil(cfg.Storage) || !validVersion(cfg.Binding.Version) || !validVersion(cfg.HandoffVersion) || !handoffidentity.OpaqueUTF8(cfg.OwnerID, 128) || !cfg.Witness.valid(cfg.Binding, cfg.HandoffVersion) {
 		return nil, ErrClosed
 	}
 	cfg.Binding.MemberPodUIDs = slices.Clone(cfg.Binding.MemberPodUIDs)
@@ -77,7 +80,9 @@ func NewRecoveryOwner(cfg RecoveryOwnerConfig) (*RecoveryOwner, error) {
 
 // Reserve verifies the complete pinned drain before one private create-only
 // write. Read and write share a single deadline. A lost reply leaves a permanent
-// exclusion row but no usable reservation, even for the same owner ID.
+// exclusion row but no usable reservation, even for the same owner ID. With a
+// witness composed, the reservation also waits for the witness to hold `owner`;
+// a refusal leaves the row unwitnessed and the attempt terminal.
 func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error) {
 	if o == nil || o.state == nil || !o.state.attempted.CompareAndSwap(false, true) {
 		return RecoveryReservation{}, ErrClosed
@@ -100,8 +105,20 @@ func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error
 		return RecoveryReservation{}, unknown(ctx, err)
 	}
 	got.Version = acks[0].GetVersion()
+	var witnessed WitnessRecord
+	if cfg.Witness.Enabled {
+		pin, err := witnessOwnerPin(cfg, got.Version)
+		if err != nil {
+			return RecoveryReservation{}, unknown(ctx, err)
+		}
+		witnessed = cfg.Witness.Handoff
+		witnessed.Stage, witnessed.OwnerPin = WitnessOwner, pin
+		if err = cfg.Witness.Witness.WriteGeneration(ctx, cfg.Witness.Handoff, witnessed); err != nil {
+			return RecoveryReservation{}, unknown(ctx, err)
+		}
+	}
 	o.state.accepted.Store(&got)
-	return RecoveryReservation{owner: o.state, observation: &got}, nil
+	return RecoveryReservation{owner: o.state, observation: &got, witnessed: witnessed}, nil
 }
 
 // Accept returns detached diagnostics only from this live owner's exact ACK.
@@ -120,6 +137,15 @@ func (r RecoveryReservation) Consume() (RecoveryOwnerObservation, error) {
 		return RecoveryOwnerObservation{}, ErrClosed
 	}
 	return cloneRecoveryObservation(r.observation), nil
+}
+
+// WitnessedOwner returns the `owner` record the witness acknowledged for this
+// live reservation. A reservation without a witness holds none.
+func (r RecoveryReservation) WitnessedOwner() (WitnessRecord, error) {
+	if r.owner == nil || r.observation == nil || r.owner.accepted.Load() != r.observation || r.witnessed.Stage != WitnessOwner {
+		return WitnessRecord{}, ErrClosed
+	}
+	return r.witnessed, nil
 }
 
 func cloneRecoveryObservation(observation *RecoveryOwnerObservation) RecoveryOwnerObservation {
