@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"sync/atomic"
 	"unicode/utf8"
@@ -81,8 +82,10 @@ func NewRecoveryOwner(cfg RecoveryOwnerConfig) (*RecoveryOwner, error) {
 // Reserve verifies the complete pinned drain before one private create-only
 // write. Read and write share a single deadline. A lost reply leaves a permanent
 // exclusion row but no usable reservation, even for the same owner ID. With a
-// witness composed, the reservation also waits for the witness to hold `owner`;
-// a refusal leaves the row unwitnessed and the attempt terminal.
+// witness composed, the witness must hold exactly the retained `handoff` record
+// before that write, so a rolled-back history leaves no row; the reservation also
+// waits for the witness to hold `owner`, and a refusal there leaves the row
+// unwitnessed. Either refusal ends the attempt.
 func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error) {
 	if o == nil || o.state == nil || !o.state.attempted.CompareAndSwap(false, true) {
 		return RecoveryReservation{}, ErrClosed
@@ -93,6 +96,9 @@ func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error
 	handoff, err := ReadHandoff(ctx, HandoffReadConfig{Enabled: true, Storage: cfg.Storage, Binding: cfg.Binding, Version: cfg.HandoffVersion})
 	if err != nil {
 		return RecoveryReservation{}, unknown(ctx, err)
+	}
+	if cfg.Witness.Enabled && cfg.Witness.Witness.CompareGeneration(ctx, cfg.Witness.Handoff) != WitnessVerified {
+		return RecoveryReservation{}, unknown(ctx, nil)
 	}
 	got := RecoveryOwnerObservation{OwnerID: cfg.OwnerID, HandoffVersion: cfg.HandoffVersion, Handoff: handoff}
 	value, err := EncodeRecoveryOwner(got)
@@ -106,7 +112,7 @@ func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error
 	}
 	got.Version = acks[0].GetVersion()
 	if cfg.Witness.Enabled {
-		pin, err := witnessOwnerPin(cfg, got.Version)
+		pin, err := WitnessOwnerPin(cfg, got.Version)
 		if err != nil {
 			return RecoveryReservation{}, unknown(ctx, err)
 		}
@@ -150,6 +156,53 @@ func (r RecoveryReservation) Witnessed() (WitnessRecord, error) {
 		return WitnessRecord{}, ErrClosed
 	}
 	return *current, nil
+}
+
+// VerifyWitness re-reads the owner row and the pinned handoff and journal from
+// Nakama, derives the `owner` record from them and the retained pins, and requires
+// the witness to hold exactly that record. It holds only between Reserve and the
+// recovered stage, and is what a recovery asks before it spends its inventory on
+// any barrier. A nil answer grants nothing else. With no witness composed it does
+// nothing, so a recovery runs as it does without one.
+func (r RecoveryReservation) VerifyWitness(ctx context.Context) error {
+	if r.owner == nil || r.observation == nil || r.owner.accepted.Load() != r.observation {
+		return ErrClosed
+	}
+	cfg := r.owner.cfg
+	if !cfg.Witness.Enabled {
+		return nil
+	}
+	current := r.owner.witnessed.Load()
+	if current == nil {
+		return ErrClosed
+	}
+	if _, err := ReadHandoff(ctx, HandoffReadConfig{Enabled: true, Storage: cfg.Storage, Binding: cfg.Binding, Version: cfg.HandoffVersion}); err != nil {
+		return unknown(ctx, err)
+	}
+	key := RecoveryOwnerKey(cfg.Binding.GenerationID)
+	rows, err := cfg.Storage.StorageRead(ctx, []*runtime.StorageRead{{Collection: RecoveryOwnerCollection, Key: key, UserID: ""}})
+	if err != nil || ctx.Err() != nil || len(rows) != 1 || rows[0] == nil {
+		return unknown(ctx, err)
+	}
+	row := rows[0]
+	if row.GetCollection() != RecoveryOwnerCollection || row.GetKey() != key || row.GetUserId() != nakamastorage.SystemOwnerID {
+		return unknown(ctx, nil)
+	}
+	stored, err := DecodeRecoveryOwner(row.GetValue())
+	stored.Version = row.GetVersion()
+	if err != nil || !reflect.DeepEqual(stored, *r.observation) {
+		return unknown(ctx, err)
+	}
+	pin, err := WitnessOwnerPin(cfg, stored.Version)
+	if err != nil {
+		return unknown(ctx, err)
+	}
+	expected := cfg.Witness.Handoff
+	expected.Stage, expected.OwnerPin = WitnessOwner, pin
+	if expected != *current || cfg.Witness.Witness.CompareGeneration(ctx, expected) != WitnessVerified {
+		return unknown(ctx, nil)
+	}
+	return nil
 }
 
 // AdvanceWitness witnesses the recovery's next stage, conditional on the exact

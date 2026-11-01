@@ -27,11 +27,17 @@ type witnessTable struct {
 	fault string
 	// onPut runs before each write, to observe what a writer has released by then.
 	onPut func()
+	// onBarrier runs barrier once, at the first target write of a recovery.
+	onBarrier *sync.Once
+	barrier   func()
 }
 
 func (w *witnessTable) Identity(context.Context) (custodywitness.TableIdentity, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.fault == "replaced" {
+		return custodywitness.TableIdentity{ID: "replaced-table", CreatedAt: witnessTableID.CreatedAt}, nil
+	}
 	if w.fault == "unavailable" {
 		return custodywitness.TableIdentity{}, errors.New("identity unreadable")
 	}
@@ -118,16 +124,8 @@ func TestWitnessedGenerationChainMatchesItsOwnRecord(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			table := newWitnessTable()
-			g, err := witnessedGeneration(t, table)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, name := range []string{"zone-a", "zone-b"} {
-				if _, err = g.Prepare(context.Background(), "pod-a", name, "attempt-"+name); err != nil {
-					t.Fatalf("witnessed registration %s: %v", name, err)
-				}
-			}
-			if err = tc.close(g); err != nil {
+			g := twoGrantGeneration(t, table)
+			if err := tc.close(g); err != nil {
 				t.Fatalf("witnessed %s: %v", tc.name, err)
 			}
 			own := g.state.durable.witness.acked
@@ -275,6 +273,10 @@ func (c clientWitness) WriteGeneration(ctx context.Context, previous, next Witne
 	return err
 }
 
+func (c clientWitness) CompareGeneration(ctx context.Context, expected WitnessRecord) string {
+	return string(c.client.CompareGeneration(ctx, toCustody(expected)))
+}
+
 func toCustody(r WitnessRecord) custodywitness.GenerationRecord {
 	return custodywitness.GenerationRecord{
 		GenerationKey: r.GenerationKey, Stage: custodywitness.GenerationStage(r.Stage), GrantCount: r.GrantCount,
@@ -390,6 +392,14 @@ func (f *faultAfter) WriteGeneration(ctx context.Context, previous, next Witness
 	return f.next.WriteGeneration(ctx, previous, next)
 }
 
+func (f *faultAfter) CompareGeneration(ctx context.Context, expected WitnessRecord) string {
+	reader, ok := f.next.(GenerationWitnessReader)
+	if !ok {
+		return string(custodywitness.Unavailable)
+	}
+	return reader.CompareGeneration(ctx, expected)
+}
+
 // grantedWitnessedGeneration returns a witnessed generation holding one
 // witnessed grant, and its witness table.
 func grantedWitnessedGeneration(t *testing.T) (*Generation, *witnessTable) {
@@ -407,7 +417,7 @@ func grantedWitnessedGeneration(t *testing.T) (*Generation, *witnessTable) {
 
 // closedWitnessedGeneration closes one witnessed grant for recovery on storage
 // and returns a recovery owner configuration holding its witnessed handoff.
-func closedWitnessedGeneration(t *testing.T, storage allocatoradmission.RecoveryStorage, id string) (allocatoradmission.RecoveryOwnerConfig, *witnessTable) {
+func closedWitnessedGeneration(t *testing.T, storage allocatoradmission.RecoveryStorage) (allocatoradmission.RecoveryOwnerConfig, *witnessTable) {
 	t.Helper()
 	table := newWitnessTable()
 	g, err := witnessedGenerationOn(t, table, storage)
@@ -417,22 +427,29 @@ func closedWitnessedGeneration(t *testing.T, storage allocatoradmission.Recovery
 	if _, err = g.Prepare(context.Background(), "pod-a", "zone-a", "attempt-a"); err != nil {
 		t.Fatal(err)
 	}
+	return closedOwnerConfig(t, g, storage, table), table
+}
+
+// closedOwnerConfig closes the generation for recovery and returns a recovery
+// owner configuration holding its witnessed handoff.
+func closedOwnerConfig(t *testing.T, g *Generation, storage allocatoradmission.RecoveryStorage, table *witnessTable) allocatoradmission.RecoveryOwnerConfig {
+	t.Helper()
 	binding, version, err := g.CloseForRecovery(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return allocatoradmission.RecoveryOwnerConfig{
-		Enabled: true, Storage: storage, Binding: binding, HandoffVersion: version, OwnerID: id,
+		Enabled: true, Storage: storage, Binding: binding, HandoffVersion: version, OwnerID: "recoverer-1",
 		Witness: allocatoradmission.RecoveryOwnerWitnessConfig{
 			Enabled: true, Witness: clientWitness{witnessClient(t, table)}, Handoff: g.state.durable.witness.acked,
 		},
-	}, table
+	}
 }
 
 // The chain registered, drained, handoff, owner is one the real witness client
 // accepts step by step, and it ends at exactly the recoverer's own record.
 func TestWitnessedOwnerChainMatchesTheRecoverersRecord(t *testing.T) {
-	cfg, table := closedWitnessedGeneration(t, nakamastoragetest.New(), "recoverer-1")
+	cfg, table := closedWitnessedGeneration(t, nakamastoragetest.New())
 	puts := table.puts
 	owner, err := allocatoradmission.NewRecoveryOwner(cfg)
 	if err != nil {
@@ -462,7 +479,7 @@ func TestWitnessRefusalAtOwnerReturnsNoReservation(t *testing.T) {
 	for _, fault := range []string{"rejected", "conflicting", "unavailable", "lost-uncommitted", "lost-unreadable", "lost-committed"} {
 		t.Run(fault, func(t *testing.T) {
 			storage := nakamastoragetest.New()
-			cfg, table := closedWitnessedGeneration(t, storage, "recoverer-1")
+			cfg, table := closedWitnessedGeneration(t, storage)
 			cfg.Witness.Witness = &faultAfter{cfg.Witness.Witness, 0, table, fault}
 			owner, err := allocatoradmission.NewRecoveryOwner(cfg)
 			if err != nil {
@@ -492,11 +509,11 @@ func TestWitnessRefusalAtOwnerReturnsNoReservation(t *testing.T) {
 }
 
 // After a Nakama restore drops the owner row, a second recoverer's create
-// succeeds again, and only the witness still knows who won. It gets no
-// reservation, so it reaches no target.
+// would succeed again, and only the witness still knows who won. Its comparison
+// refuses it before that create: no row, no reservation and no target.
 func TestWitnessRefusesTheSecondRecovererAfterARestoreDropsTheOwnerRow(t *testing.T) {
 	storage := nakamastoragetest.New()
-	cfg, table := closedWitnessedGeneration(t, storage, "recoverer-1")
+	cfg, table := closedWitnessedGeneration(t, storage)
 	first, err := allocatoradmission.NewRecoveryOwner(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -525,23 +542,13 @@ func TestWitnessRefusesTheSecondRecovererAfterARestoreDropsTheOwnerRow(t *testin
 	if !errors.Is(err, allocatoradmission.ErrUnknown) || lost != (allocatoradmission.RecoveryReservation{}) {
 		t.Fatalf("second recoverer reserved: %v", err)
 	}
-	if _, found := storage.Get(allocatoradmission.RecoveryOwnerCollection, key, ""); !found {
-		t.Fatal("control: the second create never reached the witness")
+	if _, found := storage.Get(allocatoradmission.RecoveryOwnerCollection, key, ""); found {
+		t.Fatal("the refused recoverer wrote an owner row")
 	}
 	if got := witnessClient(t, table).CompareGeneration(context.Background(), toCustody(won)); got != custodywitness.Verified {
 		t.Fatalf("witness no longer names the first recoverer: %s", got)
 	}
-	var requests atomic.Int32
-	_, gen := generationFixture(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
-	commit := gen.Commit
-	commit.Enabled = true
-	recovery, err := NewRecovery(commit, lost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = recovery.Fence(context.Background()); err == nil || requests.Load() != 0 {
-		t.Fatalf("refused recoverer reached a target: %v after %d requests", err, requests.Load())
-	}
+	reachesNoTarget(t, lost)
 }
 
 // witnessedRecoveryPair closes a witnessed generation of two grants, reserves
@@ -550,15 +557,18 @@ func TestWitnessRefusesTheSecondRecovererAfterARestoreDropsTheOwnerRow(t *testin
 func witnessedRecoveryPair(t *testing.T) (*Recovery, allocatoradmission.RecoveryReservation, *nakamastoragetest.Fake, *witnessTable, *atomic.Int32) {
 	t.Helper()
 	var puts atomic.Int32
+	table := newWitnessTable()
 	api := generationAPI(t, "")
 	_, gen := generationFixture(t, func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPut {
 			puts.Add(1)
+			if table.onBarrier != nil {
+				table.onBarrier.Do(table.barrier)
+			}
 		}
 		api(w, req)
 	})
 	storage := nakamastoragetest.New()
-	table := newWitnessTable()
 	g, err := NewDurableGeneration(context.Background(), DurableGenerationConfig{
 		Enabled: true, Commit: gen.Commit, Record: gen.Record, IncarnationID: "incarnation-1", Storage: storage,
 		Witness: GenerationWitnessConfig{Enabled: true, Witness: clientWitness{witnessClient(t, table)}},
@@ -568,16 +578,7 @@ func witnessedRecoveryPair(t *testing.T) (*Recovery, allocatoradmission.Recovery
 	}
 	generationPrepare(t, g, "pod-a", "zone-a")
 	generationPrepare(t, g, "pod-b", "zone-b")
-	binding, version, err := g.CloseForRecovery(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, err := allocatoradmission.NewRecoveryOwner(allocatoradmission.RecoveryOwnerConfig{
-		Enabled: true, Storage: storage, Binding: binding, HandoffVersion: version, OwnerID: "recoverer-1",
-		Witness: allocatoradmission.RecoveryOwnerWitnessConfig{
-			Enabled: true, Witness: clientWitness{witnessClient(t, table)}, Handoff: g.state.durable.witness.acked,
-		},
-	})
+	owner, err := allocatoradmission.NewRecoveryOwner(closedOwnerConfig(t, g, storage, table))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +656,7 @@ func TestWitnessRefusalAtRecoveredReturnsNoAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			armWitness(t, table, before, WitnessRecovered, fault)
+			table.onBarrier, table.barrier = &sync.Once{}, func() { armWitness(t, table, before, WitnessRecovered, fault) }
 			complete, err := recovery.Fence(context.Background())
 			if fault == "lost-committed" {
 				if err != nil {
@@ -763,6 +764,20 @@ func reservationGeneration(t *testing.T, reservation allocatoradmission.Recovery
 	return generationRecord().GenerationID
 }
 
+// fencedPublisher fences a recovery and returns the publisher of its result.
+func fencedPublisher(t *testing.T, recovery *Recovery, storage *nakamastoragetest.Fake) (*RecoveryPublisher, RecoveryResult) {
+	t.Helper()
+	complete, err := recovery.Fence(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := NewRecoveryPublisher(PublicationConfig{Enabled: true, Storage: storage}, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return publisher, complete
+}
+
 // Neither result is accepted while its stage's witness write is still running.
 func TestWitnessedRecoveryAcceptsNothingBeforeItsStage(t *testing.T) {
 	recovery, _, storage, table, _ := witnessedRecoveryPair(t)
@@ -773,21 +788,14 @@ func TestWitnessedRecoveryAcceptsNothingBeforeItsStage(t *testing.T) {
 			t.Error("recovery accepted before the witness held recovered")
 		}
 	}
-	complete, err := recovery.Fence(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	publisher, err := NewRecoveryPublisher(PublicationConfig{Enabled: true, Storage: storage}, complete)
-	if err != nil {
-		t.Fatal(err)
-	}
+	publisher, _ := fencedPublisher(t, recovery, storage)
 	table.onPut = func() {
 		writes++
 		if publisher.state.accepted.Load() != nil {
 			t.Error("publication accepted before the witness held published")
 		}
 	}
-	if _, err = publisher.Publish(context.Background()); err != nil {
+	if _, err := publisher.Publish(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if writes != 2 {
@@ -806,4 +814,44 @@ func TestWitnessPublishedPinBindsTheAcknowledgedProof(t *testing.T) {
 			t.Fatalf("other %s pins the same proof: %v", name, err)
 		}
 	}
+}
+
+// setEvery replaces every stored row, as a corrupted or rolled-back table would.
+func (w *witnessTable) setEvery(value string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for key := range w.rows {
+		w.rows[key] = value
+	}
+}
+
+// reachesNoTarget fences a refused reservation against a counted API.
+func reachesNoTarget(t *testing.T, reservation allocatoradmission.RecoveryReservation) {
+	t.Helper()
+	var requests atomic.Int32
+	_, gen := generationFixture(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
+	commit := gen.Commit
+	commit.Enabled = true
+	recovery, err := NewRecovery(commit, reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = recovery.Fence(context.Background()); err == nil || requests.Load() != 0 {
+		t.Fatalf("refused recoverer reached a target: %v after %d requests", err, requests.Load())
+	}
+}
+
+// twoGrantGeneration returns a witnessed generation holding two witnessed grants.
+func twoGrantGeneration(t *testing.T, table *witnessTable) *Generation {
+	t.Helper()
+	g, err := witnessedGeneration(t, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"zone-a", "zone-b"} {
+		if _, err = g.Prepare(context.Background(), "pod-a", name, "attempt-"+name); err != nil {
+			t.Fatalf("witnessed registration %s: %v", name, err)
+		}
+	}
+	return g
 }

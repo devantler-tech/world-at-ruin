@@ -48,8 +48,10 @@ func NewRecovery(cfg Config, reservation allocatoradmission.RecoveryReservation)
 
 // Fence consumes the complete acknowledged inventory before any read and returns
 // authority only after every metadata barrier has its exact ACK and readback.
-// With a witness composed, it also waits for the witness to hold `recovered`; a
-// refusal returns no authority and, the inventory being spent, repeats no barrier.
+// With a witness composed, it first requires the witness and Nakama to agree on
+// the owner record, and any other verdict ends here with zero barrier I/O. It
+// also waits for the witness to hold `recovered`. Either refusal returns no
+// authority and, the inventory being spent, repeats no barrier.
 func (r *Recovery) Fence(ctx context.Context) (RecoveryResult, error) {
 	if r == nil || r.state == nil {
 		return RecoveryResult{}, ErrClosed
@@ -63,6 +65,9 @@ func (r *Recovery) Fence(ctx context.Context) (RecoveryResult, error) {
 	c := r.state.client
 	b := owner.Handoff.Journal.Binding
 	if ctx.Err() != nil || b.Namespace != c.namespace || b.Fleet != c.fleet {
+		return RecoveryResult{}, ErrUnknown
+	}
+	if r.state.reservation.VerifyWitness(ctx) != nil {
 		return RecoveryResult{}, ErrUnknown
 	}
 	got := RecoveryObservation{Owner: owner, Grants: make([]GenerationGrantObservation, 0, len(owner.Handoff.Journal.Grants))}

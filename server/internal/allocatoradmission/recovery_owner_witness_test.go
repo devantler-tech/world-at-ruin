@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/heroiclabs/nakama-common/api"
 )
 
 // fakeWitness records its calls and answers with err, after running during.
@@ -11,6 +13,17 @@ type fakeWitness struct {
 	previous, next []WitnessRecord
 	err            error
 	during         func()
+	verdict        string
+	compared       []WitnessRecord
+}
+
+// CompareGeneration answers verified unless told otherwise.
+func (f *fakeWitness) CompareGeneration(_ context.Context, expected WitnessRecord) string {
+	f.compared = append(f.compared, expected)
+	if f.verdict != "" {
+		return f.verdict
+	}
+	return WitnessVerified
 }
 
 func (f *fakeWitness) WriteGeneration(_ context.Context, previous, next WitnessRecord) error {
@@ -77,7 +90,7 @@ func TestReserveWithholdsTheReservationUntilTheWitnessAcknowledges(t *testing.T)
 // acknowledged version pins a different owner row.
 func TestWitnessOwnerPinBindsTheAcknowledgedRow(t *testing.T) {
 	_, cfg := recoveryFixture(t)
-	own, err := witnessOwnerPin(cfg, "v1")
+	own, err := WitnessOwnerPin(cfg, "v1")
 	if err != nil || own == "" {
 		t.Fatalf("own pin: %q, %v", own, err)
 	}
@@ -86,11 +99,11 @@ func TestWitnessOwnerPinBindsTheAcknowledgedRow(t *testing.T) {
 	otherHandoff.HandoffVersion += "-other"
 	otherDrain.Binding.Version += "-other"
 	for name, got := range map[string]RecoveryOwnerConfig{"owner": otherOwner, "handoff": otherHandoff, "drain": otherDrain} {
-		if pin, err := witnessOwnerPin(got, "v1"); err != nil || pin == own {
+		if pin, err := WitnessOwnerPin(got, "v1"); err != nil || pin == own {
 			t.Fatalf("other %s pins the same row: %v", name, err)
 		}
 	}
-	if pin, err := witnessOwnerPin(cfg, "v2"); err != nil || pin == own {
+	if pin, err := WitnessOwnerPin(cfg, "v2"); err != nil || pin == own {
 		t.Fatalf("other acknowledged version pins the same row: %v", err)
 	}
 }
@@ -281,4 +294,110 @@ func witnessedReservation(t *testing.T) (*fakeWitness, RecoveryReservation) {
 	cfg.Witness = RecoveryOwnerWitnessConfig{Enabled: true, Witness: witness, Handoff: witnessedHandoff(t, cfg)}
 	_, reservation := reservedOwner(t, cfg)
 	return witness, reservation
+}
+
+// Every answer but verified refuses before the owner row is written, including
+// one this package has never heard of.
+func TestReserveRefusesEveryOtherVerdictBeforeTheRow(t *testing.T) {
+	for _, verdict := range []string{"witness-ahead", "witness-behind", "absent", "conflicting", "table-replaced", "unavailable", "something-new"} {
+		t.Run(verdict, func(t *testing.T) {
+			storage, cfg := recoveryFixture(t)
+			witness := &fakeWitness{verdict: verdict}
+			cfg.Witness = RecoveryOwnerWitnessConfig{Enabled: true, Witness: witness, Handoff: witnessedHandoff(t, cfg)}
+			owner, err := NewRecoveryOwner(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writes := storage.writes
+			if _, err = owner.Reserve(context.Background()); !errors.Is(err, ErrUnknown) {
+				t.Fatalf("reserved on %s: %v", verdict, err)
+			}
+			if storage.writes != writes || len(witness.next) != 0 {
+				t.Fatalf("refusal wrote %d rows and %d witness records", storage.writes-writes, len(witness.next))
+			}
+			if len(witness.compared) != 1 || witness.compared[0] != cfg.Witness.Handoff {
+				t.Fatalf("compared %+v", witness.compared)
+			}
+		})
+	}
+}
+
+// The comparison before the barriers names the exact owner record and accepts
+// nothing but verified.
+func TestVerifyWitnessComparesTheOwnerRecord(t *testing.T) {
+	for _, verdict := range []string{"witness-ahead", "witness-behind", "absent", "conflicting", "table-replaced", "unavailable", "something-new"} {
+		t.Run(verdict, func(t *testing.T) {
+			witness, reservation := witnessedReservation(t)
+			witness.verdict = verdict
+			if err := reservation.VerifyWitness(context.Background()); !errors.Is(err, ErrUnknown) {
+				t.Fatalf("verified on %s: %v", verdict, err)
+			}
+		})
+	}
+	witness, reservation := witnessedReservation(t)
+	if err := reservation.VerifyWitness(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	own, err := reservation.Witnessed()
+	if err != nil || witness.compared[len(witness.compared)-1] != own {
+		t.Fatalf("compared %+v, own %+v: %v", witness.compared, own, err)
+	}
+	if err = reservation.AdvanceWitness(context.Background(), WitnessRecovered, "recovered-pin"); err != nil {
+		t.Fatal(err)
+	}
+	if err = reservation.VerifyWitness(context.Background()); !errors.Is(err, ErrUnknown) {
+		t.Fatalf("verified past the owner stage: %v", err)
+	}
+	if err = (RecoveryReservation{}).VerifyWitness(context.Background()); !errors.Is(err, ErrClosed) {
+		t.Fatalf("zero reservation: %v", err)
+	}
+}
+
+// With no witness composed there is nothing to compare and nothing to read.
+func TestVerifyWitnessWithoutAWitnessDoesNothing(t *testing.T) {
+	storage, cfg := recoveryFixture(t)
+	_, reservation := reservedOwner(t, cfg)
+	reads := storage.reads
+	if err := reservation.VerifyWitness(context.Background()); err != nil || storage.reads != reads {
+		t.Fatalf("no witness: %v after %d reads", err, storage.reads-reads)
+	}
+}
+
+// Nakama must still hold this reservation's exact owner row, whatever the witness
+// says: one a restore dropped or replaced refuses before the comparison.
+func TestVerifyWitnessRequiresTheExactOwnerRow(t *testing.T) {
+	for name, change := range map[string]func(*api.StorageObject) *api.StorageObject{
+		"dropped":            func(*api.StorageObject) *api.StorageObject { return nil },
+		"another version":    func(r *api.StorageObject) *api.StorageObject { r.Version = "owner-ack-2"; return r },
+		"foreign collection": func(r *api.StorageObject) *api.StorageObject { r.Collection = "foreign"; return r },
+		"foreign key":        func(r *api.StorageObject) *api.StorageObject { r.Key = "foreign"; return r },
+		"foreign user":       func(r *api.StorageObject) *api.StorageObject { r.UserId = "foreign"; return r },
+		"unreadable":         func(r *api.StorageObject) *api.StorageObject { r.Value = "{}"; return r },
+		"another owner": func(r *api.StorageObject) *api.StorageObject {
+			got, err := DecodeRecoveryOwner(r.GetValue())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got.OwnerID = "recoverer-other"
+			if r.Value, err = EncodeRecoveryOwner(got); err != nil {
+				t.Fatal(err)
+			}
+			return r
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			storage, cfg := recoveryFixture(t)
+			witness := &fakeWitness{}
+			cfg.Witness = RecoveryOwnerWitnessConfig{Enabled: true, Witness: witness, Handoff: witnessedHandoff(t, cfg)}
+			_, reservation := reservedOwner(t, cfg)
+			compared := len(witness.compared)
+			storage.row = change(storage.row)
+			if err := reservation.VerifyWitness(context.Background()); !errors.Is(err, ErrUnknown) {
+				t.Fatalf("verified: %v", err)
+			}
+			if len(witness.compared) != compared {
+				t.Fatal("compared a record Nakama no longer holds")
+			}
+		})
+	}
 }

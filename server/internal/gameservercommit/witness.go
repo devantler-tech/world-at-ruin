@@ -25,6 +25,10 @@ type WitnessRecord = allocatoradmission.WitnessRecord
 // admission package's declaration.
 type GenerationWitness = allocatoradmission.GenerationWitness
 
+// GenerationWitnessReader compares without writing; see the admission package's
+// declaration.
+type GenerationWitnessReader = allocatoradmission.GenerationWitnessReader
+
 // GenerationWitnessConfig opts the durable generation into persist-before-ACK
 // witnessing of its root registration, every grant registration, its drain
 // and its recovery handoff. Its zero value composes no witness; a
@@ -38,18 +42,22 @@ type GenerationWitnessConfig struct {
 // compose returns the opted-in witness, nil for the zero value, and false for
 // a half-configured value.
 func (c GenerationWitnessConfig) compose() (GenerationWitness, bool) {
-	// A typed nil is as missing as an untyped one.
-	missing := c.Witness == nil
-	if v := reflect.ValueOf(c.Witness); !missing && nilable[v.Kind()] {
-		missing = v.IsNil()
-	}
-	if c.Enabled == missing {
+	if c.Enabled == witnessMissing(c.Witness) {
 		return nil, false
 	}
 	if !c.Enabled {
 		return nil, true
 	}
 	return c.Witness, true
+}
+
+// witnessMissing also counts a typed nil as missing.
+func witnessMissing(witness any) bool {
+	if witness == nil {
+		return true
+	}
+	v := reflect.ValueOf(witness)
+	return nilable[v.Kind()] && v.IsNil()
 }
 
 // nilable lists the kinds whose values can be a typed nil.
@@ -125,6 +133,54 @@ func (w *generationWitness) write(ctx context.Context, next WitnessRecord) error
 	}
 	w.acked = next
 	return nil
+}
+
+// PublicationWitnessConfig opts a publication read into comparing the completed
+// chain. Published is the independently retained `published` record. Its zero value
+// composes no witness; anything else must be complete.
+type PublicationWitnessConfig struct {
+	Enabled   bool
+	Witness   GenerationWitnessReader
+	Published WitnessRecord
+}
+
+// verified reports a zero value, or a witness holding exactly the retained record
+// when the proof and owner just read re-derive every pin they acknowledged. The
+// registration pin's binding is no longer known here, so it is only compared.
+func (c PublicationWitnessConfig) verified(ctx context.Context, got RecoveryObservation, version string) bool {
+	if !c.Enabled {
+		return witnessMissing(c.Witness) && c.Published == (WitnessRecord{})
+	}
+	if witnessMissing(c.Witness) {
+		return false
+	}
+	binding := got.Owner.Handoff.Journal.Binding
+	drain, err := allocatoradmission.WitnessStagePin(WitnessDrained, binding)
+	if err != nil {
+		return false
+	}
+	handoff, err := allocatoradmission.WitnessHandoffPin(binding, got.Owner.HandoffVersion)
+	if err != nil {
+		return false
+	}
+	owner, err := allocatoradmission.WitnessOwnerPin(allocatoradmission.RecoveryOwnerConfig{Binding: binding, HandoffVersion: got.Owner.HandoffVersion, OwnerID: got.Owner.OwnerID}, got.Owner.Version)
+	if err != nil {
+		return false
+	}
+	recovered, err := witnessRecoveredPin(got)
+	if err != nil {
+		return false
+	}
+	published, err := witnessPublishedPin(binding.GenerationID, version)
+	if err != nil {
+		return false
+	}
+	expected := WitnessRecord{
+		GenerationKey: allocatoradmission.Key(binding.GenerationID), Stage: WitnessPublished, GrantCount: binding.IssuedCount,
+		IssuedDigest: binding.IssuedDigest, RegistrationPin: c.Published.RegistrationPin, DrainPin: drain, HandoffPin: handoff,
+		OwnerPin: owner, RecoveredPin: recovered, PublishedPin: published,
+	}
+	return expected == c.Published && c.Witness.CompareGeneration(ctx, expected) == allocatoradmission.WitnessVerified
 }
 
 // witnessRecoveredPin digests every barrier's acknowledgement in the owner's
