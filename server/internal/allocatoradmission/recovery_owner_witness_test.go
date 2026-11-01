@@ -129,18 +129,11 @@ func TestReserveReturnsNothingWhenTheWitnessRefuses(t *testing.T) {
 // With no witness the row alone reserves, as before, and no record exists.
 func TestRecoveryOwnerWithoutAWitnessHoldsNoRecord(t *testing.T) {
 	_, cfg := recoveryFixture(t)
-	owner, err := NewRecoveryOwner(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reservation, err := owner.Reserve(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
+	owner, reservation := reservedOwner(t, cfg)
+	if _, err := reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("witness record without a witness: %v", err)
 	}
-	if _, err = owner.Accept(reservation); err != nil {
+	if _, err := owner.Accept(reservation); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -190,6 +183,17 @@ func TestRecoveryOwnerRefusesAnInexactWitnessConfiguration(t *testing.T) {
 func TestWitnessedOwnerRequiresTheLiveAcceptance(t *testing.T) {
 	_, cfg := recoveryFixture(t)
 	cfg.Witness = RecoveryOwnerWitnessConfig{Enabled: true, Witness: &fakeWitness{}, Handoff: witnessedHandoff(t, cfg)}
+	_, reservation := reservedOwner(t, cfg)
+	copied := *reservation.observation
+	reservation.observation = &copied
+	if _, err := reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("record returned without the live acceptance: %v", err)
+	}
+}
+
+// reservedOwner returns a recovery owner and its reservation.
+func reservedOwner(t *testing.T, cfg RecoveryOwnerConfig) (*RecoveryOwner, RecoveryReservation) {
+	t.Helper()
 	owner, err := NewRecoveryOwner(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -198,9 +202,5 @@ func TestWitnessedOwnerRequiresTheLiveAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copied := *reservation.observation
-	reservation.observation = &copied
-	if _, err = reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
-		t.Fatalf("record returned without the live acceptance: %v", err)
-	}
+	return owner, reservation
 }
