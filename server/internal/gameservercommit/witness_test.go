@@ -25,6 +25,8 @@ type witnessTable struct {
 	rows  map[string]string
 	puts  int
 	fault string
+	// onPut runs before each write, to observe what a writer has released by then.
+	onPut func()
 }
 
 func (w *witnessTable) Identity(context.Context) (custodywitness.TableIdentity, error) {
@@ -47,6 +49,9 @@ func (w *witnessTable) Get(_ context.Context, key string) (string, bool, error) 
 }
 
 func (w *witnessTable) Put(_ context.Context, key, expected, value string) error {
+	if w.onPut != nil {
+		w.onPut()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.puts++
@@ -274,14 +279,15 @@ func toCustody(r WitnessRecord) custodywitness.GenerationRecord {
 	return custodywitness.GenerationRecord{
 		GenerationKey: r.GenerationKey, Stage: custodywitness.GenerationStage(r.Stage), GrantCount: r.GrantCount,
 		IssuedDigest: r.IssuedDigest, RegistrationPin: r.RegistrationPin, DrainPin: r.DrainPin, HandoffPin: r.HandoffPin,
-		OwnerPin: r.OwnerPin,
+		OwnerPin: r.OwnerPin, RecoveredPin: r.RecoveredPin, PublishedPin: r.PublishedPin,
 	}
 }
 
 // The local stage names are the witness family's own.
 func TestWitnessStagesAreTheGenerationFamilyStages(t *testing.T) {
 	if WitnessRegistered != string(custodywitness.GenerationRegistered) || WitnessDrained != string(custodywitness.GenerationDrained) ||
-		WitnessHandoff != string(custodywitness.GenerationHandoff) || allocatoradmission.WitnessOwner != string(custodywitness.GenerationOwner) {
+		WitnessHandoff != string(custodywitness.GenerationHandoff) || allocatoradmission.WitnessOwner != string(custodywitness.GenerationOwner) ||
+		WitnessRecovered != string(custodywitness.GenerationRecovered) || WitnessPublished != string(custodywitness.GenerationPublished) {
 		t.Fatal("local witness stage names drifted from the generation family")
 	}
 }
@@ -365,9 +371,14 @@ func (f *faultAfter) WriteGeneration(ctx context.Context, previous, next Witness
 	}
 	if f.fault == "conflicting" {
 		rival := next
-		if next.Stage == allocatoradmission.WitnessOwner {
+		switch next.Stage {
+		case allocatoradmission.WitnessOwner:
 			rival.OwnerPin = next.RegistrationPin
-		} else {
+		case WitnessRecovered:
+			rival.RecoveredPin = next.RegistrationPin
+		case WitnessPublished:
+			rival.PublishedPin = next.RegistrationPin
+		default:
 			rival.HandoffPin = next.RegistrationPin
 		}
 		if err := f.next.WriteGeneration(ctx, previous, rival); err != nil {
@@ -431,7 +442,7 @@ func TestWitnessedOwnerChainMatchesTheRecoverersRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("witnessed owner refused: %v", err)
 	}
-	own, err := reservation.WitnessedOwner()
+	own, err := reservation.Witnessed()
 	if err != nil || own.Stage != allocatoradmission.WitnessOwner || own.OwnerPin == "" || own.OwnerPin == own.HandoffPin || table.puts != puts+1 {
 		t.Fatalf("witnessed owner record: %+v after %d writes: %v", own, table.puts-puts, err)
 	}
@@ -459,7 +470,7 @@ func TestWitnessRefusalAtOwnerReturnsNoReservation(t *testing.T) {
 			}
 			reservation, err := owner.Reserve(context.Background())
 			if fault == "lost-committed" {
-				if own, witnessed := reservation.WitnessedOwner(); err != nil || witnessed != nil || own.Stage != allocatoradmission.WitnessOwner {
+				if own, witnessed := reservation.Witnessed(); err != nil || witnessed != nil || own.Stage != allocatoradmission.WitnessOwner {
 					t.Fatalf("committed owner with a lost reply refused: %v, %v", err, witnessed)
 				}
 				return
@@ -494,7 +505,7 @@ func TestWitnessRefusesTheSecondRecovererAfterARestoreDropsTheOwnerRow(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	won, err := reservation.WitnessedOwner()
+	won, err := reservation.Witnessed()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,5 +541,269 @@ func TestWitnessRefusesTheSecondRecovererAfterARestoreDropsTheOwnerRow(t *testin
 	}
 	if _, err = recovery.Fence(context.Background()); err == nil || requests.Load() != 0 {
 		t.Fatalf("refused recoverer reached a target: %v after %d requests", err, requests.Load())
+	}
+}
+
+// witnessedRecoveryPair closes a witnessed generation of two grants, reserves
+// its witnessed owner and returns the recovery that follows it. Each target
+// request counts toward puts.
+func witnessedRecoveryPair(t *testing.T) (*Recovery, allocatoradmission.RecoveryReservation, *nakamastoragetest.Fake, *witnessTable, *atomic.Int32) {
+	t.Helper()
+	var puts atomic.Int32
+	api := generationAPI(t, "")
+	_, gen := generationFixture(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			puts.Add(1)
+		}
+		api(w, req)
+	})
+	storage := nakamastoragetest.New()
+	table := newWitnessTable()
+	g, err := NewDurableGeneration(context.Background(), DurableGenerationConfig{
+		Enabled: true, Commit: gen.Commit, Record: gen.Record, IncarnationID: "incarnation-1", Storage: storage,
+		Witness: GenerationWitnessConfig{Enabled: true, Witness: clientWitness{witnessClient(t, table)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationPrepare(t, g, "pod-a", "zone-a")
+	generationPrepare(t, g, "pod-b", "zone-b")
+	binding, version, err := g.CloseForRecovery(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := allocatoradmission.NewRecoveryOwner(allocatoradmission.RecoveryOwnerConfig{
+		Enabled: true, Storage: storage, Binding: binding, HandoffVersion: version, OwnerID: "recoverer-1",
+		Witness: allocatoradmission.RecoveryOwnerWitnessConfig{
+			Enabled: true, Witness: clientWitness{witnessClient(t, table)}, Handoff: g.state.durable.witness.acked,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := owner.Reserve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := gen.Commit
+	commit.Enabled = true
+	recovery, err := NewRecovery(commit, reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	puts.Store(0)
+	return recovery, reservation, storage, table, &puts
+}
+
+// armWitness applies one witness fault to the table's next write. A conflict is
+// a rival recoverer's valid record at the same stage, stored first.
+func armWitness(t *testing.T, table *witnessTable, previous allocatoradmission.WitnessRecord, stage, fault string) {
+	t.Helper()
+	if fault != "conflicting" {
+		table.arm(fault)
+		return
+	}
+	rival := previous
+	rival.Stage = stage
+	if stage == WitnessRecovered {
+		rival.RecoveredPin = previous.RegistrationPin
+	} else {
+		rival.PublishedPin = previous.RegistrationPin
+	}
+	if _, err := witnessClient(t, table).WriteGeneration(context.Background(), toCustody(previous), toCustody(rival)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The full chain ends at exactly the recoverer's own record, one conditional
+// write per stage, and each result waits for its stage.
+func TestWitnessedRecoveryChainEndsAtTheRecoverersRecord(t *testing.T) {
+	recovery, reservation, storage, table, puts := witnessedRecoveryPair(t)
+	writes := table.puts
+	complete, err := recovery.Fence(context.Background())
+	if err != nil {
+		t.Fatalf("witnessed recovery refused: %v", err)
+	}
+	own, err := reservation.Witnessed()
+	if err != nil || own.Stage != WitnessRecovered || own.RecoveredPin == "" || table.puts != writes+1 || puts.Load() != 2 {
+		t.Fatalf("recovered record: %+v, %d witness writes, %d barriers: %v", own, table.puts-writes, puts.Load(), err)
+	}
+	publisher, err := NewRecoveryPublisher(PublicationConfig{Enabled: true, Storage: storage}, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = publisher.Publish(context.Background()); err != nil {
+		t.Fatalf("witnessed publication refused: %v", err)
+	}
+	own, err = reservation.Witnessed()
+	if err != nil || own.Stage != WitnessPublished || own.PublishedPin == "" || own.PublishedPin == own.RecoveredPin || table.puts != writes+2 {
+		t.Fatalf("published record: %+v: %v", own, err)
+	}
+	client := witnessClient(t, table)
+	if got := client.CompareGeneration(context.Background(), toCustody(own)); got != custodywitness.Verified {
+		t.Fatalf("witness disagrees with the recoverer's record: %s", got)
+	}
+}
+
+// A refused witness returns no recovery authority and repeats no barrier; a
+// lost reply the exact re-read finds is acknowledged.
+func TestWitnessRefusalAtRecoveredReturnsNoAuthority(t *testing.T) {
+	for _, fault := range []string{"rejected", "conflicting", "unavailable", "lost-uncommitted", "lost-unreadable", "lost-committed"} {
+		t.Run(fault, func(t *testing.T) {
+			recovery, reservation, storage, table, puts := witnessedRecoveryPair(t)
+			before, err := reservation.Witnessed()
+			if err != nil {
+				t.Fatal(err)
+			}
+			armWitness(t, table, before, WitnessRecovered, fault)
+			complete, err := recovery.Fence(context.Background())
+			if fault == "lost-committed" {
+				if err != nil {
+					t.Fatalf("committed stage with a lost reply refused: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnknown) || complete != (RecoveryResult{}) {
+				t.Fatalf("unwitnessed recovery returned: %v", err)
+			}
+			if got, _ := reservation.Witnessed(); got != before {
+				t.Fatalf("refused stage moved the record: %+v", got)
+			}
+			barriers := puts.Load()
+			if _, err = recovery.Fence(context.Background()); !errors.Is(err, ErrClosed) || puts.Load() != barriers {
+				t.Fatalf("refused recovery repeated barriers: %v after %d", err, puts.Load())
+			}
+			if _, err = NewRecoveryPublisher(PublicationConfig{Enabled: true, Storage: storage}, complete); err == nil {
+				t.Fatal("publisher formed from a refused recovery")
+			}
+		})
+	}
+}
+
+// A refused witness returns no publication result; the proof row stays behind
+// unwitnessed, and the attempt is spent.
+func TestWitnessRefusalAtPublishedReturnsNoResult(t *testing.T) {
+	for _, fault := range []string{"rejected", "conflicting", "unavailable", "lost-uncommitted", "lost-unreadable", "lost-committed"} {
+		t.Run(fault, func(t *testing.T) {
+			recovery, reservation, storage, table, _ := witnessedRecoveryPair(t)
+			complete, err := recovery.Fence(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := reservation.Witnessed()
+			if err != nil {
+				t.Fatal(err)
+			}
+			publisher, err := NewRecoveryPublisher(PublicationConfig{Enabled: true, Storage: storage}, complete)
+			if err != nil {
+				t.Fatal(err)
+			}
+			armWitness(t, table, before, WitnessPublished, fault)
+			result, err := publisher.Publish(context.Background())
+			if fault == "lost-committed" {
+				if err != nil {
+					t.Fatalf("committed stage with a lost reply refused: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnknown) || result != (PublicationResult{}) {
+				t.Fatalf("unwitnessed publication returned: %v", err)
+			}
+			if got, _ := reservation.Witnessed(); got != before {
+				t.Fatalf("refused stage moved the record: %+v", got)
+			}
+			if _, err = publisher.Accept(result); !errors.Is(err, ErrClosed) {
+				t.Fatalf("unwitnessed publication accepted: %v", err)
+			}
+			if _, err = publisher.Publish(context.Background()); !errors.Is(err, ErrClosed) {
+				t.Fatalf("spent publication retried: %v", err)
+			}
+			key := RecoveryProofKey(reservationGeneration(t, reservation))
+			if _, found := storage.Get(RecoveryProofCollection, key, ""); !found {
+				t.Fatal("control: the proof row was never written")
+			}
+		})
+	}
+}
+
+// The recovered pin binds every barrier acknowledgement and the owner row.
+func TestWitnessRecoveredPinBindsEveryBarrier(t *testing.T) {
+	got := RecoveryObservation{Grants: []GenerationGrantObservation{
+		{ActorUID: "a", AttemptID: "1", Observation: Observation{Name: "zone-a", BarrierVersion: "v1"}},
+		{ActorUID: "b", AttemptID: "2", Observation: Observation{Name: "zone-b", BarrierVersion: "v2"}},
+	}}
+	own, err := witnessRecoveredPin(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := got
+	owner.Owner.Version = "other"
+	barrier := got
+	barrier.Grants = []GenerationGrantObservation{got.Grants[0], got.Grants[1]}
+	barrier.Grants[1].BarrierVersion = "other"
+	missing := got
+	missing.Grants = got.Grants[:1]
+	for name, other := range map[string]RecoveryObservation{"owner": owner, "barrier": barrier, "missing grant": missing} {
+		if pin, err := witnessRecoveredPin(other); err != nil || pin == own {
+			t.Fatalf("%s pins the same recovery: %v", name, err)
+		}
+	}
+}
+
+// reservationGeneration reads the generation a live reservation recovers.
+func reservationGeneration(t *testing.T, reservation allocatoradmission.RecoveryReservation) string {
+	t.Helper()
+	own, err := reservation.Witnessed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.GenerationKey != allocatoradmission.Key(generationRecord().GenerationID) {
+		t.Fatal("reservation of another generation")
+	}
+	return generationRecord().GenerationID
+}
+
+// Neither result is accepted while its stage's witness write is still running.
+func TestWitnessedRecoveryAcceptsNothingBeforeItsStage(t *testing.T) {
+	recovery, _, storage, table, _ := witnessedRecoveryPair(t)
+	writes := 0
+	table.onPut = func() {
+		writes++
+		if recovery.state.accepted.Load() != nil {
+			t.Error("recovery accepted before the witness held recovered")
+		}
+	}
+	complete, err := recovery.Fence(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := NewRecoveryPublisher(PublicationConfig{Enabled: true, Storage: storage}, complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table.onPut = func() {
+		writes++
+		if publisher.state.accepted.Load() != nil {
+			t.Error("publication accepted before the witness held published")
+		}
+	}
+	if _, err = publisher.Publish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 2 {
+		t.Fatalf("observed %d witness writes", writes)
+	}
+}
+
+// The published pin binds the proof's key and acknowledged version.
+func TestWitnessPublishedPinBindsTheAcknowledgedProof(t *testing.T) {
+	own, err := witnessPublishedPin("generation-a", "v1")
+	if err != nil || own == "" {
+		t.Fatalf("own pin: %q, %v", own, err)
+	}
+	for name, other := range map[string][2]string{"generation": {"generation-b", "v1"}, "version": {"generation-a", "v2"}} {
+		if pin, err := witnessPublishedPin(other[0], other[1]); err != nil || pin == own {
+			t.Fatalf("other %s pins the same proof: %v", name, err)
+		}
 	}
 }

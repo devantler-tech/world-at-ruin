@@ -14,6 +14,8 @@ const (
 	WitnessRegistered = allocatoradmission.WitnessRegistered
 	WitnessDrained    = allocatoradmission.WitnessDrained
 	WitnessHandoff    = allocatoradmission.WitnessHandoff
+	WitnessRecovered  = allocatoradmission.WitnessRecovered
+	WitnessPublished  = allocatoradmission.WitnessPublished
 )
 
 // WitnessRecord is one allocator generation's witness record.
@@ -123,4 +125,28 @@ func (w *generationWitness) write(ctx context.Context, next WitnessRecord) error
 	}
 	w.acked = next
 	return nil
+}
+
+// witnessRecoveredPin digests every barrier's acknowledgement in the owner's
+// inventory order, under the owner row that authorized them.
+func witnessRecoveredPin(got RecoveryObservation) (string, error) {
+	generationID := got.Owner.Handoff.Journal.Binding.GenerationID
+	grants := make([]recoveryProofGrant, len(got.Grants))
+	for i, g := range got.Grants {
+		grants[i] = recoveryProofGrant{g.ActorUID, g.AttemptID, g.Namespace, g.Name, g.UID, g.SourceVersion, g.BarrierVersion, g.Outcome}
+	}
+	pin, err := allocatoradmission.WitnessPin(WitnessRecovered, allocatoradmission.RecoveryOwnerKey(generationID), got.Owner.Version, grants)
+	if err != nil {
+		return "", ErrUnknown
+	}
+	return pin, nil
+}
+
+// witnessPublishedPin digests the private proof create's acknowledgement.
+func witnessPublishedPin(generationID, version string) (string, error) {
+	pin, err := allocatoradmission.WitnessPin(WitnessPublished, RecoveryProofCollection, RecoveryProofKey(generationID), version)
+	if err != nil {
+		return "", ErrUnknown
+	}
+	return pin, nil
 }

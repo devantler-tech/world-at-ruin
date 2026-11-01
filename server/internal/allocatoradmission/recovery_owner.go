@@ -42,6 +42,7 @@ type recoveryOwnerState struct {
 	attempted        atomic.Bool
 	accepted         atomic.Pointer[RecoveryOwnerObservation]
 	recoveryConsumed atomic.Bool
+	witnessed        atomic.Pointer[WitnessRecord]
 }
 
 // RecoveryReservation requires the originating live process's complete ACK.
@@ -49,7 +50,6 @@ type recoveryOwnerState struct {
 type RecoveryReservation struct {
 	owner       *recoveryOwnerState
 	observation *RecoveryOwnerObservation
-	witnessed   WitnessRecord
 }
 
 type RecoveryOwnerObservation struct {
@@ -105,20 +105,20 @@ func (o *RecoveryOwner) Reserve(ctx context.Context) (RecoveryReservation, error
 		return RecoveryReservation{}, unknown(ctx, err)
 	}
 	got.Version = acks[0].GetVersion()
-	var witnessed WitnessRecord
 	if cfg.Witness.Enabled {
 		pin, err := witnessOwnerPin(cfg, got.Version)
 		if err != nil {
 			return RecoveryReservation{}, unknown(ctx, err)
 		}
-		witnessed = cfg.Witness.Handoff
+		witnessed := cfg.Witness.Handoff
 		witnessed.Stage, witnessed.OwnerPin = WitnessOwner, pin
 		if err = cfg.Witness.Witness.WriteGeneration(ctx, cfg.Witness.Handoff, witnessed); err != nil {
 			return RecoveryReservation{}, unknown(ctx, err)
 		}
+		o.state.witnessed.Store(&witnessed)
 	}
 	o.state.accepted.Store(&got)
-	return RecoveryReservation{owner: o.state, observation: &got, witnessed: witnessed}, nil
+	return RecoveryReservation{owner: o.state, observation: &got}, nil
 }
 
 // Accept returns detached diagnostics only from this live owner's exact ACK.
@@ -139,13 +139,52 @@ func (r RecoveryReservation) Consume() (RecoveryOwnerObservation, error) {
 	return cloneRecoveryObservation(r.observation), nil
 }
 
-// WitnessedOwner returns the `owner` record the witness acknowledged for this
-// live reservation. A reservation without a witness holds none.
-func (r RecoveryReservation) WitnessedOwner() (WitnessRecord, error) {
-	if r.owner == nil || r.observation == nil || r.owner.accepted.Load() != r.observation || r.witnessed.Stage != WitnessOwner {
+// Witnessed returns the last record the witness acknowledged for this live
+// reservation. A reservation without a witness holds none.
+func (r RecoveryReservation) Witnessed() (WitnessRecord, error) {
+	if r.owner == nil || r.observation == nil || r.owner.accepted.Load() != r.observation {
 		return WitnessRecord{}, ErrClosed
 	}
-	return r.witnessed, nil
+	current := r.owner.witnessed.Load()
+	if current == nil {
+		return WitnessRecord{}, ErrClosed
+	}
+	return *current, nil
+}
+
+// AdvanceWitness witnesses the recovery's next stage, conditional on the exact
+// retained record: recovered follows owner and published follows recovered.
+// Only an acknowledged write moves the retained record. With no witness
+// composed it does nothing, so a recovery runs as it does without one.
+func (r RecoveryReservation) AdvanceWitness(ctx context.Context, stage, pin string) error {
+	if r.owner == nil || r.observation == nil || r.owner.accepted.Load() != r.observation {
+		return ErrClosed
+	}
+	witness := r.owner.cfg.Witness
+	if !witness.Enabled {
+		return nil
+	}
+	current := r.owner.witnessed.Load()
+	if current == nil || pin == "" {
+		return ErrClosed
+	}
+	next := *current
+	switch {
+	case stage == WitnessRecovered && current.Stage == WitnessOwner:
+		next.RecoveredPin = pin
+	case stage == WitnessPublished && current.Stage == WitnessRecovered:
+		next.PublishedPin = pin
+	default:
+		return ErrClosed
+	}
+	next.Stage = stage
+	if err := witness.Witness.WriteGeneration(ctx, *current, next); err != nil {
+		return unknown(ctx, err)
+	}
+	if !r.owner.witnessed.CompareAndSwap(current, &next) {
+		return ErrClosed
+	}
+	return nil
 }
 
 func cloneRecoveryObservation(observation *RecoveryOwnerObservation) RecoveryOwnerObservation {

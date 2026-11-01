@@ -48,6 +48,8 @@ func NewRecovery(cfg Config, reservation allocatoradmission.RecoveryReservation)
 
 // Fence consumes the complete acknowledged inventory before any read and returns
 // authority only after every metadata barrier has its exact ACK and readback.
+// With a witness composed, it also waits for the witness to hold `recovered`; a
+// refusal returns no authority and, the inventory being spent, repeats no barrier.
 func (r *Recovery) Fence(ctx context.Context) (RecoveryResult, error) {
 	if r == nil || r.state == nil {
 		return RecoveryResult{}, ErrClosed
@@ -72,6 +74,10 @@ func (r *Recovery) Fence(ctx context.Context) (RecoveryResult, error) {
 		got.Grants = append(got.Grants, GenerationGrantObservation{ActorUID: original.ActorUID, AttemptID: original.AttemptID, Observation: observation})
 	}
 	if ctx.Err() != nil {
+		return RecoveryResult{}, ErrUnknown
+	}
+	pin, err := witnessRecoveredPin(got)
+	if err != nil || r.state.reservation.AdvanceWitness(ctx, WitnessRecovered, pin) != nil {
 		return RecoveryResult{}, ErrUnknown
 	}
 	r.state.accepted.Store(&got)
