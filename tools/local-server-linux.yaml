@@ -1,0 +1,40 @@
+# Optional Apple Silicon development VM. No host directories or credentials are shared.
+# Keep the Go archive and checksum aligned with server/go.mod.
+minimumLimaVersion: 2.2.1
+vmType: vz
+arch: aarch64
+cpus: 2
+memory: 4GiB
+disk: 16GiB
+plain: true
+images:
+  - location: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-arm64.img
+    arch: aarch64
+    digest: sha256:63a93bd5a8d76e33b15ceb5daa3657bd79be804748051ab178e643b0f5da22e7
+mounts: []
+containerd:
+  system: false
+  user: false
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  overVsock: true
+propagateProxyEnv: false
+param:
+  internal_netplanOptional: "true"
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev git
+      archive=$(mktemp /tmp/go-linux.XXXXXXXX.tar.gz)
+      trap 'rm -f "$archive"' EXIT
+      curl --fail --location --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 \
+        --output "$archive" https://go.dev/dl/go1.27.3.linux-arm64.tar.gz
+      printf '%s  %s\n' a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 "$archive" | sha256sum --check --strict
+      tar -C /usr/local -xzf "$archive"
+      /usr/local/go/bin/go version
