@@ -1,8 +1,6 @@
 package sim
 
 import (
-	"encoding/binary"
-	"hash/fnv"
 	"slices"
 	"testing"
 )
@@ -51,6 +49,26 @@ func TestStandStillTargetIsCaught(t *testing.T) {
 	}
 	if !slices.Equal(h.Targets, []EntityID{1}) {
 		t.Fatalf("a target that never moved must be caught, got targets %v", h.Targets)
+	}
+}
+
+// TestMobPaintsOnlyAPositiveRadius pins the extent rule (ADR 0059, #1451). The
+// client draws only a circle with a positive radius, and a zero radius still
+// catches the exact centre here, so a mob without a positive radius never starts
+// a cast: the server never resolves a warning the client cannot paint, and never
+// sends a cast that catches nothing. The 1 mm control proves the same mob casts
+// as soon as its radius can be drawn.
+func TestMobPaintsOnlyAPositiveRadius(t *testing.T) {
+	for _, tc := range []struct {
+		radius int64
+		paints bool
+	}{{-1, false}, {0, false}, {1, true}} {
+		w := newCombatWorld(MobParams{AggroRadiusMM: 10_000, CastTicks: 2, CircleRadiusMM: tc.radius})
+		w.Add(Entity{ID: 1, Pos: Vec3{X: 1_000}})
+		steps(w, 6)
+		if painted := len(w.DrainHits()) > 0; painted != tc.paints {
+			t.Errorf("radius %d: mob resolved a cast = %v, want %v", tc.radius, painted, tc.paints)
+		}
 	}
 }
 
@@ -552,10 +570,11 @@ func TestMobChaseReachesZeroRangeWithoutTruncating(t *testing.T) {
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 31}})
 	w.AddMob(100, MobParams{
-		AggroRadiusMM: 1_000,
-		CastRangeMM:   0,
-		ChaseSpeedMM:  3_000,
-		CastTicks:     2,
+		AggroRadiusMM:  1_000,
+		CastRangeMM:    0,
+		CircleRadiusMM: 1_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      2,
 	})
 
 	steps(w, 100)
@@ -572,10 +591,11 @@ func TestMobChaseCastsAtCapsuleContact(t *testing.T) {
 	w.Add(Entity{ID: 100, MaxSpeed: 3_000, Radius: 300})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 2_000}, Radius: 300})
 	w.AddMob(100, MobParams{
-		AggroRadiusMM: 10_000,
-		CastRangeMM:   0,
-		ChaseSpeedMM:  3_000,
-		CastTicks:     2,
+		AggroRadiusMM:  10_000,
+		CastRangeMM:    0,
+		CircleRadiusMM: 1_000,
+		ChaseSpeedMM:   3_000,
+		CastTicks:      2,
 	})
 
 	for range 100 {
@@ -592,10 +612,11 @@ func TestMobChaseLowSpeedDiagonalStillAdvances(t *testing.T) {
 	w.Add(Entity{ID: 100, MaxSpeed: TickHz})
 	w.Add(Entity{ID: 1, Pos: Vec3{X: 40, Z: 40}})
 	w.AddMob(100, MobParams{
-		AggroRadiusMM: 1_000,
-		CastRangeMM:   0,
-		ChaseSpeedMM:  1,
-		CastTicks:     2,
+		AggroRadiusMM:  1_000,
+		CastRangeMM:    0,
+		CircleRadiusMM: 1_000,
+		ChaseSpeedMM:   1,
+		CastTicks:      2,
 	})
 
 	startDist2 := horizontalDist2(w.Get(100).Pos, w.Get(1).Pos)
@@ -713,12 +734,7 @@ func runCombatGolden(n int) (digest uint64, caught, empty int) {
 	w.Add(Entity{ID: 2, Pos: Vec3{X: 6_000, Z: 6_000}, MaxSpeed: 3_500, Radius: 300})
 	w.AddMob(9, MobParams{AggroRadiusMM: 15_000, CastTicks: 30, CooldownTicks: 45, CircleRadiusMM: 2_500})
 
-	h := fnv.New64a()
-	var buf [8]byte
-	put := func(v uint64) {
-		binary.LittleEndian.PutUint64(buf[:], v)
-		_, _ = h.Write(buf[:])
-	}
+	h, put := newDemoHashWriter()
 
 	// Walker 1 orbits a square (60 ticks per leg); walker 2 alternates 45
 	// ticks of walking toward the mob with 45 ticks of standing still — the

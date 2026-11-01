@@ -47,7 +47,7 @@ for selection in detached invalid; do
   [ ! -s "$state/bad" ] && [ ! -s "$state/trace" ]
 done
 export IMAGE_JSON="$state/image.json" INVENTORY_FIXTURE="$state/inventory.tsv"
-export GODOT_VERSION=4.7.1 GODOT_SHA512
+export GODOT_VERSION=4.7.2 GODOT_SHA512
 GODOT_SHA512="$(printf '%0128d' 1)"
 printf '[{"Id":"sha256:%064d","Os":"linux","Architecture":"amd64","Config":{"User":"1001:1001","WorkingDir":"/project","Entrypoint":["/usr/local/bin/godot"]}}]\n' 1 > "$IMAGE_JSON"
 {

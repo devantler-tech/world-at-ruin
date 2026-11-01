@@ -54,12 +54,50 @@ func _ready() -> void:
 			_fail("%s: cast factory refuses the canonical cone the server resolves" % case_name)
 	if valid == 0 or invalid == 0:
 		_fail("vectors hold %d valid and %d invalid inputs; both classes are required" % [valid, invalid])
+	var extent_cases: Array = fixture.get("extent_cases", [])
+	_check_extents(extent_cases)
 
 	if _failed:
 		get_tree().quit(1)
 		return
-	print("TEST PASS — cone inputs: wire codec and cast factory agree with the server's boundary (%d vectors)" % cases.size())
+	print("TEST PASS — cone inputs and extents: wire codec and cast factory agree with the server's boundary (%d + %d vectors)"
+		% [cases.size(), extent_cases.size()])
 	get_tree().quit(0)
+
+
+## Extents (#1451): the wire codec accepts, and the cast factory builds, a
+## circle radius or a cone range exactly when the shared vectors say the
+## server's wire boundary accepts it. Both kinds must carry a valid and an
+## invalid case, so the check cannot pass on one class alone.
+func _check_extents(extent_cases: Array) -> void:
+	var classes := {}
+	for entry: Dictionary in extent_cases:
+		var case_name := String(entry["name"])
+		var kind := String(entry["kind"])
+		var outer := int(entry["outer_mm"])
+		var expected := bool(entry["wire_valid"])
+		classes["%s/%s" % [kind, expected]] = true
+		var cast := _cast({"x": 0, "y": 0, "z": -1000}, 707107, outer)
+		var built: TelegraphCast = null
+		match kind:
+			"circle":
+				cast["kind"] = WireCodec.SHAPE_CIRCLE
+				cast["facing_z"] = 0
+				cast["cos_half"] = 0
+				built = TelegraphCast.circle(Vector3.ZERO, outer / 1000.0, CAST_TIME)
+			"cone":
+				built = TelegraphCast.cone(Vector3.ZERO, Vector3(0, 0, -1), outer / 1000.0, 707107, CAST_TIME)
+			_:
+				_fail("%s: unknown extent kind %s" % [case_name, kind])
+				continue
+		var codec_accepts := WireCodec._validate_cast_shape(cast).is_empty()
+		if codec_accepts != expected:
+			_fail("%s: wire codec accepts %s extent %d = %s, want %s" % [case_name, kind, outer, codec_accepts, expected])
+		if (built != null) != expected:
+			_fail("%s: cast factory builds %s extent %d = %s, want %s" % [case_name, kind, outer, built != null, expected])
+	for required: String in ["circle/true", "circle/false", "cone/true", "cone/false"]:
+		if not classes.has(required):
+			_fail("extent vectors have no %s case" % required)
 
 
 func _load_fixture() -> Dictionary:

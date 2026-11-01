@@ -81,7 +81,7 @@ if ! jq -e '
   and .name == "Propose trusted runtime archives"
   and .on == {workflow_dispatch:{inputs:{confirmation:{description:"Type PROPOSE to build disposable archive evidence",required:true,type:"string"}}}}
   and .permissions == {contents:"read"}
-  and .env == {GODOT_VERSION:"4.7.1",GODOT_SHA512:"4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9"}
+  and .env == {GODOT_VERSION:"4.7.2",GODOT_SHA512:"9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65"}
   and (.jobs | keys) == ["propose"]
   and (.jobs.propose |
     keys == ["name","runs-on","steps","timeout-minutes"]
@@ -89,7 +89,7 @@ if ! jq -e '
     and ."runs-on" == "ubuntu-latest"
     and ."timeout-minutes" == 30
     and (.steps | length) == 6
-    and .steps[0] == {name:"Harden runner",uses:"step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25",with:{"egress-policy":"audit"}}
+    and .steps[0] == {name:"Harden runner",uses:"step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2",with:{"egress-policy":"audit"}}
     and .steps[1] == {uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",with:{"fetch-depth":0,"persist-credentials":false}}
     and .steps[2] == {name:"Require an explicit maintenance selection",env:{CONFIRMATION:"${{ inputs.confirmation }}"},run:"test \"$CONFIRMATION\" = PROPOSE"}
     and .steps[3] == {name:"Install Godot (pinned, checksum-verified)",run:"bash tools/install-ci-godot.sh"}

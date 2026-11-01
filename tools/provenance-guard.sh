@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provenance guard — asset bytes live in one place, and that place is documented.
 #
-# AGENTS.md (Structure) states the law: `client/assets/` is "the one sanctioned
+# docs/agents/client.md (Structure) states the law: `client/assets/` is "the one sanctioned
 # exception to 'no binary assets'", and "every asset directory carries a
 # PROVENANCE.md with licence chain and checksums". The risk register (#16)
 # lists licence and provenance drift as a standing risk to enforce in CI —
@@ -302,7 +302,7 @@ failed=0
 
 if [ ${#stray[@]} -gt 0 ]; then
 	failed=1
-	echo "::error::binary assets outside $ASSET_ROOT — the only sanctioned home for asset bytes (AGENTS.md, Structure)"
+	echo "::error::binary assets outside $ASSET_ROOT — the only sanctioned home for asset bytes (docs/agents/client.md, Structure)"
 	printf '  - %s\n' "${stray[@]}"
 	echo
 	echo "Everything under $CLIENT_ROOT ships (export_filter=\"all_resources\"), so an asset"
@@ -313,7 +313,7 @@ fi
 
 if [ ${#uncovered[@]} -gt 0 ]; then
 	failed=1
-	echo "::error::asset directories without a PROVENANCE.md — every asset directory must carry one (AGENTS.md, Structure)"
+	echo "::error::asset directories without a PROVENANCE.md — every asset directory must carry one (docs/agents/client.md, Structure)"
 	printf '  - %s\n' "${uncovered[@]}"
 	echo
 	echo "Add a PROVENANCE.md to the directory (or to a parent inside $ASSET_ROOT that"

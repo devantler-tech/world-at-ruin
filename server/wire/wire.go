@@ -341,10 +341,14 @@ func validateCastShape(shape sim.Telegraph) error {
 		return errors.New("facing is not planar")
 	}
 	extent := func(v int64) bool { return v >= -maxWireTelegraphExtentMM && v <= maxWireTelegraphExtentMM }
+	// A circle's radius and a cone's range must be positive: the client paints
+	// only a positive reach, and a cast that catches nothing is not sent at all
+	// (ADR 0059).
+	reach := func(v int64) bool { return v > 0 && v <= maxWireTelegraphExtentMM }
 	zeroFacing := shape.Facing.X == 0 && shape.Facing.Z == 0
 	switch shape.Kind {
 	case sim.ShapeCircle:
-		if !zeroFacing || !extent(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf != 0 {
+		if !zeroFacing || !reach(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf != 0 {
 			return errors.New("non-canonical circle")
 		}
 	case sim.ShapeRing:
@@ -357,7 +361,7 @@ func validateCastShape(shape sim.Telegraph) error {
 		// A cone must carry a real planar heading: sim.ConeTelegraph stores the
 		// world-forward fallback, so a zero facing here is not a shape the
 		// authority resolves, and the client refuses to paint one (ADR 0059).
-		if zeroFacing || !extent(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf < -sim.CosScale || shape.CosHalf > sim.CosScale {
+		if zeroFacing || !reach(shape.Outer) || shape.Inner != 0 || shape.HalfWidth != 0 || shape.CosHalf < -sim.CosScale || shape.CosHalf > sim.CosScale {
 			return errors.New("non-canonical cone")
 		}
 	case sim.ShapeRect:

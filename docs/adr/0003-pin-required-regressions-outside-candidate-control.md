@@ -4,6 +4,11 @@
 - Date: 2026-08-20
 - Decision issue: [#733](https://github.com/devantler-tech/world-at-ruin/issues/733)
 
+> Superseded routing, 2026-10-25: The World-only routing below is superseded; its candidate-independent selection and product-law requirements remain.
+> See [ADR 0062](0062-retire-unused-app-publisher-after-shared-admission.md) for
+> the active shared runner and independently observed retirement. The original
+> decision below is retained as history.
+
 ## Context
 
 Pull-request and merge-group checkouts contain the workflow, selector, test

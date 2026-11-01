@@ -164,4 +164,9 @@ if [ -n "${GITHUB_EVENT_PATH:-}" ]; then
   tar -xf "$tmp/base.tar" -C "$trusted_data"
   printf 'Historical regression data pinned to %s; host helpers stay workflow-owned.\n' "$base"
 fi
-trusted_wait bash "$root/tools/run-sandboxed-trusted-regressions.sh" "$trusted_data" "$root"
+# Only this host invocation's already built, package-checked and exercised
+# image crosses this private handoff. Public trusted evaluations still build
+# their own runtime; no inherited image selector is read.
+# shellcheck source=tools/sandbox-regression-context.sh
+source "$root/tools/sandbox-regression-context.sh"
+trusted_wait run_sandboxed_regression_context "$trusted_data" "$root" "$image"

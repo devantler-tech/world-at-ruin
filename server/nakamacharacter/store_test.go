@@ -343,14 +343,7 @@ func TestClientOwnedCharacterPreseedCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	seedUntrustedCharacter(storage, "character:"+testSubjectID)
-	store := mustCharacterStore(t, storage)
-	if _, err := store.Load(
-		authenticatedContext(testSubjectID),
-		testSubjectID,
-	); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
-	}
+	store := storeIgnoringUntrusted(t, storage, "character:"+testSubjectID)
 	storage.systemReadOverrideActive = true
 	seeded, _ := storage.Get(Collection, "character:"+testSubjectID, testSubjectID)
 	storage.systemReadOverride = []*api.StorageObject{
@@ -394,14 +387,7 @@ func TestLegacyPlayerOwnedCharacterCannotBecomeAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	storage := newFakeStorage()
-	seedUntrustedCharacter(storage, RecordKey)
-	store := mustCharacterStore(t, storage)
-	if _, err := store.Load(
-		authenticatedContext(testSubjectID),
-		testSubjectID,
-	); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
-	}
+	storeIgnoringUntrusted(t, storage, RecordKey)
 	if len(storage.WriteCalls) != 0 {
 		t.Fatalf("legacy object triggered writes: %#v", storage.WriteCalls)
 	}
@@ -604,6 +590,18 @@ func mustCharacterStore(t *testing.T, storage *fakeStorage) *Store {
 	store, err := NewStore(storage)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
+	}
+	return store
+}
+
+// storeIgnoringUntrusted plants a player-owned character at key, builds the real store and fails
+// unless the subject still has no authoritative character: the planted record is never read.
+func storeIgnoringUntrusted(t *testing.T, storage *fakeStorage, key string) *Store {
+	t.Helper()
+	seedUntrustedCharacter(storage, key)
+	store := mustCharacterStore(t, storage)
+	if _, err := store.Load(authenticatedContext(testSubjectID), testSubjectID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Load() error = %v, want %v", err, ErrNotFound)
 	}
 	return store
 }

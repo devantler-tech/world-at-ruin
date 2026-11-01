@@ -1,4 +1,4 @@
-# MegaLinter configuration. The gate itself is devantler-tech/actions' lint.yaml
+# MegaLinter configuration. The gate itself is devantler-tech/.github's lint.yaml
 # reusable workflow, called from .github/workflows/ci.yaml.
 #
 # Scope note: MegaLinter ships no GDScript linter in any flavour, so the dedicated

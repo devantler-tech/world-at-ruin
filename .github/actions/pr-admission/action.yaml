@@ -1,0 +1,36 @@
+name: World product admission
+description: Run the reviewed-base complete contained regression suite against GitHub's candidate integration.
+author: devantler-tech
+inputs:
+  candidate-sha:
+    description: Immutable candidate integration commit supplied by GitHub.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Verify shared origin and reviewed product identities
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+      run: bash "$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh" check
+    - name: Install reviewed host Go toolchain
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: "1.27.3"
+        cache: false
+    - name: Install reviewed checksum-verified Godot engine
+      shell: bash
+      env:
+        GODOT_VERSION: 4.7.2
+        GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
+      run: |
+        engine_dir=$(mktemp -d "$RUNNER_TEMP/world-admission-engine.XXXXXX")
+        trap 'rm -rf "$engine_dir"' EXIT
+        cd "$engine_dir"
+        bash "$GITHUB_ACTION_PATH/../../../tools/install-ci-godot.sh"
+    - name: Execute complete reviewed regressions in containment
+      shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.candidate-sha }}
+        GH_TOKEN: ${{ github.token }}
+      run: bash "$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh" run

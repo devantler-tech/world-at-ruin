@@ -129,6 +129,11 @@ const VANTAGES: Array = [
 	["cinderreach", Vector3(-52.0, 9.0, -34.0), Vector3(-92.0, 2.0, -74.0)],
 ]
 
+const CAVE_CHAMBER_VIEW := "cave-chamber"
+const CAVE_WALKOUT_VIEW := "cave-walkout"
+const CAVE_MOUTH_VIEW := "cave-mouth"
+
+
 ## Frames to let the world build before the first shot (generation is synchronous
 ## but shaders, shadow cascades and SDFGI cascades need frames).
 const WARMUP_FRAMES := 150
@@ -464,6 +469,21 @@ const ASH_MOTION_SECONDS := 4.0
 const ASH_MOTION_PHASE_STEPS := 8
 
 
+## Empty preserves the ordinary complete capture; a partition is one exact
+## comparison identity. The workflow's complete-union guard requires all eight.
+func world_capture_plan(selected: String) -> Array[String]:
+	var names: Array[String] = []
+	for vantage: Array in VANTAGES:
+		names.append(String(vantage[0]))
+	var cave_names: Array[String] = [CAVE_CHAMBER_VIEW, CAVE_WALKOUT_VIEW, CAVE_MOUTH_VIEW]
+	names.append_array(cave_names)
+	if selected.is_empty():
+		return names
+	if names.has(selected):
+		return [selected]
+	return []
+
+
 func _ready() -> void:
 	var dir := OS.get_environment("WAR_SHOT_DIR")
 	if dir.is_empty():
@@ -513,6 +533,14 @@ func _ready() -> void:
 		scenario = "world"
 	if not SCENARIOS.has(scenario):
 		_fail("unknown WAR_SCENARIO '%s' — expected one of %s" % [scenario, ", ".join(SCENARIOS)])
+		return
+	var selected_vantage := OS.get_environment("WAR_WORLD_VANTAGE")
+	if not selected_vantage.is_empty() and scenario != "world":
+		_fail("WAR_WORLD_VANTAGE is only valid for the world scenario")
+		return
+	var world_plan := world_capture_plan(selected_vantage)
+	if world_plan.is_empty():
+		_fail("unknown WAR_WORLD_VANTAGE — refusing an incomplete capture")
 		return
 	if scenario == "replication" or scenario == "mob_chase":
 		_arm_replication_seam()
@@ -610,8 +638,11 @@ func _ready() -> void:
 		await _capture_ash_motion(dir, main, cam)
 		return
 
+	var exterior_count := 0
 	for vantage: Array in VANTAGES:
 		var vantage_name: String = vantage[0]
+		if not world_plan.has(vantage_name):
+			continue
 		cam.global_position = vantage[1]
 		cam.look_at(vantage[2], Vector3.UP)
 		# Re-assert every frame: the player's own camera can otherwise take back
@@ -674,8 +705,11 @@ func _ready() -> void:
 		if vantage_name == CONTRIB_VANTAGE:
 			if not await _prove_terrain_contribution(cam, main):
 				return
+		exterior_count += 1
 
-	var cave_count := await _capture_cave(cam, dir, main)
+	var cave_count := 0
+	if world_plan.has(CAVE_CHAMBER_VIEW) or world_plan.has(CAVE_WALKOUT_VIEW) or world_plan.has(CAVE_MOUTH_VIEW):
+		cave_count = await _capture_cave(cam, dir, main, world_plan)
 	if cave_count < 0:
 		return
 
@@ -686,12 +720,18 @@ func _ready() -> void:
 	# running second is what lets the exterior step assert only the properties
 	# that are its own. Moving this call above the cave capture silently drops
 	# that cover.
-	var mouth_count := await _capture_mouth(cam, dir, main)
+	var mouth_count := 0
+	if world_plan.has(CAVE_MOUTH_VIEW):
+		mouth_count = await _capture_mouth(cam, dir, main)
 	if mouth_count < 0:
+		return
+	var captured := exterior_count + cave_count + mouth_count
+	if captured != world_plan.size():
+		_fail("the world capture did not complete its exact selected plan")
 		return
 
 	print("CAPTURE PASS — %d vantages written to %s" %
-		[VANTAGES.size() + cave_count + mouth_count, dir])
+		[captured, dir])
 	get_tree().quit(0)
 
 
@@ -1157,8 +1197,8 @@ static func cave_vantages(lay: Dictionary) -> Array:
 	var walkout_look := Vector3(bend_c.x, (bend["floor"] as float) + 1.3, bend_c.z)
 
 	return [
-		["cave-chamber", chamber_eye, chamber_look],
-		["cave-walkout", walkout_eye, walkout_look],
+		[CAVE_CHAMBER_VIEW, chamber_eye, chamber_look],
+		[CAVE_WALKOUT_VIEW, walkout_eye, walkout_look],
 	]
 
 
@@ -1199,7 +1239,7 @@ static func mouth_vantage(lay: Dictionary) -> Array:
 	# by name instead of arriving as a quietly lopsided frame.
 	var eye := Vector3(mouth.x + MOUTH_STANDOFF, MOUTH_EYE_HEIGHT, mouth.z)
 	var target := Vector3(mouth.x + MOUTH_LOOK_INSET, MOUTH_LOOK_HEIGHT, mouth.z)
-	return ["cave-mouth", eye, target]
+	return [CAVE_MOUTH_VIEW, eye, target]
 
 
 ## Photographs the starter cave from vantages derived off the live layout, and
@@ -1208,7 +1248,7 @@ static func mouth_vantage(lay: Dictionary) -> Array:
 ## the surface — darkness from occlusion, light from torches — so the outdoor
 ## frames cannot vouch for it: a lighting, fog or material change can regress
 ## the opening minutes while every outdoor vantage still looks fine.
-func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
+func _capture_cave(cam: Camera3D, dir: String, main: Node, world_plan: Array[String]) -> int:
 	var world := main.get_node_or_null("World") as WorldGen
 	if world == null:
 		_fail("no WorldGen node named World — cannot derive cave vantages")
@@ -1262,9 +1302,11 @@ func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
 			return -1
 		cam.global_position = eye
 		cam.look_at(target, Vector3.UP)
-		for i in SETTLE_FRAMES:
-			cam.current = true
-			await get_tree().process_frame
+		var render_vantage := world_plan.has(vantage_name)
+		if render_vantage:
+			for i in SETTLE_FRAMES:
+				cam.current = true
+				await get_tree().process_frame
 		if not _sees_geometry(cam, target):
 			_fail("vantage '%s' sees no geometry — the shot frames nothing" % vantage_name)
 			return -1
@@ -1278,6 +1320,11 @@ func _capture_cave(cam: Camera3D, dir: String, main: Node) -> int:
 		if (hull.layers & cam.cull_mask) == 0:
 			_fail("vantage '%s': the cave hull's render layers are outside the camera's cull mask — it would not be drawn" % vantage_name)
 			return -1
+		# Even the mouth-only partition proves both interior ray/cull directions
+		# before asserting the exterior inverse. Only unselected image rendering
+		# is omitted; the complete union renders those views in their own cells.
+		if not render_vantage:
+			continue
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		var spread := _luma_spread(img)

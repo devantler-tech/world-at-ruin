@@ -575,7 +575,7 @@ func run(args []string, output io.Writer) error {
 	}
 	result.EngineVersion = os.Getenv("GODOT_VERSION")
 	result.EngineArchiveSHA512 = os.Getenv("GODOT_SHA512")
-	if result.EngineVersion != "4.7.1" || len(result.EngineArchiveSHA512) != 128 {
+	if result.EngineVersion != "4.7.2" || len(result.EngineArchiveSHA512) != 128 {
 		return errors.New("caller engine description missing")
 	}
 	if _, err = hex.DecodeString(result.EngineArchiveSHA512); err != nil {

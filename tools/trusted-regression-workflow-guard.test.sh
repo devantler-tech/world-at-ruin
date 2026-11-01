@@ -41,3 +41,4 @@ if bash "$root/tools/trusted-regression-workflow-guard.sh" "$tmp/missing.yaml" >
   exit 1
 fi
 echo 'TEST PASS -- only the base-owned product gate has the trusted controller contract'
+bash "$root/tools/shared-product-admission.test.sh"

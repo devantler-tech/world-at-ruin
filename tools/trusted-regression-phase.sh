@@ -3,7 +3,20 @@
 set -euo pipefail
 # shellcheck source=tools/process-group-lifecycle.sh
 source "$(dirname "${BASH_SOURCE[0]}")/process-group-lifecycle.sh"
+# Select only a successful GNU provider; keep probes outside the command lifecycle.
+resolve_gnu_timeout() {
+  local candidate version
+  timeout_command=""
+  for candidate in timeout gnutimeout gtimeout; do
+    if version="$("$candidate" --version 2>/dev/null)" && [[ $version == *'GNU coreutils'* ]]; then
+      timeout_command="$candidate"
+      break
+    fi
+  done
+}
 if [ "${1:-}" = --cleanup-containers ]; then
+  resolve_gnu_timeout
+  if [ -z "$timeout_command" ]; then echo '::error::sandbox cleanup requires GNU coreutils timeout' >&2; exit 2; fi
   directory="${2:?private container record directory required}"
   shopt -s nullglob
   failed=0
@@ -14,9 +27,9 @@ if [ "${1:-}" = --cleanup-containers ]; then
       exit 2
     fi
     # A normal --rm container is already absent. Only our exact name is touched.
-    timeout --kill-after=2s 5s docker rm --force "$name" >/dev/null 2>&1 || true
+    "$timeout_command" --kill-after=2s 5s docker rm --force "$name" >/dev/null 2>&1 || true
     remaining=""
-    if ! remaining="$(timeout --kill-after=2s 5s docker ps --all --filter "name=^/$name$" --format '{{.Names}}')" || [ -n "$remaining" ]; then
+    if ! remaining="$("$timeout_command" --kill-after=2s 5s docker ps --all --filter "name=^/$name$" --format '{{.Names}}')" || [ -n "$remaining" ]; then
       echo '::error::sandbox container cleanup could not verify absence' >&2
       failed=1
     else
@@ -48,7 +61,8 @@ if [ "$seconds" -gt "$maximum" ] || [ "$grace" -gt 5 ]; then
   echo "::error::$phase deadline exceeds the reviewed budget" >&2
   exit 2
 fi
-if ! timeout --version 2>/dev/null | grep -q 'GNU coreutils'; then
+resolve_gnu_timeout
+if [ -z "$timeout_command" ]; then
   echo "::error::$phase could not execute: GNU coreutils timeout is required" >&2
   exit 2
 fi
@@ -87,7 +101,7 @@ cancel() {
 }
 trap 'trap ":" INT TERM; cancel' INT TERM
 set -m
-timeout --kill-after="${grace}s" "${seconds}s" bash "$(dirname "${BASH_SOURCE[0]}")/trusted-phase-command.sh" "$verdict_record" "$@" &
+"$timeout_command" --kill-after="${grace}s" "${seconds}s" bash "$(dirname "${BASH_SOURCE[0]}")/trusted-phase-command.sh" "$verdict_record" "$@" &
 pid=$!
 set +m
 launching=false

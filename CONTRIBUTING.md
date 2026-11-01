@@ -28,12 +28,12 @@ provenance rules.
   The duplication test also uses Go's race detector:
   cgo must be enabled, with GCC or Clang installed on Linux. These are contributor tools;
   playing the client alone does not need them.
-- Client work uses **Godot 4.7.1**, matching client CI. Install it from the
+- Client work uses **Godot 4.7.2**, matching client CI. Install it from the
   [official archive](https://godotengine.org/download/archive/) and check `godot --version`.
   On macOS, `/Applications/Godot.app/Contents/MacOS/Godot` can replace `godot` in the commands below.
   Also export `GODOT_BIN=/Applications/Godot.app/Contents/MacOS/Godot` in that terminal so the
   Bash test wrappers use the same executable instead of looking for `godot` on `PATH`.
-  Exporting needs the matching **4.7.1** export templates; running from source does not.
+  Exporting needs the matching **4.7.2** export templates; running from source does not.
   GDScript lint uses **Python 3.13** and **gdtoolkit 4.5.0**. Its hash lock targets **Linux x86_64**;
   in that environment, use a virtual environment and the hash-locked installation command from the
   [CI GDScript lint job](.github/workflows/ci.yaml), then run `bash tools/gdscript-lint.test.sh` and

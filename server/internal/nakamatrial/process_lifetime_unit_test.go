@@ -18,12 +18,9 @@ import (
 func TestStoppedChildCleanup(t *testing.T) {
 	// A TERM handler must execute in userspace; default kernel termination
 	// can terminate a stopped process on macOS without proving resumption.
-	cmd := exec.CommandContext(t.Context(), "bash", "-c", "trap 'exit 0' TERM; printf 'ready\\n'; read -r value")
-	input, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = input.Close() }()
+	// Stay in userspace rather than Bash's blocking read builtin, whose
+	// interrupted-read/trap handling makes this signal test timing-dependent.
+	cmd := exec.CommandContext(t.Context(), "bash", "-c", "trap 'exit 0' TERM; printf 'ready\\n'; while :; do :; done")
 	output, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

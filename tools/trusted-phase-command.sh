@@ -7,8 +7,8 @@ shift
 # Bash gives asynchronous children ignored SIGINT. Reset it before exec while
 # preserving the enclosing process group; otherwise nested INT controls hang.
 signal_env=""
-for candidate in env genv; do
-  if "$candidate" --version 2>/dev/null | grep -q 'GNU coreutils'; then signal_env="$candidate"; break; fi
+for candidate in env gnuenv genv; do
+  if version="$("$candidate" --version 2>/dev/null)" && [[ $version == *'GNU coreutils'* ]]; then signal_env="$candidate"; break; fi
 done
 if [ -z "$signal_env" ]; then echo '::error::phase child requires GNU coreutils env for normal signals' >&2; exit 2; fi
 cancelled=false

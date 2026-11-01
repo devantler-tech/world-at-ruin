@@ -7,14 +7,31 @@ if [[ $# -lt 2 || $# -gt 3 || $2 != --experimental || -z $1 || ${3:-} != '' && $
 fi
 image=$1
 issued=${3:-}
+workers=${WAR_NATIVE_WORKERS-1}
+if [[ ( $workers != 1 && $workers != 4 ) || ( $workers == 4 && $issued == --spire ) ]]; then
+  echo 'native workers must be 1 or 4; issued-SPIRE requires 1' >&2
+  exit 2
+fi
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/tools/nakama-native-scenarios.sh"
+native_scenarios "$issued"
 state=$(mktemp -d)
 network="war-nakama-native-$$-$(basename "$state")"
 postgres_id=""
 trial_id=""
+network_id=""
+shard_pid=""
+parallel_complete=0
+verdict=""
 cleanup() {
-  local rc=$? remaining
-  trap - EXIT
-  if [[ $issued == --spire ]]; then
+  local rc=$? remaining receipt
+  trap - EXIT INT TERM
+  if [[ -n $shard_pid ]]; then
+    kill -TERM "$shard_pid" 2>/dev/null || true
+    wait "$shard_pid" 2>/dev/null || true
+    rc=1
+  fi
+  if [[ $issued == --spire || $workers == 4 ]]; then
     for owned in "$trial_id" "$postgres_id"; do
       if [[ -z $owned ]]; then continue; fi
       if ! docker rm -f "$owned" >/dev/null 2>&1; then
@@ -25,8 +42,21 @@ cleanup() {
         rc=1
       fi
     done
-    if ! docker network rm "$network" >/dev/null 2>&1; then rc=1; fi
-    if [[ $rc == 0 ]]; then rm -rf "$state"; fi
+    if [[ $workers == 4 ]]; then
+      if [[ -n $network_id ]]; then
+        if ! docker network rm "$network_id" >/dev/null 2>&1; then rc=1;
+        elif ! remaining=$(docker network ls --filter "id=$network_id" --format '{{.ID}}') || [[ -n $remaining ]]; then rc=1; fi
+      fi
+      if [[ $rc == 0 && $parallel_complete != 1 ]]; then rc=1; fi
+      if [[ $rc == 0 ]]; then
+        if [[ ! -f $state/parallel-pending.json || -L $state/parallel-pending.json ]] ||
+          ! receipt=$(jq -ce 'select(.complete == true and .workers == 4)' "$state/parallel-pending.json"); then rc=1; fi
+      fi
+    elif ! docker network rm "$network" >/dev/null 2>&1; then rc=1; fi
+    if [[ $rc == 0 ]]; then
+      if ! rm -rf "$state"; then rc=1;
+      elif [[ $workers == 4 ]]; then printf 'NATIVE WORKER RECEIPT: %s\n%s\n' "$receipt" "$verdict"; fi
+    fi
     exit "$rc"
   fi
   if [[ -n "$trial_id" ]]; then docker rm -f "$trial_id" >/dev/null 2>&1 || true; fi
@@ -36,6 +66,12 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [[ $workers == 4 ]]; then
+  image=$(docker image inspect --format '{{.Id}}' "$image")
+  [[ $image =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
+fi
 user=$(docker image inspect --format '{{.Config.User}}' "$image")
 if [[ "$user" != 10001:10001 ]]; then
   echo 'native trial image must use its non-root identity' >&2
@@ -51,7 +87,12 @@ if [[ "$refused" != 2 ]] || ! grep -q 'native trial requires Linux, explicit opt
   echo 'native trial default invocation did not refuse missing opt-in' >&2
   exit 1
 fi
-docker network create --internal "$network" >/dev/null
+if [[ $workers == 4 ]]; then
+  network_id=$(docker network create --internal "$network")
+  [[ $network_id =~ ^[a-f0-9]{64}$ ]] || exit 1
+else
+  docker network create --internal "$network" >/dev/null
+fi
 # These credentials exist only inside this unpublished, disposable fixture.
 WAR_NATIVE_DB_PASSWORD=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 if [[ ${#WAR_NATIVE_DB_PASSWORD} != 64 ]]; then
@@ -76,6 +117,16 @@ if [[ "$ready" != true ]]; then
   echo 'disposable native database did not become ready' >&2
   exit 1
 fi
+if [[ $workers == 4 ]]; then
+  printf '%s\n' "${scenarios[@]}" >"$state/expected"
+  bash "$root/tools/run-nakama-native-shards.sh" "$image" "$network" "$state" "$issued" &
+  shard_pid=$!
+  if wait "$shard_pid"; then shard_pid=''; else
+    shard_result=$?
+    shard_pid=''
+    exit "$shard_result"
+  fi
+else
 # Sixteen minutes bounds all 41 mandatory scenarios, including the thirteen
 # two-target recovery cuts, fifteen complete-proof publication cuts and two
 # additional restarted 45-second expiry controls after exact zone death, plus
@@ -104,6 +155,7 @@ if [[ "$exit_code" != 0 ]] || ! grep -q '^PASS$' "$state/trial.log"; then
   echo 'native Nakama acceptance did not produce a complete passing verdict' >&2
   exit 1
 fi
+fi
 if [[ $issued == --spire ]]; then
   if [[ $(grep -c '^--- PASS: Test' "$state/trial.log") != 2 ]] ||
     ! grep -q '^--- PASS: TestNativeIssuedSPIRE (' "$state/trial.log" ||
@@ -121,51 +173,7 @@ if [[ $issued == --spire ]]; then
   echo 'NAKAMA ISSUED SPIRE PASS: real issuance and native private claim; disposable PostgreSQL; separate controller profile'
   exit 0
 fi
-scenarios=(
-  "TestLockedBundleLoadsAndRejectsMismatch"
-  "TestDisabledNativeStartup"
-  "TestEnabledNativeStartupRefusesInvalidDependencies"
-  "TestNativeSessionAuthenticatesHandoff"
-  "TestNativePrivateStorageAndCAS"
-  "TestNativeRestartRetainsReplayAndAmbiguity"
-  "TestNativePrivateClaimPersistsExactWorkload"
-  "TestNativePeriodicExpiryRetriesExactCleanup"
-  "TestNativeHistoricalRowsRemainMutationIneligible"
-  "TestNativeAdmissionDefaultOff"
-  "TestNativeAdmissionConditionalTransitions"
-  "TestNativeDurableCapabilityComposition"
-  "TestNativeRecoveryHandoff"
-  "TestNativeRecoveryOwner"
-  "TestNativeRecoveryFence"
-  "TestNativeRecoveryPublication"
-  "TestNativeZoneCustodyDefaultOff"
-  "TestNativeZoneCustodyPersistence"
-  "TestNativeZoneCustodyCrashCuts"
-  "TestNativeZoneCustodyCompetingProcesses"
-  "TestNativeZoneCustodyReaderRefusals"
-  "TestNativeOriginalClaimCustody"
-  "TestNativeJournalDefaultOff"
-  "TestNativeJournalReadback"
-  "TestNativeJournalRefusals"
-  "TestNativeOrphanSupervisionPreservesEvidence"
-  "TestNativeSIGTERMStopsAdmissionAndCancelsWork"
-  "TestClosedLoopSealedBootstrap"
-  "TestClosedLoopAccountSnapshot"
-  "TestClosedLoopClaimBeforeUpgrade"
-  "TestClosedLoopClaimAfterZoneDeath"
-  "TestClosedLoopAcknowledgedZoneDeath"
-  "TestClosedLoopWorkloadIdentity"
-  "TestClosedLoopSiblingIsolation"
-  "TestClosedLoopRevisionFence"
-  "TestClosedLoopRestartProtection"
-  "TestClosedLoopWrappingRotation"
-  "TestClosedLoopAmbiguousAllocation"
-  "TestClosedLoopShutdownOwnership"
-  "TestClosedLoopAuthoritativeMovement"
-  "TestClosedLoopMovementAfterWatchLoss"
-)
 if [[ $issued == --issued ]]; then
-  scenarios+=("TestNativeIssuedSDKStartupBoundary" "TestNativeIssuedClaimsPlugin")
   if ! grep -q 'ISSUED SDK NATIVE PASS: loaded plugin; default off; actual WorkloadAPI unavailable; zero provider effects; no serving authority' "$state/trial.log"; then
     echo 'issued native acceptance omitted the actual SDK startup refusal verdict' >&2
     exit 1
@@ -185,4 +193,5 @@ for scenario in "${scenarios[@]}"; do
     exit 1
   fi
 done
-echo "NAKAMA NATIVE PASS: ${#scenarios[@]} scenarios; native plugin; original private claim receipt and custody acknowledgment join; original custody persistence and crash/readback controls; complete journal readback; durable recovery owner; fresh complete recovery barriers; acknowledged complete proof publication; durable capability storage join; real API barriers; built sealed zone; TLS movement; resumed movement after watch loss; disposable PostgreSQL; non-root"
+verdict="NAKAMA NATIVE PASS: ${#scenarios[@]} scenarios; native plugin; original private claim receipt and custody acknowledgment join; original custody persistence and crash/readback controls; complete journal readback; durable recovery owner; fresh complete recovery barriers; acknowledged complete proof publication; durable capability storage join; real API barriers; built sealed zone; TLS movement; resumed movement after watch loss; disposable PostgreSQL; non-root"
+if [[ $workers == 4 ]]; then parallel_complete=1; else echo "$verdict"; fi

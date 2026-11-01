@@ -11,7 +11,11 @@ printf 'source data\n' >"$tmp/work/.github/workflows/ci.yaml"
 printf 'immutable trusted harness\n' >"$tmp/work/client/tests/alpha_test.gd"
 cat >"$tmp/bin/docker" <<'DOCKER'
 #!/bin/bash
-if [ "$1" = rm ] || [ "$1" = ps ]; then exit 0; fi
+if [ "$1" = rm ]; then
+  if [ -n "${SANDBOX_REMOVALS:-}" ]; then printf '%s\n' "$@" >> "$SANDBOX_REMOVALS"; fi
+  exit 0
+fi
+if [ "$1" = ps ]; then exit 0; fi
 printf '%s\n' "$@" > "$SANDBOX_ARGS"
 exit "$SANDBOX_EXIT"
 DOCKER
@@ -48,6 +52,20 @@ grep -Eq '^::stop-commands::[0-9a-f-]+$' "$tmp/log"
 PATH="$tmp/bin:$PATH" bash "$root/tools/sandbox-godot.sh" --headless --path client >"$tmp/log"
 grep -Fxq "type=bind,source=$PWD/client/.godot,target=/project/client/.godot,readonly" "$tmp/args"
 grep -Fxq "type=bind,source=$tmp/import-metadata/icon.svg.import,target=/project/client/icon.svg.import,readonly" "$tmp/args"
+# A second wrapper can still own a live container in the shared controller
+# ledger. Completing this invocation must never retire that sibling.
+mkdir "$tmp/shared-containers"
+export GODOT_SANDBOX_CONTAINERS="$tmp/shared-containers"
+export SANDBOX_REMOVALS="$tmp/removals"
+sibling=war-trusted-00000000000000000000000000000000
+: >"$GODOT_SANDBOX_CONTAINERS/$sibling"
+PATH="$tmp/bin:$PATH" bash "$root/tools/sandbox-godot.sh" --headless --path client >"$tmp/log"
+if [ ! -f "$GODOT_SANDBOX_CONTAINERS/$sibling" ] || grep -Fq "$sibling" "$SANDBOX_REMOVALS"; then
+  echo 'TEST FAIL -- one sandbox invocation retired another invocation container' >&2
+  exit 1
+fi
+test "$(find "$GODOT_SANDBOX_CONTAINERS" -type f | wc -l | tr -d ' ')" -eq 1
+rm "$GODOT_SANDBOX_CONTAINERS/$sibling"
 export SANDBOX_EXIT=17
 set +e
 PATH="$tmp/bin:$PATH" bash "$root/tools/sandbox-godot.sh" --headless --path client >"$tmp/log"
@@ -55,6 +73,13 @@ status=$?
 set -e
 test "$status" -eq 17
 grep -Eq '^::[0-9a-f-]+::$' "$tmp/log"
+export SANDBOX_EXIT=2
+status=0
+PATH="$tmp/bin:$PATH" bash "$root/tools/sandbox-godot.sh" --headless --path client >"$tmp/log" || status=$?
+test "$status" -eq 2
+# A refused process join retains private state, but a positively observed
+# absent container must leave no stale entry in the shared recovery ledger.
+test -z "$(ls -A "$GODOT_SANDBOX_CONTAINERS")"
 export SANDBOX_EXIT=0
 rm -rf client/.godot
 ln -s tests client/.godot

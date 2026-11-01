@@ -22,7 +22,7 @@ COPY tools/gameserver-commit-trial/ /source/tools/gameserver-commit-trial/
 COPY tools/prepare-native-controlplane.sh /source/tools/prepare-native-controlplane.sh
 RUN mkdir -p /out \
     && bash /source/tools/prepare-native-controlplane.sh /out/controlplane \
-    && go -C /source/tools/gameserver-commit-trial test -mod=readonly ./cmd/nativefixture \
+    && go -C /source/tools/gameserver-commit-trial test -mod=readonly -trimpath -buildvcs=false ./cmd/nativefixture \
     && go -C /source/tools/gameserver-commit-trial build -mod=readonly -trimpath -buildvcs=false -o /out/gameserver-fixture ./cmd/nativefixture
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/zone ./cmd/zone \
  && sha256sum /out/zone > /out/zone.sha256

@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Client confines authenticated reads and writes to the World repository API.
+// Client confines read-only historical inspection to the World repository API.
 type Client struct {
 	BaseURL string
 	Token   string
@@ -29,6 +29,9 @@ const gateMaxBody = 8 * 1024 * 1024
 // DoJSON rejects redirects, noncanonical endpoints and partial API responses.
 // Error messages never include an authenticated response body or token.
 func (c Client) DoJSON(ctx context.Context, method, endpoint string, payload, result any) error {
+	if method != http.MethodGet || payload != nil {
+		return errors.New("historical inspection permits only GET requests without a body")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -54,15 +57,8 @@ func (c Client) DoJSON(ctx context.Context, method, endpoint string, payload, re
 			return errors.New("API authentication requires HTTPS")
 		}
 	}
-	var data []byte
-	if payload != nil {
-		data, err = json.Marshal(payload)
-		if err != nil || len(data) > gateMaxBody {
-			return errors.New("invalid or oversized API request body")
-		}
-	}
 	requestURL := baseURL.ResolveReference(parsed)
-	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
 		return errors.New("API request could not be constructed")
 	}
@@ -70,9 +66,6 @@ func (c Client) DoJSON(ctx context.Context, method, endpoint string, payload, re
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
 	}
 	transport := http.Client{Timeout: 30 * time.Second}
 	if c.HTTP != nil {

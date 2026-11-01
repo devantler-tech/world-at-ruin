@@ -27,6 +27,13 @@ mutations=(
   '.jobs["ci-required-checks"].steps[3].env.ORDINARY_COMPLETE = "true"'
   ".jobs[\"ci-required-checks\"].steps[3].env.SANDBOX_SHA = \"\${{ github.sha }}\""
   '.jobs["client-ordinary"].if = "false"'
+  '.jobs["client-ordinary"]["timeout-minutes"] = 75'
+  '.jobs["ci-required-checks"].steps[3].env.SCENES_COMPLETE = "true"'
+  '.jobs["ci-required-checks"].steps[3].env.SCENES_SHA = "unknown"'
+  '.jobs["ci-required-checks"].steps[3].env.CLOTH_SELECTED = "false"'
+  '.jobs["ci-required-checks"].steps[3].env.CLOTH_RESULT = "success"'
+  '.jobs["ci-required-checks"].steps[3].env.EVENT_NAME = "merge_group"'
+  'del(.jobs["ci-required-checks"].steps[3].env.EVENT_NAME)'
   '.jobs["client-ordinary"].steps[-1].if = "always()"'
   '.jobs["client-ordinary"].steps[-1].run = "true"'
   ".jobs[\"client-ordinary\"].steps[0].with.ref = \"\${{ github.event.pull_request.head.sha }}\""
@@ -75,7 +82,7 @@ mutations=(
   ".jobs[\"ci-required-checks\"].steps[4].with[\"job-results\"] |= (split(\"\${{ needs.client-sandbox.result == 'success' && 'success' || 'failure' }}\") | join(\"\${{ needs.client-sandbox.result }}\"))"
   ".jobs[\"ci-required-checks\"].steps[4].with[\"job-results\"] |= (split(\"\${{ needs.owned-child-native.result == 'success' && 'success' || 'failure' }}\") | join(\"\${{ needs.owned-child-native.result }}\"))"
 )
-for dependency in retired-repo-links client-ordinary client-sandbox client-export-macos license-guard lint duplication-gate gdscript-lint go-vulnerability-scan server-ci gameserver-commit-trial zone-container nakama-native spire-native owned-child-native detect-visual-changes frame-capture frame-capture-exported; do
+for dependency in retired-repo-links client-ordinary client-sandbox client-scene-shards client-scene-proof client-export-macos license-guard lint duplication-gate gdscript-lint go-vulnerability-scan server-ci gameserver-commit-trial zone-container nakama-native spire-native owned-child-native detect-visual-changes frame-capture frame-capture-cloth frame-capture-exported; do
   mutations+=(".jobs[\"ci-required-checks\"].needs |= map(select(. != \"$dependency\"))")
 done
 mutation_count=0

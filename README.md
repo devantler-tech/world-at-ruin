@@ -50,7 +50,7 @@ than notarized, so macOS will quarantine it; do not clear that quarantine yourse
 download. Use the Homebrew cask above: it verifies the pinned release checksum, then removes
 quarantine for those verified bytes. Or run the game from source below.
 
-**Or run it from source** — install [Godot **4.7.1**](https://godotengine.org/download/archive/)
+**Or run it from source** — install [Godot **4.7.2**](https://godotengine.org/download/archive/)
 (the version used by CI), and make its executable available as `godot`. Check `godot --version`
 before continuing; a package manager may supply a different version. On macOS you can use
 `/Applications/Godot.app/Contents/MacOS/Godot` in place of `godot`.
@@ -71,13 +71,18 @@ godot --path client
 The game opens the starter cave and saves your character locally between launches.
 
 To build your own `.app` instead, export with the `macOS` preset in `client/export_presets.cfg`
-(needs the 4.7.1 export templates installed in the Godot editor).
+(needs the 4.7.2 export templates installed in the Godot editor).
 
 **Controls:** `WASD` move · `Shift` sprint · `Space` jump · `E` interact · mouse look ·
 `C` reshape character · `L`/`F1` dev log · `Esc` release mouse.
 
 **Watch the world grow:** press `L` in-game. Every player-visible change is a dev-log entry,
 newest first — replaying after each build shows exactly what the agents grew.
+
+**Previews waiting for a decision:** eleven unfinished looks, from clothing and gaits to
+ground cover, drifting ash and control hints, can be tried by turning on their launch settings; two of them also need a companion setting.
+The [preview page](docs/previews/README.md) lists the settings each one needs and shows them
+side by side with frames, what each still lacks and the decision it is waiting for.
 
 **Ragged-cloth material preview:** launch from source with
 `WAR_RAGGED_CLOTH_DETAIL=1 godot --path client`, or prefix the installed app's

@@ -10,6 +10,13 @@ import (
 
 const retainedOrganizationGateID int64 = 21102220
 
+// These identities belong to the retired App-overlap design, not the active shared gate.
+const TrustedContext = "World trusted regressions"
+const knownActionsAppID int64 = 15368
+
+// publisherAppID excludes Actions from the historical independent publisher identity.
+func publisherAppID(id int64) bool { return id > 0 && id != knownActionsAppID }
+
 type rulesetRecord struct {
 	ID           int64                      `json:"id"`
 	Name         string                     `json:"name"`
@@ -36,9 +43,9 @@ type requiredStatusParameters struct {
 	} `json:"required_status_checks"`
 }
 
-// Inspect establishes the overlap needed before retiring the old organization
-// gate. It never writes settings, and API summaries never stand in for full
-// ruleset readback. It proves rule shape, not the publisher credential boundary or activation.
+// Inspect diagnoses only the historical App/organization overlap. It never writes
+// settings or treats summaries as full readback. This is not an assertion about
+// the active shared-runner protection, credentials or activation readiness.
 func (c *Client) Inspect(ctx context.Context, appID int64) error {
 	if !publisherAppID(appID) {
 		return fmt.Errorf("readiness UNKNOWN: a configured status producer is required")

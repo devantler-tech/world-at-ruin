@@ -69,10 +69,23 @@ state, mismatched engine or unverified cleanup refuses the report. The raw
 inventory is limited to 1 MiB, 2,048 packages and 256 input files.
 
 The candidate sandbox job selects this observation for its initial containment
-image using `WAR_TRUSTED_RUNTIME_INVENTORY_PROBE=1`. The subsequent historical
-regression controller retains its ordinary build selection. Both containment
-and the complete trusted scene suite must still succeed with cleanup. The
-report measures the first image only.
+image using `WAR_TRUSTED_RUNTIME_INVENTORY_PROBE=1`. After the real containment,
+package-refusal and held-engine cleanup controls, the probe's private host function
+runs the complete historical suite with that exact local image ID. This avoids a
+second cold build with a different inventory argument in the same invocation.
+Both containment and the complete trusted scene suite must still succeed with
+their own private contexts and cleanup acknowledgments. The report describes
+the image used by both stages, not a reusable executor admission.
+
+The public `run-sandboxed-trusted-regressions.sh` entrypoint still accepts exactly
+two roots and always builds from its reviewed controller sources. It accepts no
+image argument or inherited image override. The shared context is a private
+terminal host function, not an executable image-accepting command. It preserves
+the complete historical fixture, cache validator, immutable source, restricted
+engine environment and phase deadlines. There is no cross-run cache or image
+lookup fallback. Run `bash tools/sandbox-runtime-handoff.test.sh` plus the existing
+deadline and lifecycle suites after changing this boundary; real hosted
+containment and full-suite evidence remain mandatory.
 
 This is an **observed cold-build inventory**. The builder separately verifies
 the [platform-specific base metadata proof](trusted-runtime-bases.md) before

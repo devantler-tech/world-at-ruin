@@ -90,13 +90,20 @@ func newTestHub(t *testing.T, cfg Config) (*Hub, []byte) {
 	return hub, secret
 }
 
-func dial(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) (*websocket.Conn, error) {
+// bearer mints a one-minute token for observer on allocation-a and returns it
+// as an Authorization header value.
+func bearer(t *testing.T, secret []byte, observer sim.EntityID) string {
 	t.Helper()
 	tok, err := MintToken(secret, "allocation-a", observer, time.Now().Add(time.Minute))
 	if err != nil {
 		t.Fatalf("MintToken: %v", err)
 	}
-	conn, resp, err := dialToken(t, ts, "Bearer "+tok)
+	return "Bearer " + tok
+}
+
+func dial(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) (*websocket.Conn, error) {
+	t.Helper()
+	conn, resp, err := dialToken(t, ts, bearer(t, secret, observer))
 	if resp != nil && resp.Body != nil {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			t.Errorf("close dial response body: %v", closeErr)
@@ -123,14 +130,11 @@ func dialVersion(t *testing.T, ts *httptest.Server, secret []byte, observer sim.
 
 func dialVersionHeader(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID, version string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
-	tok, err := MintToken(secret, "allocation-a", observer, time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatalf("MintToken: %v", err)
-	}
+	authorization := bearer(t, secret, observer)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	hdr := http.Header{}
-	hdr.Set("Authorization", "Bearer "+tok)
+	hdr.Set("Authorization", authorization)
 	hdr.Set(WireVersionHeader, version)
 	return websocket.Dial(ctx, ts.URL, &websocket.DialOptions{HTTPClient: ts.Client(), HTTPHeader: hdr})
 }
