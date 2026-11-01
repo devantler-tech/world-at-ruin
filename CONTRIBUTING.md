@@ -43,6 +43,9 @@ provenance rules.
   toolchain selection may download the pinned version when you enter the module. Race tests need
   cgo enabled (`go env CGO_ENABLED` must print `1`); on Linux, install a C compiler such as GCC or
   Clang. See the [Go race-detector requirements](https://go.dev/doc/articles/race_detector#Requirements).
+  If an Apple Silicon Mac cannot complete the private-interface transport prerequisite, use the
+  [isolated local Linux procedure](docs/local-server-linux.md) for the complete server race suite.
+  It preserves the real networking tests and the host's security settings.
   The security checks use **govulncheck 1.7.0**, pinned in CI. Client play does not require a server,
   cluster, credentials, or Go.
 - Optional humanoid regeneration uses Blender **5.2.0 LTS** and MPFB **2.0.16**. Follow the
