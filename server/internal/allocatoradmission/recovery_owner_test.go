@@ -96,6 +96,7 @@ type recoveryStorage struct {
 	read     *handoffReadStorage
 	row      *api.StorageObject
 	writes   int
+	reads    int
 	fault    string
 	cancel   context.CancelFunc
 	deadline time.Time
@@ -104,6 +105,7 @@ type recoveryStorage struct {
 func (s *recoveryStorage) StorageRead(ctx context.Context, reads []*runtime.StorageRead) ([]*api.StorageObject, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	if len(reads) == 1 && reads[0].Collection == "world_at_ruin_allocator_recovery_owners" {
 		if s.row == nil {
 			return nil, nil

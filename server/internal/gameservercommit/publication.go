@@ -116,10 +116,15 @@ type PublicationReadConfig struct {
 	Enabled bool
 	Storage allocatorjournal.JournalStorage
 	Pins    PublicationPins
+	// Witness opts into comparing the completed chain (#1444); zero is off.
+	Witness PublicationWitnessConfig
 }
 
 // ReadRecoveryPublication verifies the exact private proof and original pinned
-// owner, handoff and root. Its diagnostics cannot restore any opaque authority.
+// owner, handoff and root. With a witness composed, the witness must also hold
+// exactly the `published` record those re-derive. Its diagnostics cannot restore any
+// opaque authority: a matching completed chain is read-only verification, and it
+// recreates no reservation, retries no barrier and releases no quarantine.
 func ReadRecoveryPublication(ctx context.Context, cfg PublicationReadConfig) (RecoveryObservation, error) {
 	if !cfg.Enabled {
 		return RecoveryObservation{}, ErrDisabled
@@ -164,6 +169,9 @@ func ReadRecoveryPublication(ctx context.Context, cfg PublicationReadConfig) (Re
 	handoff, err := allocatoradmission.ReadHandoff(ctx, allocatoradmission.HandoffReadConfig{Enabled: true, Storage: cfg.Storage, Binding: owner.Handoff.Journal.Binding, Version: owner.HandoffVersion})
 	if err != nil || ctx.Err() != nil || !reflect.DeepEqual(handoff, owner.Handoff) {
 		return RecoveryObservation{}, publicationUnknown(ctx, err)
+	}
+	if !cfg.Witness.verified(ctx, got, cfg.Pins.Version) || ctx.Err() != nil {
+		return RecoveryObservation{}, publicationUnknown(ctx, nil)
 	}
 	return got, nil
 }

@@ -20,6 +20,11 @@ const (
 	WitnessPublished  = "published"
 )
 
+// WitnessVerified is the custody witness's only positive comparison verdict.
+// Every other answer, including one this package has never heard of, keeps the
+// quarantine.
+const WitnessVerified = "verified"
+
 // WitnessRecord is one allocator generation's witness record, field for field
 // the custody witness generation record. It is declared here so admission and the commit authority, which the native trial
 // command composes, never import the witness client: that composition is a
@@ -45,6 +50,19 @@ type WitnessRecord struct {
 // not witnessed.
 type GenerationWitness interface {
 	WriteGeneration(ctx context.Context, previous, next WitnessRecord) error
+}
+
+// GenerationWitnessReader compares an expected record with the stored one and
+// answers with the custody witness verdict. It never writes.
+type GenerationWitnessReader interface {
+	CompareGeneration(ctx context.Context, expected WitnessRecord) string
+}
+
+// RecoveryWitness is the witness a recoverer needs: it reads the record before
+// it touches anything, and moves it as each stage completes.
+type RecoveryWitness interface {
+	GenerationWitness
+	GenerationWitnessReader
 }
 
 // witnessPinDomain separates generation witness pins from every other digest.
@@ -74,10 +92,10 @@ func WitnessHandoffPin(binding allocatorjournal.JournalBinding, version string) 
 		binding.Version, binding.IssuedCount, binding.IssuedDigest, version)
 }
 
-// witnessOwnerPin is the pin of a recovery owner: the digest of the owner
+// WitnessOwnerPin is the pin of a recovery owner: the digest of the owner
 // create's acknowledgement, which is the row's key, the owner and handoff the
 // row holds, and the version Nakama acknowledged.
-func witnessOwnerPin(cfg RecoveryOwnerConfig, version string) (string, error) {
+func WitnessOwnerPin(cfg RecoveryOwnerConfig, version string) (string, error) {
 	b := cfg.Binding
 	return WitnessPin(WitnessOwner, RecoveryOwnerCollection, RecoveryOwnerKey(b.GenerationID), cfg.OwnerID,
 		b.Version, b.IssuedCount, b.IssuedDigest, cfg.HandoffVersion, version)
@@ -92,7 +110,7 @@ func witnessOwnerPin(cfg RecoveryOwnerConfig, version string) (string, error) {
 // record, so a lost reply's exact re-read cannot tell the two writes apart.
 type RecoveryOwnerWitnessConfig struct {
 	Enabled bool
-	Witness GenerationWitness
+	Witness RecoveryWitness
 	Handoff WitnessRecord
 }
 
