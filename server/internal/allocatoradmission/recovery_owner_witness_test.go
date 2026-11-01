@@ -194,11 +194,11 @@ func TestWitnessedOwnerRequiresTheLiveAcceptance(t *testing.T) {
 // reservedOwner returns a recovery owner and its reservation.
 func reservedOwner(t *testing.T, cfg RecoveryOwnerConfig) (*RecoveryOwner, RecoveryReservation) {
 	t.Helper()
+	var reservation RecoveryReservation
 	owner, err := NewRecoveryOwner(cfg)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		reservation, err = owner.Reserve(context.Background())
 	}
-	reservation, err := owner.Reserve(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
