@@ -82,16 +82,31 @@ ended the script, first set `war_linux_dir` to this invocation's printed tempora
 select a different instance or use force deletion as a substitute for verified shutdown.
 
 ```sh
-export LIMA_HOME="$war_linux_dir/lima"
-limactl stop --tty=false server
-limactl list --json
-limactl delete --tty=false server
-limactl list --json
-rm -r -- "$war_linux_dir"
-unset LIMA_HOME
+(
+  set -euo pipefail
+  : "${war_linux_dir:?Set the printed temporary directory for this invocation first}"
+  case "$war_linux_dir" in
+    /tmp/war-linux.????????) ;;
+    *) echo 'Unexpected temporary directory; retain it for inspection' >&2; exit 1 ;;
+  esac
+  export LIMA_HOME="$war_linux_dir/lima"
+  if [ -d "$LIMA_HOME/server" ]; then
+    limactl stop --tty=false server
+    war_status=$(limactl list --format '{{.Status}}' server)
+    test "$war_status" = Stopped
+    limactl delete --tty=false server
+  fi
+  war_instances=$(limactl list --json)
+  test -z "$war_instances"
+  rm -r -- "$war_linux_dir"
+)
 ```
 
-Verify `Stopped` before deletion, then verify the instance is absent. This retires the guest's
+This block independently enables error handling, verifies `Stopped` before deletion and verifies
+the instance inventory is empty before removing its control directory. A failure before instance
+creation can therefore still be cleaned up. It retires the guest's
 test processes, network listeners, copied source and disk; Lima's normal image download cache
 and the installed host package remain. If shutdown or deletion fails, retain the invocation's
 directory and report cleanup as incomplete.
+After successful cleanup, run `unset LIMA_HOME` or close this dedicated terminal to discard its
+temporary environment.
