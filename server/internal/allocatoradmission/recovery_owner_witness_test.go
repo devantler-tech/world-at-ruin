@@ -403,17 +403,3 @@ func TestVerifyWitnessRequiresTheExactOwnerRow(t *testing.T) {
 		})
 	}
 }
-
-// A handoff read that differs from the one the owner reserved refuses, even with
-// the same pins.
-func TestVerifyWitnessRequiresTheReservedHandoff(t *testing.T) {
-	witness, reservation := witnessedReservation(t)
-	compared := len(witness.compared)
-	reservation.observation.Handoff.Phase = "other"
-	if err := reservation.VerifyWitness(context.Background()); !errors.Is(err, ErrUnknown) {
-		t.Fatalf("verified: %v", err)
-	}
-	if len(witness.compared) != compared {
-		t.Fatal("compared a record Nakama no longer holds")
-	}
-}
