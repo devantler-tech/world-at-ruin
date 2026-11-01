@@ -9,18 +9,19 @@ import (
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatorjournal"
 )
 
-// The generation witness stages written so far. They are the custody witness
-// generation family's stage names (#1444); later stages belong to later slices.
+// The generation witness stages. They are the custody witness generation
+// family's stage names (#1444).
 const (
 	WitnessRegistered = "registered"
 	WitnessDrained    = "drained"
 	WitnessHandoff    = "handoff"
 	WitnessOwner      = "owner"
+	WitnessRecovered  = "recovered"
+	WitnessPublished  = "published"
 )
 
 // WitnessRecord is one allocator generation's witness record, field for field
-// the custody witness generation record up to the stages written so far. It is
-// declared here so admission and the commit authority, which the native trial
+// the custody witness generation record. It is declared here so admission and the commit authority, which the native trial
 // command composes, never import the witness client: that composition is a
 // separate delivery, and the normal and trial artifacts are guarded against
 // composing the witness.
@@ -33,6 +34,8 @@ type WitnessRecord struct {
 	DrainPin        string
 	HandoffPin      string
 	OwnerPin        string
+	RecoveredPin    string
+	PublishedPin    string
 }
 
 // GenerationWitness moves the witness record from previous to next in one
@@ -47,8 +50,8 @@ type GenerationWitness interface {
 // witnessPinDomain separates generation witness pins from every other digest.
 const witnessPinDomain = "world-at-ruin/allocator-generation-witness-pin/v1\n"
 
-// witnessPin digests one stage's originating Nakama acknowledgement.
-func witnessPin(parts ...any) (string, error) {
+// WitnessPin digests one stage's originating acknowledgement.
+func WitnessPin(parts ...any) (string, error) {
 	encoded, err := json.Marshal(parts)
 	if err != nil {
 		return "", ErrUnknown
@@ -60,14 +63,14 @@ func witnessPin(parts ...any) (string, error) {
 // WitnessStagePin is the pin of a registration or drain: the digest of the
 // journal acknowledgement that carries the binding.
 func WitnessStagePin(stage string, binding allocatorjournal.JournalBinding) (string, error) {
-	return witnessPin(stage, Collection, Key(binding.GenerationID), binding.Version, binding.IssuedCount, binding.IssuedDigest)
+	return WitnessPin(stage, Collection, Key(binding.GenerationID), binding.Version, binding.IssuedCount, binding.IssuedDigest)
 }
 
 // WitnessHandoffPin is the pin of a recovery handoff: the digest of the handoff
 // create's acknowledgement, which is the document's key, the drained binding it
 // carries and the version Nakama acknowledged.
 func WitnessHandoffPin(binding allocatorjournal.JournalBinding, version string) (string, error) {
-	return witnessPin(WitnessHandoff, HandoffCollection, HandoffKey(binding.GenerationID),
+	return WitnessPin(WitnessHandoff, HandoffCollection, HandoffKey(binding.GenerationID),
 		binding.Version, binding.IssuedCount, binding.IssuedDigest, version)
 }
 
@@ -76,7 +79,7 @@ func WitnessHandoffPin(binding allocatorjournal.JournalBinding, version string) 
 // row holds, and the version Nakama acknowledged.
 func witnessOwnerPin(cfg RecoveryOwnerConfig, version string) (string, error) {
 	b := cfg.Binding
-	return witnessPin(WitnessOwner, RecoveryOwnerCollection, RecoveryOwnerKey(b.GenerationID), cfg.OwnerID,
+	return WitnessPin(WitnessOwner, RecoveryOwnerCollection, RecoveryOwnerKey(b.GenerationID), cfg.OwnerID,
 		b.Version, b.IssuedCount, b.IssuedDigest, cfg.HandoffVersion, version)
 }
 
@@ -102,7 +105,7 @@ func (c RecoveryOwnerWitnessConfig) valid(binding allocatorjournal.JournalBindin
 		return isNil(c.Witness) && c.Handoff == (WitnessRecord{})
 	}
 	h := c.Handoff
-	if isNil(c.Witness) || h.Stage != WitnessHandoff || h.OwnerPin != "" || h.RegistrationPin == "" ||
+	if isNil(c.Witness) || h.Stage != WitnessHandoff || h.OwnerPin != "" || h.RecoveredPin != "" || h.PublishedPin != "" || h.RegistrationPin == "" ||
 		h.GenerationKey != Key(binding.GenerationID) || h.GrantCount != binding.IssuedCount || h.IssuedDigest != binding.IssuedDigest {
 		return false
 	}

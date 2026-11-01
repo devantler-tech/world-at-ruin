@@ -58,7 +58,9 @@ func NewRecoveryPublisher(cfg PublicationConfig, result RecoveryResult) (*Recove
 	return &RecoveryPublisher{state: &publicationState{cfg: cfg, result: result}}, nil
 }
 
-// Publish spends the complete result's shared attempt before storage I/O.
+// Publish spends the complete result's shared attempt before storage I/O. With a
+// witness composed, its result also waits for the witness to hold `published`; a
+// refusal leaves the private proof row unwitnessed and returns nothing.
 func (p *RecoveryPublisher) Publish(ctx context.Context) (PublicationResult, error) {
 	if p == nil || p.state == nil {
 		return PublicationResult{}, ErrClosed
@@ -80,6 +82,13 @@ func (p *RecoveryPublisher) Publish(ctx context.Context) (PublicationResult, err
 	}
 	pins := PublicationPins{Version: acks[0].GetVersion(), Recovery: complete}
 	if _, err = ReadRecoveryPublication(ctx, PublicationReadConfig{Enabled: true, Storage: p.state.cfg.Storage, Pins: pins}); err != nil || ctx.Err() != nil {
+		return PublicationResult{}, publicationUnknown(ctx, err)
+	}
+	pin, err := witnessPublishedPin(complete.Owner.Handoff.Journal.Binding.GenerationID, pins.Version)
+	if err == nil {
+		err = p.state.result.state.reservation.AdvanceWitness(ctx, WitnessPublished, pin)
+	}
+	if err != nil {
 		return PublicationResult{}, publicationUnknown(ctx, err)
 	}
 	p.state.accepted.Store(&pins)

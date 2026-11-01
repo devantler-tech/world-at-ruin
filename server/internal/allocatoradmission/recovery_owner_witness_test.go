@@ -59,7 +59,7 @@ func TestReserveWithholdsTheReservationUntilTheWitnessAcknowledges(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	own, err := reservation.WitnessedOwner()
+	own, err := reservation.Witnessed()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestReserveReturnsNothingWhenTheWitnessRefuses(t *testing.T) {
 	if _, err = reservation.Consume(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("unwitnessed reservation consumed: %v", err)
 	}
-	if _, err = reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
+	if _, err = reservation.Witnessed(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("unwitnessed record returned: %v", err)
 	}
 	if _, err = owner.Reserve(context.Background()); !errors.Is(err, ErrClosed) {
@@ -130,7 +130,7 @@ func TestReserveReturnsNothingWhenTheWitnessRefuses(t *testing.T) {
 func TestRecoveryOwnerWithoutAWitnessHoldsNoRecord(t *testing.T) {
 	_, cfg := recoveryFixture(t)
 	owner, reservation := reservedOwner(t, cfg)
-	if _, err := reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
+	if _, err := reservation.Witnessed(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("witness record without a witness: %v", err)
 	}
 	if _, err := owner.Accept(reservation); err != nil {
@@ -151,6 +151,8 @@ func TestRecoveryOwnerRefusesAnInexactWitnessConfiguration(t *testing.T) {
 		"no record":         func(c *RecoveryOwnerWitnessConfig) { c.Handoff = WitnessRecord{} },
 		"drained stage":     func(c *RecoveryOwnerWitnessConfig) { c.Handoff.Stage = WitnessDrained },
 		"owner already":     func(c *RecoveryOwnerWitnessConfig) { c.Handoff.OwnerPin = "pin" },
+		"recovered already": func(c *RecoveryOwnerWitnessConfig) { c.Handoff.RecoveredPin = "pin" },
+		"published already": func(c *RecoveryOwnerWitnessConfig) { c.Handoff.PublishedPin = "pin" },
 		"other generation":  func(c *RecoveryOwnerWitnessConfig) { c.Handoff.GenerationKey = Key("other") },
 		"other count":       func(c *RecoveryOwnerWitnessConfig) { c.Handoff.GrantCount++ },
 		"other issued set":  func(c *RecoveryOwnerWitnessConfig) { c.Handoff.IssuedDigest += "0" },
@@ -180,13 +182,13 @@ func TestRecoveryOwnerRefusesAnInexactWitnessConfiguration(t *testing.T) {
 
 // Only the exact live acceptance returns the record: a reservation of a
 // different observation does not, even when it holds an `owner` record.
-func TestWitnessedOwnerRequiresTheLiveAcceptance(t *testing.T) {
+func TestWitnessedRequiresTheLiveAcceptance(t *testing.T) {
 	_, cfg := recoveryFixture(t)
 	cfg.Witness = RecoveryOwnerWitnessConfig{Enabled: true, Witness: &fakeWitness{}, Handoff: witnessedHandoff(t, cfg)}
 	_, reservation := reservedOwner(t, cfg)
 	copied := *reservation.observation
 	reservation.observation = &copied
-	if _, err := reservation.WitnessedOwner(); !errors.Is(err, ErrClosed) {
+	if _, err := reservation.Witnessed(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("record returned without the live acceptance: %v", err)
 	}
 }
@@ -203,4 +205,80 @@ func reservedOwner(t *testing.T, cfg RecoveryOwnerConfig) (*RecoveryOwner, Recov
 		t.Fatal(err)
 	}
 	return owner, reservation
+}
+
+// The recovery stages advance in order from the exact retained record, each
+// changing only its stage and pin; a refused write leaves the record in place.
+func TestAdvanceWitnessMovesForwardOneStageAtATime(t *testing.T) {
+	witness, reservation := witnessedReservation(t)
+	own, _ := reservation.Witnessed()
+	if err := reservation.AdvanceWitness(context.Background(), WitnessPublished, "pin"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("published skipped recovered: %v", err)
+	}
+	if err := reservation.AdvanceWitness(context.Background(), WitnessOwner, "pin"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("owner repeated: %v", err)
+	}
+	if err := reservation.AdvanceWitness(context.Background(), WitnessRecovered, ""); !errors.Is(err, ErrClosed) {
+		t.Fatalf("empty pin accepted: %v", err)
+	}
+	if len(witness.next) != 1 {
+		t.Fatalf("refused stages reached the witness: %d calls", len(witness.next))
+	}
+	witness.err = errors.New("refused")
+	if err := reservation.AdvanceWitness(context.Background(), WitnessRecovered, "recovered-pin"); !errors.Is(err, ErrUnknown) {
+		t.Fatalf("refused write acknowledged: %v", err)
+	}
+	if got, _ := reservation.Witnessed(); got != own {
+		t.Fatalf("refused write moved the record: %+v", got)
+	}
+	witness.err = nil
+	if err := reservation.AdvanceWitness(context.Background(), WitnessRecovered, "recovered-pin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reservation.AdvanceWitness(context.Background(), WitnessRecovered, "again"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("recovered repeated: %v", err)
+	}
+	if err := reservation.AdvanceWitness(context.Background(), WitnessPublished, "published-pin"); err != nil {
+		t.Fatal(err)
+	}
+	want := own
+	want.Stage, want.RecoveredPin, want.PublishedPin = WitnessPublished, "recovered-pin", "published-pin"
+	got, _ := reservation.Witnessed()
+	if got != want || witness.previous[len(witness.previous)-1].Stage != WitnessRecovered {
+		t.Fatalf("chain ended at %+v, want %+v", got, want)
+	}
+}
+
+// With no witness composed, advancing does nothing and a dead reservation is
+// still refused.
+func TestAdvanceWitnessWithoutAWitnessDoesNothing(t *testing.T) {
+	_, cfg := recoveryFixture(t)
+	_, reservation := reservedOwner(t, cfg)
+	if err := reservation.AdvanceWitness(context.Background(), WitnessRecovered, "pin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := (RecoveryReservation{}).AdvanceWitness(context.Background(), WitnessRecovered, "pin"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("dead reservation advanced: %v", err)
+	}
+}
+
+// Only the exact live acceptance advances: a reservation of a different
+// observation does not, and the witness never hears of it.
+func TestAdvanceWitnessRequiresTheLiveAcceptance(t *testing.T) {
+	witness, reservation := witnessedReservation(t)
+	copied := *reservation.observation
+	reservation.observation = &copied
+	if err := reservation.AdvanceWitness(context.Background(), WitnessRecovered, "pin"); !errors.Is(err, ErrClosed) || len(witness.next) != 1 {
+		t.Fatalf("dead reservation advanced: %v after %d witness calls", err, len(witness.next))
+	}
+}
+
+// witnessedReservation returns a live reservation whose witness holds `owner`.
+func witnessedReservation(t *testing.T) (*fakeWitness, RecoveryReservation) {
+	t.Helper()
+	_, cfg := recoveryFixture(t)
+	witness := &fakeWitness{}
+	cfg.Witness = RecoveryOwnerWitnessConfig{Enabled: true, Witness: witness, Handoff: witnessedHandoff(t, cfg)}
+	_, reservation := reservedOwner(t, cfg)
+	return witness, reservation
 }
