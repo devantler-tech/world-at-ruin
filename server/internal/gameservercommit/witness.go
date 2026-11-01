@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/devantler-tech/world-at-ruin/server/internal/allocatoradmission"
+	"github.com/devantler-tech/world-at-ruin/server/internal/allocatorjournal"
 )
 
 // The generation witness stages this package writes. They are the custody
@@ -16,6 +17,7 @@ import (
 const (
 	WitnessRegistered = "registered"
 	WitnessDrained    = "drained"
+	WitnessHandoff    = "handoff"
 )
 
 // WitnessRecord is one allocator generation's witness record, field for field
@@ -30,6 +32,7 @@ type WitnessRecord struct {
 	IssuedDigest    string
 	RegistrationPin string
 	DrainPin        string
+	HandoffPin      string
 }
 
 // GenerationWitness moves the witness record from previous to next in one
@@ -42,9 +45,10 @@ type GenerationWitness interface {
 }
 
 // GenerationWitnessConfig opts the durable generation into persist-before-ACK
-// witnessing of its root registration, every grant registration and its
-// drain. Its zero value composes no witness; a half-configured value (enabled
-// without a witness, or a witness without enablement) is refused.
+// witnessing of its root registration, every grant registration, its drain
+// and its recovery handoff. Its zero value composes no witness; a
+// half-configured value (enabled without a witness, or a witness without
+// enablement) is refused.
 type GenerationWitnessConfig struct {
 	Enabled bool
 	Witness GenerationWitness
@@ -84,6 +88,16 @@ type generationWitness struct {
 // witnessPinDomain separates generation witness pins from every other digest.
 const witnessPinDomain = "world-at-ruin/allocator-generation-witness-pin/v1\n"
 
+// witnessPin digests one stage's originating Nakama acknowledgement.
+func witnessPin(parts ...any) (string, error) {
+	encoded, err := json.Marshal(parts)
+	if err != nil {
+		return "", ErrUnknown
+	}
+	digest := sha256.Sum256(append([]byte(witnessPinDomain), encoded...))
+	return hex.EncodeToString(digest[:]), nil
+}
+
 // advance witnesses stage for the acknowledged Nakama snapshot, conditional on
 // the previously witnessed record. A registration replaces the registration
 // fields with the snapshot's complete issued set; a drain keeps them and adds
@@ -91,12 +105,10 @@ const witnessPinDomain = "world-at-ruin/allocator-generation-witness-pin/v1\n"
 // acknowledgement. Only an acknowledged write moves the retained record.
 func (w *generationWitness) advance(ctx context.Context, stage string, snapshot *allocatoradmission.Snapshot) error {
 	binding := snapshot.Observation().Journal.Binding
-	encoded, err := json.Marshal([]any{stage, allocatoradmission.Collection, w.key, binding.Version, binding.IssuedCount, binding.IssuedDigest})
+	pin, err := witnessPin(stage, allocatoradmission.Collection, w.key, binding.Version, binding.IssuedCount, binding.IssuedDigest)
 	if err != nil {
-		return ErrUnknown
+		return err
 	}
-	digest := sha256.Sum256(append([]byte(witnessPinDomain), encoded...))
-	pin := hex.EncodeToString(digest[:])
 	next := w.acked
 	switch stage {
 	case WitnessRegistered:
@@ -109,7 +121,40 @@ func (w *generationWitness) advance(ctx context.Context, stage string, snapshot 
 	default:
 		return ErrInvalid
 	}
-	if err = w.writer.WriteGeneration(ctx, w.acked, next); err != nil {
+	return w.write(ctx, next)
+}
+
+// handoff witnesses the acknowledged private recovery handoff, conditional on
+// the exact witnessed `drained` record. Its pin is the digest of the handoff
+// create's acknowledgement: the handoff document's key, the drained binding it
+// carries and the version Nakama acknowledged.
+func (w *generationWitness) handoff(ctx context.Context, binding allocatorjournal.JournalBinding, version string) error {
+	// The handoff must carry exactly the witnessed drained generation and
+	// issued set; any other binding would pin a handoff of a different one.
+	if w.acked.Stage != WitnessDrained || allocatoradmission.Key(binding.GenerationID) != w.key ||
+		binding.IssuedCount != w.acked.GrantCount || binding.IssuedDigest != w.acked.IssuedDigest {
+		return ErrInvalid
+	}
+	// The drain pin also binds the journal version, so only the exact drained
+	// binding re-derives it.
+	drainPin, err := witnessPin(WitnessDrained, allocatoradmission.Collection, w.key,
+		binding.Version, binding.IssuedCount, binding.IssuedDigest)
+	if err != nil || drainPin != w.acked.DrainPin {
+		return ErrInvalid
+	}
+	pin, err := witnessPin(WitnessHandoff, allocatoradmission.HandoffCollection, allocatoradmission.HandoffKey(binding.GenerationID),
+		binding.Version, binding.IssuedCount, binding.IssuedDigest, version)
+	if err != nil {
+		return err
+	}
+	next := w.acked
+	next.Stage, next.HandoffPin = WitnessHandoff, pin
+	return w.write(ctx, next)
+}
+
+// write moves the retained record to next only when the witness acknowledges it.
+func (w *generationWitness) write(ctx context.Context, next WitnessRecord) error {
+	if err := w.writer.WriteGeneration(ctx, w.acked, next); err != nil {
 		return unknown(ctx)
 	}
 	w.acked = next
