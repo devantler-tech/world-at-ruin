@@ -176,7 +176,8 @@ func (r RecoveryReservation) VerifyWitness(ctx context.Context) error {
 	if current == nil {
 		return ErrClosed
 	}
-	if _, err := ReadHandoff(ctx, HandoffReadConfig{Enabled: true, Storage: cfg.Storage, Binding: cfg.Binding, Version: cfg.HandoffVersion}); err != nil {
+	handoff, err := ReadHandoff(ctx, HandoffReadConfig{Enabled: true, Storage: cfg.Storage, Binding: cfg.Binding, Version: cfg.HandoffVersion})
+	if err != nil || !reflect.DeepEqual(handoff, r.observation.Handoff) {
 		return unknown(ctx, err)
 	}
 	key := RecoveryOwnerKey(cfg.Binding.GenerationID)
@@ -185,7 +186,7 @@ func (r RecoveryReservation) VerifyWitness(ctx context.Context) error {
 		return unknown(ctx, err)
 	}
 	row := rows[0]
-	if row.GetCollection() != RecoveryOwnerCollection || row.GetKey() != key || row.GetUserId() != nakamastorage.SystemOwnerID {
+	if row.GetCollection() != RecoveryOwnerCollection || row.GetKey() != key || row.GetUserId() != nakamastorage.SystemOwnerID || row.GetPermissionRead() != 0 || row.GetPermissionWrite() != 0 {
 		return unknown(ctx, nil)
 	}
 	stored, err := DecodeRecoveryOwner(row.GetValue())

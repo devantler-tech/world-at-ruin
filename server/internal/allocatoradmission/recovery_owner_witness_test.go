@@ -372,6 +372,8 @@ func TestVerifyWitnessRequiresTheExactOwnerRow(t *testing.T) {
 		"foreign collection": func(r *api.StorageObject) *api.StorageObject { r.Collection = "foreign"; return r },
 		"foreign key":        func(r *api.StorageObject) *api.StorageObject { r.Key = "foreign"; return r },
 		"foreign user":       func(r *api.StorageObject) *api.StorageObject { r.UserId = "foreign"; return r },
+		"readable":           func(r *api.StorageObject) *api.StorageObject { r.PermissionRead = 1; return r },
+		"writable":           func(r *api.StorageObject) *api.StorageObject { r.PermissionWrite = 1; return r },
 		"unreadable":         func(r *api.StorageObject) *api.StorageObject { r.Value = "{}"; return r },
 		"another owner": func(r *api.StorageObject) *api.StorageObject {
 			got, err := DecodeRecoveryOwner(r.GetValue())
@@ -399,5 +401,19 @@ func TestVerifyWitnessRequiresTheExactOwnerRow(t *testing.T) {
 				t.Fatal("compared a record Nakama no longer holds")
 			}
 		})
+	}
+}
+
+// A handoff read that differs from the one the owner reserved refuses, even with
+// the same pins.
+func TestVerifyWitnessRequiresTheReservedHandoff(t *testing.T) {
+	witness, reservation := witnessedReservation(t)
+	compared := len(witness.compared)
+	reservation.observation.Handoff.Phase = "other"
+	if err := reservation.VerifyWitness(context.Background()); !errors.Is(err, ErrUnknown) {
+		t.Fatalf("verified: %v", err)
+	}
+	if len(witness.compared) != compared {
+		t.Fatal("compared a record Nakama no longer holds")
 	}
 }
