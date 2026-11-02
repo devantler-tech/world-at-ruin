@@ -2889,6 +2889,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # aggregate-job-checks reads Actions metadata for check-workflow-startup.
       actions: read
     # detect-visual-changes is in here for a reason that is easy to miss: it is
     # the GATE for frame-capture, so if it fails, frame-capture is skipped — and

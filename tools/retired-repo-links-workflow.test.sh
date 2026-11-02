@@ -99,7 +99,8 @@ admit() {
       and ([.steps[] | select(.uses? | strings | startswith("devantler-tech/.github/actions/aggregate-job-checks@"))] | length) == 1
       and (.steps[-1] | keys == ["uses","with"]
         and (.uses | pinned("devantler-tech/\\.github/actions/aggregate-job-checks") | type) == "string"
-        and (.with | keys) == ["job-results"]
+        and (.with | keys) == ["check-workflow-startup","job-results"]
+        and .with["check-workflow-startup"] == "true"
         and (.with["job-results"] | contains("${{ needs.retired-repo-links.result }}"))))
     and (.guard | keys == ["jobs","name","on","permissions"]
       and .on == {push:{branches:["main"]}}
