@@ -59,19 +59,23 @@ extends Node
 ## repeated" as a statement about the runs taken rather than a property proven.
 ##
 ## Those are RUNS ON ONE MACHINE, which is the same shape `frame_diff.gd`'s
-## second lesson warns reads too low, so this is not an independent-build floor
-## and must not be quoted as one. It establishes only that the run-to-run term
-## does not swamp a 1e-4 move here; a CI gate on this tool would need the
-## across-builds measurement first (#715).
+## second lesson warns reads too low, so they are not an independent-build floor.
+## The across-builds floor was measured later over three independent checkouts
+## (#715): runs flip between two states, which every checkout shows, so
+## `RELIEF_STRENGTH` varies by one printed unit at 6 m and 48 m and not at all
+## at 12 m and 24 m. Compare only runs in the same state; `RELIEF_COVERED` tells
+## the two apart. That floor is from one host, not CI, so nothing gates on it.
 ##
 ## ALWAYS TAKE AN ABLATION ARM, and treat it as part of the measurement rather
 ## than a courtesy. The ceiling change moves the 6 m strength by 1e-4 — ten
 ## units of the last printed digit — and a build whose shader never recompiled
 ## reports a near-identical number, so a thin real move and a dead pipeline are
-## the SAME observation until a control separates them. Setting the ceiling to
-## `0.02` moves that strength 0.02416 -> 0.14249 and coverage 0.00471 -> 0.99780;
-## because that fires, the edit is reaching the GPU and the thin reading is a
-## measurement. Without it the honest conclusion is "no information".
+## the SAME observation until a control separates them. In August, setting the
+## ceiling to `0.02` moved that strength 0.02416 -> 0.14249 and coverage
+## 0.00471 -> 0.99780. At the revisions #715 measured it moves the strength only
+## about -6.4e-4, which is still some 64 units above the floor; because that
+## fires, the edit is reaching the GPU and the thin reading is a measurement.
+## Without it the honest conclusion is "no information".
 ## The measurements and the reproduction steps are recorded in
 ## `docs/evidence/issue-696-relief-instrument/`.
 ##
