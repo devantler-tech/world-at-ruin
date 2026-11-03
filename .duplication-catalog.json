@@ -247,17 +247,6 @@
       "cleanupIssue": 276
     },
     {
-      "identitySHA256": "193af8b30c7fcb32ab4721391b6d2cf3526247af8ad7108535cd3ca13979351f",
-      "format": "bash",
-      "files": [
-        "tools/provenance-guard.test.sh",
-        "tools/provenance-guard.test.sh"
-      ],
-      "fragmentSHA256": "58ce6fb85d39885ee8c4cac8550ef4915e7eb7745529cef78c09214bca785ac1",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
       "identitySHA256": "1b25a001f36bbbf5c4f8f8d1cb9adc0ff7ec745590651893ec05887e5db2d8a8",
       "format": "go",
       "files": [
@@ -287,17 +276,6 @@
         "client/tests/player_step_budget_test.gd"
       ],
       "fragmentSHA256": "5faffa9656fb84e3ec2765275440d53af355b8c1f1a9b5f7320c0696cf0a0a09",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "1e689e2a1c4f9c43832d50e668d55f67f8b7c92fe497de9d42da60a9cc55c554",
-      "format": "bash",
-      "files": [
-        "tools/test-cd-cask-disarm-budget.sh",
-        "tools/test-cd-cask-rest-delivery.sh"
-      ],
-      "fragmentSHA256": "4b1772a158e5292e2e0feacd6417d85523c087beceec05dbb3f638266e11f179",
       "occurrences": 1,
       "cleanupIssue": 276
     },
@@ -364,17 +342,6 @@
         "server/internal/gameservercommit/journal_test.go"
       ],
       "fragmentSHA256": "104b9eed26800765d9b5b1071fb9ab523ad0a1020409f1847582f6bdf1dd495a",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "2b017abfeceec89d7002839f7b29464ad0c646174b8c253740ec3bcf52078e44",
-      "format": "bash",
-      "files": [
-        "tools/provenance-guard.test.sh",
-        "tools/provenance-guard.test.sh"
-      ],
-      "fragmentSHA256": "db1f7f6fcf2d2a79c681c5cdbbe7ffa9a3b33825518e16a9b07002b6040fdec7",
       "occurrences": 1,
       "cleanupIssue": 276
     },
@@ -749,17 +716,6 @@
         "server/cmd/zone/shutdown_test.go"
       ],
       "fragmentSHA256": "9213296076f33f8474c6790b798fb58633f33ad1734409675221e0fc96a5577e",
-      "occurrences": 1,
-      "cleanupIssue": 276
-    },
-    {
-      "identitySHA256": "71805ce07ccb693a3dc627f49719905bc89b31c797d0147ef9fb91e23e919354",
-      "format": "python",
-      "files": [
-        "tools/artgen/creature_kit/bake.py",
-        "tools/artgen/humanoid_kit/bake.py"
-      ],
-      "fragmentSHA256": "12f42de468d8ef8a1a4b35be5f2f08f15326cefe4fc50042bc58f424047a37a6",
       "occurrences": 1,
       "cleanupIssue": 276
     },

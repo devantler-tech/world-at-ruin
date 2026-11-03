@@ -20,17 +20,21 @@ compares the structural report against the committed kit_report.txt.
 This directory is the sanctioned Python/bpy exception (AGENTS.md, Scripting);
 Python appears nowhere else in the repo.
 """
-import hashlib
 import importlib
 import json
 import math
 import os
 import sys
-import traceback
 
 import bpy
 
 KIT_DIR = os.path.dirname(os.path.abspath(__file__))
+# The shared kit ending lives in tools/artgen/; importing it must not leave a
+# __pycache__ directory in the source tree.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(KIT_DIR))
+import bake_finish  # noqa: E402
+
 PACKS_DIR = os.path.join(KIT_DIR, "packs")
 # How far (metres) an equip_hide_* shape tucks covered body vertices inward
 # along their normals — deep enough that animation never pokes skin through
@@ -673,12 +677,8 @@ def main() -> None:
     bake_skins(manifest, os.path.dirname(os.path.abspath(out_path)))
 
     shape_names = [kb.name for kb in mesh_obj.data.shape_keys.key_blocks[1:]]
-    with open(out_path, "rb") as glb:
-        sha = hashlib.sha256(glb.read()).hexdigest()
     # The structural report is the committed contract the Godot regression
-    # test and the artgen workflow both check against. The GLB sha is printed
-    # for run-to-run determinism checks but kept out of the report file:
-    # float bit-exactness across OS/arch is not guaranteed, structure is.
+    # test and the artgen workflow both check against.
     report_lines = [
         "kit_version=%d" % manifest["kit_version"],
         "verts=%d" % len(mesh_obj.data.vertices),
@@ -693,17 +693,7 @@ def main() -> None:
             piece["name"], piece["slot"], len(clothes.data.vertices),
             hidden_counts[piece["name"]],
             len(clothes.data.shape_keys.key_blocks) - 1))
-    with open(os.path.splitext(out_path)[0] + "_report.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(report_lines) + "\n")
-    for line in report_lines:
-        print("BAKE_REPORT " + line)
-    print("BAKE_REPORT glb_sha256=%s size=%d" % (sha, os.path.getsize(out_path)))
-    print("RESULT: SUCCESS")
+    bake_finish.finish_bake(out_path, report_lines)
 
 
-try:
-    main()
-except Exception:
-    traceback.print_exc()
-    print("RESULT: FAILURE")
-    sys.exit(1)
+bake_finish.run_bake(main)

@@ -67,6 +67,9 @@ sleep() {
 	printf '%s\n' "$1" >>"${sleep_log}"
 }
 
+# shellcheck source=tools/cask-protection-reads-stub.sh
+source "${repo_root}/tools/cask-protection-reads-stub.sh"
+
 # One stub for every REST surface the helpers touch. It dispatches on the
 # request rather than on call order, so a helper that starts issuing its reads
 # in a different order still exercises the same fixtures.
@@ -101,12 +104,7 @@ gh() {
 		[ "${#mock_checks[@]}" -gt 0 ] && printf '%s\n' "${mock_checks[idx]}"
 		return 0
 	fi
-	if [[ "${path}" == */rules/branches/* ]]; then
-		printf '%s\n' "${mock_required}"
-		return 0
-	fi
-	if [[ "${path}" == */status ]]; then
-		printf '%s\n' "${mock_statuses}"
+	if answer_cask_protection_read "${path}" "${mock_required}" "${mock_statuses}"; then
 		return 0
 	fi
 	if [[ "${path}" == */pulls/* ]]; then
