@@ -70,11 +70,13 @@ four of the eight the real change moves *less* than the no-op. Frames are not bi
 — `frame_diff.gd`'s own back-to-back table runs from 0.02% to 35.66% on unchanged code — so a
 checksum or byte comparison of captures is invalid as well, however reasonable it looks.
 For this class the instrument is [`client/tools/relief_read.gd`](../../client/tools/relief_read.gd), which
-differences the build against `crack_relief = 0` rather than against another render, and whose
-`RELIEF_STRENGTH` repeats to every printed digit across three runs on one machine. Compare on
-strength, not coverage: coverage moved a unit in its last digit at 48 m on the third of those runs,
-and that figure is runs-on-one-machine anyway — the shape `frame_diff.gd`'s second lesson warns reads
-too low — so it is not an independent-build floor and nothing here may gate on it (#715).
+differences the build against `crack_relief = 0` rather than against another render. Its
+`RELIEF_STRENGTH` has a measured across-builds floor of one printed unit (1e-5) at 6 m and 48 m and
+zero at 12 m and 24 m: a two-state flip between runs that every independent checkout shows (#715).
+Compare on strength, take more than one run per arm, and compare only runs in the same state —
+`RELIEF_COVERED` tells the two states apart. With one run per arm, a change must move the 6 m strength
+by about 3e-5 to be read safely. That floor was measured on one Apple M2 Pro host, not on CI, so
+nothing may gate on it yet.
 **Any "capture before and after" criterion must name an ABLATION alongside the instrument** — a
 deliberate wrong build the instrument has to distinguish — because a blind instrument and a correct
 change read the same, and only the ablation tells them apart. Both measurements, including the
