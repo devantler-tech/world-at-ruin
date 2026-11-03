@@ -2762,13 +2762,13 @@ jobs:
     steps:
       - name: Capture the first complete cloth mode
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@dd28ac3c6005da5ec0bdb208bf634f1389f133a1
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@c9d45bc76f84b74fecc48feef7bb08023e87255e
         with:
           mode: ${{ matrix.first }}
       - name: Capture the second complete cloth mode
         if: always() && !cancelled()
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@dd28ac3c6005da5ec0bdb208bf634f1389f133a1
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@c9d45bc76f84b74fecc48feef7bb08023e87255e
         with:
           mode: ${{ matrix.second }}
 
@@ -2887,6 +2887,10 @@ jobs:
     name: CI - Required Checks
     timeout-minutes: 5
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # aggregate-job-checks reads Actions metadata for check-workflow-startup.
+      actions: read
     # detect-visual-changes is in here for a reason that is easy to miss: it is
     # the GATE for frame-capture, so if it fails, frame-capture is skipped — and
     # aggregate-job-checks accepts a skip. A broken gate would therefore silently
@@ -2946,8 +2950,9 @@ jobs:
           CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@2082a0ac4616cf809fadc0ce737a91641358eb07 # v19.0.0
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@da5f0839b418626a8a0b69df1f04ba931a38e371 # v19.1.0
         with:
+          check-workflow-startup: "true"
           # The capture jobs and detect-visual-changes are
           # conditional and report `skipped` on PRs with no player-visible
           # change (and on merge_group). aggregate-job-checks treats skipped as
