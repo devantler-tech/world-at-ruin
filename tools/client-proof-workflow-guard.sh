@@ -50,7 +50,8 @@ if ! yq -o=json '.' "$workflow" | jq -e '
     and .steps[2] == {name:"Runtime footprint reports require complete bounded observations", run:"go test tools/trusted-runtime-packages/main.go tools/trusted-runtime-packages/main_test.go\nbash tools/trusted-runtime-packages.test.sh\ngo test tools/trusted-runtime-bases/main.go tools/trusted-runtime-bases/main_test.go\nbash tools/trusted-runtime-bases.test.sh\ngo test tools/trusted-runtime-footprint/main.go tools/trusted-runtime-footprint/main_test.go\ngo test tools/trusted-runtime-inventory/main.go tools/trusted-runtime-inventory/main_test.go\ngo test tools/trusted-runtime-origin/main.go tools/trusted-runtime-origin/main_test.go\ngo test tools/trusted-runtime-archives/main.go tools/trusted-runtime-archives/main_test.go\nbash tools/trusted-runtime-inventory.test.sh\nbash tools/trusted-runtime-transaction.test.sh\nbash tools/propose-trusted-runtime-archives.test.sh\n"}
     and .steps[4] == {name:"Real sandbox refuses escape and runs the full trusted suite", "timeout-minutes":45, env:{WAR_TRUSTED_RUNTIME_FOOTPRINT:"1",WAR_TRUSTED_RUNTIME_INVENTORY_PROBE:"1"}, run:"bash tools/sandbox-godot-isolation.test.sh"})
   and (.jobs["ci-required-checks"] |
-    keys == ["if","name","needs","runs-on","steps","timeout-minutes"]
+    keys == ["if","name","needs","permissions","runs-on","steps","timeout-minutes"]
+    and .permissions == {contents:"read",actions:"read"}
     and .name == "CI - Required Checks" and ."runs-on" == "ubuntu-latest" and ."timeout-minutes" == 5
     and .if == "${{ always() }}" and .needs == $required
     and (.steps | length) == 5
@@ -77,7 +78,8 @@ if ! yq -o=json '.' "$workflow" | jq -e '
     }
     and (.steps[4] | keys == ["uses","with"]
       and (.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))
-      and (.with | keys == ["job-results"])
+      and (.with | keys == ["check-workflow-startup","job-results"])
+      and .with["check-workflow-startup"] == "true"
       and .with["job-results"] == ($required | map(result(.)) | join(" "))))
 ' >/dev/null; then
   echo '::error::client CI must require both complete, independently cleaned proofs at the integration SHA' >&2
