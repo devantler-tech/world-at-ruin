@@ -86,6 +86,9 @@ cask_version_at() {
 
 sleep() { :; }
 
+# shellcheck source=tools/cask-protection-reads-stub.sh
+source "${repo_root}/tools/cask-protection-reads-stub.sh"
+
 gh() {
 	local a token_put=0 token_patch=0 path="" is_graphql=0
 	printf '%s\n' "$*" >>"${call_log}"
@@ -118,12 +121,7 @@ gh() {
 		printf '%s\n' "${mock_checks}"
 		return 0
 	fi
-	if [[ "${path}" == */rules/branches/* ]]; then
-		printf '%s\n' "${mock_required}"
-		return 0
-	fi
-	if [[ "${path}" == */status ]]; then
-		printf '%s\n' "${mock_statuses}"
+	if answer_cask_protection_read "${path}" "${mock_required}" "${mock_statuses}"; then
 		return 0
 	fi
 	if [[ "${path}" == */pulls/* ]]; then

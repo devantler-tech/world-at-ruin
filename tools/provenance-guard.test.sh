@@ -51,6 +51,41 @@ write_pack_provenance() {
 	git -C "$repo" add client/assets/pack/PROVENANCE.md
 }
 
+# A script that load()s the pack texture at runtime, so the guard must treat it
+# as runtime-loaded rather than imported by a 3D resource.
+write_runtime_loader() {
+	local repo="$1"
+
+	mkdir -p "$repo/client/scripts"
+	printf '%s\n' \
+		'extends Node' \
+		'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
+		>"$repo/client/scripts/runtime_loader.gd"
+}
+
+# Stages a runtime-loaded texture whose import metadata sets the params-section
+# mip chain to $2, with both files recorded in the pack's provenance.
+stage_runtime_texture() {
+	local repo="$1"
+	local mipmaps="$2"
+
+	printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
+	printf '%s\n' \
+		'[remap]' \
+		'importer="texture"' \
+		'type="CompressedTexture2D"' \
+		'' \
+		'[params]' \
+		"mipmaps/generate=$mipmaps" \
+		>"$repo/client/assets/pack/runtime_skin.png.import"
+	write_runtime_loader "$repo"
+	git -C "$repo" add \
+		client/assets/pack/runtime_skin.png \
+		client/assets/pack/runtime_skin.png.import \
+		client/scripts/runtime_loader.gd
+	write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+}
+
 expect_failure() {
 	local name="$1"
 	local expected="$2"
@@ -103,17 +138,7 @@ expect_failure \
 repo=$(new_repo changed)
 printf 'asset-v1\n' >"$repo/client/assets/pack/hero.bin"
 git -C "$repo" add client/assets/pack/hero.bin
-sha=$(index_sha256 "$repo" client/assets/pack/hero.bin)
-printf '%s\n' \
-	'# Provenance' \
-	'' \
-	'Source: original work. Licence: owned outright.' \
-	'' \
-	'```text' \
-	"$sha  hero.bin" \
-	'```' \
-	>"$repo/client/assets/pack/PROVENANCE.md"
-git -C "$repo" add client/assets/pack/PROVENANCE.md
+write_pack_provenance "$repo" hero.bin
 printf 'asset-v2\n' >"$repo/client/assets/pack/hero.bin"
 git -C "$repo" add client/assets/pack/hero.bin
 expect_failure \
@@ -124,34 +149,14 @@ expect_failure \
 repo=$(new_repo accounted)
 printf 'asset-v1\n' >"$repo/client/assets/pack/hero.bin"
 git -C "$repo" add client/assets/pack/hero.bin
-sha=$(index_sha256 "$repo" client/assets/pack/hero.bin)
-printf '%s\n' \
-	'# Provenance' \
-	'' \
-	'Source: original work. Licence: owned outright.' \
-	'' \
-	'```text' \
-	"$sha  hero.bin" \
-	'```' \
-	>"$repo/client/assets/pack/PROVENANCE.md"
-git -C "$repo" add client/assets/pack/PROVENANCE.md
+write_pack_provenance "$repo" hero.bin
 expect_success "exact path and checksum are accepted" "$repo"
 
 repo=$(new_repo inherited)
 mkdir -p "$repo/client/assets/pack/sub"
 printf 'asset-v1\n' >"$repo/client/assets/pack/sub/hero.bin"
 git -C "$repo" add client/assets/pack/sub/hero.bin
-sha=$(index_sha256 "$repo" client/assets/pack/sub/hero.bin)
-printf '%s\n' \
-	'# Provenance' \
-	'' \
-	'Source: original work. Licence: owned outright.' \
-	'' \
-	'```text' \
-	"$sha  sub/hero.bin" \
-	'```' \
-	>"$repo/client/assets/pack/PROVENANCE.md"
-git -C "$repo" add client/assets/pack/PROVENANCE.md
+write_pack_provenance "$repo" sub/hero.bin
 expect_success "ancestor record uses a record-relative path" "$repo"
 
 # A filesystem regular-file test follows links. Provenance coverage instead
@@ -181,25 +186,7 @@ expect_failure \
 # Godot's detect_3d import pass, so accepting this fixture would ship the same
 # permanent non-mipmapped import that caused #489.
 repo=$(new_repo runtime_texture_without_mipmaps)
-mkdir -p "$repo/client/scripts"
-printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
-printf '%s\n' \
-	'[remap]' \
-	'importer="texture"' \
-	'type="CompressedTexture2D"' \
-	'' \
-	'[params]' \
-	'mipmaps/generate=false' \
-	>"$repo/client/assets/pack/runtime_skin.png.import"
-printf '%s\n' \
-	'extends Node' \
-	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
-	>"$repo/client/scripts/runtime_loader.gd"
-git -C "$repo" add \
-	client/assets/pack/runtime_skin.png \
-	client/assets/pack/runtime_skin.png.import \
-	client/scripts/runtime_loader.gd
-write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+stage_runtime_texture "$repo" false
 expect_failure \
 	"runtime-loaded texture needs an explicit mip chain" \
 	"mipmaps/generate=true" \
@@ -226,12 +213,8 @@ expect_failure \
 	"$repo"
 
 repo=$(new_repo runtime_texture_without_import_metadata)
-mkdir -p "$repo/client/scripts"
 printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
-printf '%s\n' \
-	'extends Node' \
-	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
-	>"$repo/client/scripts/runtime_loader.gd"
+write_runtime_loader "$repo"
 git -C "$repo" add \
 	client/assets/pack/runtime_skin.png \
 	client/scripts/runtime_loader.gd
@@ -251,25 +234,7 @@ expect_failure \
 	"$repo"
 
 repo=$(new_repo runtime_texture_with_mipmaps)
-mkdir -p "$repo/client/scripts"
-printf 'texture-v1\n' >"$repo/client/assets/pack/runtime_skin.png"
-printf '%s\n' \
-	'[remap]' \
-	'importer="texture"' \
-	'type="CompressedTexture2D"' \
-	'' \
-	'[params]' \
-	'mipmaps/generate=true' \
-	>"$repo/client/assets/pack/runtime_skin.png.import"
-printf '%s\n' \
-	'extends Node' \
-	'var runtime_skin := load("res://assets/pack/runtime_skin.png")' \
-	>"$repo/client/scripts/runtime_loader.gd"
-git -C "$repo" add \
-	client/assets/pack/runtime_skin.png \
-	client/assets/pack/runtime_skin.png.import \
-	client/scripts/runtime_loader.gd
-write_pack_provenance "$repo" runtime_skin.png runtime_skin.png.import
+stage_runtime_texture "$repo" true
 expect_success "runtime-loaded texture with an explicit mip chain is accepted" "$repo"
 
 repo=$(new_repo newline)
