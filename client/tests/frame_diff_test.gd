@@ -60,14 +60,24 @@ const GRID_Y := 12
 ## work once.
 const PATCH := 8
 
+## The fixture greys, as explicit 8-bit levels (#1621). A float colour lands on
+## a level that depends on the engine's rounding: Godot 4.7 truncates 0.30 to 76
+## and 4.8 rounds it to 77, so two nearby floats such as 0.30 and 0.302 collapse
+## into one level on 4.8. Laws that need an exact gap are written in levels.
+const BASE_GREY := 76
+## One level above the base: 1/255 ~= 0.0039, a real change under CHANGED_EPS.
+const DRIFT_GREY := BASE_GREY + 1
+## Five levels above the base: 5/255 ~= 0.0196, law 4's "0.02 shift".
+const SHIFT_GREY := BASE_GREY + 5
+
 var _failed := false
 
 
 func _ready() -> void:
-	var base := _flat(Color(0.30, 0.30, 0.30))
+	var base := _flat(_grey(BASE_GREY))
 
 	# 1. Fixture precondition.
-	var same: Dictionary = FrameDiff.compare_images(base, _flat(Color(0.30, 0.30, 0.30)))
+	var same: Dictionary = FrameDiff.compare_images(base, _flat(_grey(BASE_GREY)))
 	if not same["ok"]:
 		_fail("fixture: identical frames did not compare at all (%s)" % same["reason"])
 		return
@@ -86,7 +96,7 @@ func _ready() -> void:
 		return
 
 	# 2. A localized change is measured exactly.
-	var patched := _flat(Color(0.30, 0.30, 0.30))
+	var patched := _flat(_grey(BASE_GREY))
 	_paint(patched, gap, Color(0.90, 0.90, 0.90))
 	var loc: Dictionary = FrameDiff.compare_images(base, patched)
 	if not loc["ok"]:
@@ -138,7 +148,7 @@ func _ready() -> void:
 	# while its max is far smaller — if the report carried only one of the two
 	# numbers, these two frames would be indistinguishable in exactly the wrong
 	# direction.
-	var global_shift := _flat(Color(0.32, 0.32, 0.32))
+	var global_shift := _flat(_grey(SHIFT_GREY))
 	var glob: Dictionary = FrameDiff.compare_images(base, global_shift)
 	if not glob["ok"]:
 		_fail("global shift did not compare (%s)" % glob["reason"])
@@ -154,7 +164,7 @@ func _ready() -> void:
 		return
 
 	# 5. Sub-epsilon drift is not counted, but is not hidden either.
-	var drift := _flat(Color(0.3020, 0.3020, 0.3020))
+	var drift := _flat(_grey(DRIFT_GREY))
 	var dr: Dictionary = FrameDiff.compare_images(base, drift)
 	if not dr["ok"]:
 		_fail("sub-epsilon drift did not compare (%s)" % dr["reason"])
@@ -272,6 +282,11 @@ func _ready() -> void:
 	print("TEST PASS — frame_diff measures localized change the spread guard cannot sample (%.2f%% of pixels, max %.3f), separates mean from max, holds its epsilon, SEES HUE-ONLY change, refuses mismatched sizes, and announces BOTH classes of uncompared frame" %
 		[got_fraction * 100.0, got_max])
 	get_tree().quit(0)
+
+
+## An opaque grey at an exact 8-bit level, independent of float rounding.
+static func _grey(level: int) -> Color:
+	return Color8(level, level, level)
 
 
 ## A uniform frame.
