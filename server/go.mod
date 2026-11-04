@@ -13,7 +13,7 @@ require (
 	github.com/heroiclabs/nakama/v3 v3.41.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/spiffe/go-spiffe/v2 v2.9.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0
 	google.golang.org/api v0.309.0
 	google.golang.org/grpc v1.84.0
