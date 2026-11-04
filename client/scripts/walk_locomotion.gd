@@ -45,6 +45,20 @@ extends Node
 ## strides, that leaves both gaits a flight phase, which is how a body actually
 ## moves at those speeds.
 ##
+## ## Feet on the ground under them
+##
+## The path above is drawn on the body's own flat ground plane. On a slope that
+## plane is not where the ground is: the foot ahead stands on higher ground and
+## the foot behind on lower (#909). When the controller supplies
+## [member ground_height], each foot is raised or lowered by how far the ground
+## under it stands above or below that plane, and the pelvis drops by how far
+## the ground at the deeper end of a stance lies below it, so the downhill leg
+## still reaches without the body bobbing. With no ground supplied, or where a
+## sample finds none (a cave, the terrain's edge, a body standing well off the
+## ground it sampled), the offsets are zero and the gait is exactly the
+## flat-plane one; mid-stride, the feet ease between the two over
+## [constant GROUND_BLEND_SECONDS] instead of jumping.
+##
 ## ## Speed comes from stride length, not cadence
 ##
 ## [constant RUN_STRIDE_LENGTH_M] is longer than [constant STRIDE_LENGTH_M], so
@@ -61,9 +75,9 @@ extends Node
 ## cue. Walk and run crossfade while both gait previews are opted in; stop,
 ## ground/air and jump transitions remain unauthored. There is also no vertical
 ## bob on the run's flight phase: bob is TRANSLATION, and this node poses a
-## skeleton the controller moves. The feet plant on the body's own flat ground
-## plane rather than the terrain under them, so on a slope a planted foot sits a
-## little above or below the ground it is standing on.
+## skeleton the controller moves. The feet follow the terrain height under them,
+## not its tilt: a planted foot keeps its standing orientation, so on a slope its
+## sole meets the ground at the ankle but not along its whole length.
 ##
 ## The class name is deliberately unchanged: the remaining opt-in flag and its
 ## retirement issue (#405) both name the walk, and renaming a class is a
@@ -149,6 +163,24 @@ const RUN_FOOT_CLEARANCE_M := 0.2
 const WALK_LEG_REACH := 0.995
 const RUN_LEG_REACH := 0.97
 
+## The furthest one foot is moved off the body's ground plane to meet the
+## terrain, in metres either way: about a 40-degree slope at the end of a run's
+## stance. A sample further off is clamped to this, so at a ledge or a hole the
+## foot stops short of the ground rather than folding the body to reach it.
+const MAX_GROUND_OFFSET_M := 0.3
+
+## How far the body may stand off the ground sampled under it and still count as
+## standing on that ground, unless the controller sets
+## [member body_ground_tolerance] from its own capsule. Anything further is a
+## rock, a ruin or the air, where the terrain is not what the feet stand on.
+const BODY_ON_GROUND_M := 0.2
+
+## How long the feet take to move onto the terrain, or back onto the body's
+## plane, when the ground under them appears or disappears mid-stride (a cave
+## mouth, the terrain's edge, stepping onto a rock). A hard switch would move
+## both feet and the pelvis by the whole offset in one tick.
+const GROUND_BLEND_SECONDS := 0.15
+
 ## Bones the planted legs are solved against, beyond the eight that are posed:
 ## the pelvis carries the height channel and the feet set the ground and the
 ## body's forward direction.
@@ -215,11 +247,37 @@ var _legs: Array[Dictionary] = []
 var _walk_reach := 0.0
 var _run_reach := 0.0
 
+## The ground height at a world (x, z), in metres, or NAN where there is no
+## ground to stand on. Supplied by the controller; unset, the feet plant on the
+## body's own flat ground plane (see "Feet on the ground under them").
+var ground_height: Callable
+
+## See [constant BODY_ON_GROUND_M]. The player sets it from its capsule's radius
+## and steepest walkable slope, the most a resting capsule rides above the
+## ground under its centre.
+var body_ground_tolerance := BODY_ON_GROUND_M
+
+# The body root, and how far the factory lifted it above the floor its soles
+# touch (a leg-length push raises the root to keep the historical contact).
+# The body's ground plane is the root's height less that lift.
+var _body: Node3D = null
+var _root_lift := 0.0
+# Terrain plant state, eased by [method advance_motion] and snapped by a pure
+# pose: each foot's weight on the terrain, the last offset its sample gave, and
+# the extra pelvis drop now applied.
+var _ground_weights: Array[float] = [0.0, 0.0]
+var _ground_last: Array[float] = [0.0, 0.0]
+var _ground_lower := 0.0
+# How far one pose may move those, as a share of the whole change: INF snaps.
+var _ground_step := INF
+
 
 ## Bind the driver to the newest recipe-built body. Character editing rebuilds
 ## that body in place, so the player keeps one driver and rebinds it.
 func bind(body: Node3D) -> void:
 	_skeleton = CharacterFactory.find_skeleton(body)
+	_body = body
+	_root_lift = body.position.y if body != null else 0.0
 	_phase = 0.0
 	_run_blend = 0.0
 	_has_active_gait = false
@@ -283,6 +341,10 @@ func _capture_legs() -> bool:
 			"thigh": thigh,
 			"calf": calf,
 			"foot": foot,
+			# Where on the ground plane a foot at zero forward travel stands: under
+			# the hip, at the ankle's own sideways offset, which the sagittal solve
+			# never changes.
+			"plant": hip + _lateral * (ankle - hip).dot(_lateral),
 			"upper_m": upper.length(),
 			"lower_m": lower.length(),
 			"thigh_rest_angle": atan2(upper.x, -upper.y),
@@ -365,6 +427,9 @@ func advance_motion(
 		_reset_pose()
 		return
 	var target_blend := 1.0 if sprinting else 0.0
+	# The terrain plant eases only within a moving gait; its first pose snaps,
+	# exactly as the gait itself does.
+	var ground_step := INF if not _has_active_gait else maxf(delta, 0.0) / GROUND_BLEND_SECONDS
 	if not _has_active_gait:
 		# There is no prior moving gait to blend from after a bind, stop, jump or
 		# un-opted state. Snap the first active gait so steady walk/run behavior
@@ -386,7 +451,10 @@ func advance_motion(
 	var weight := smoothstep(0.0, 1.0, _run_blend)
 	var stride_length := lerpf(STRIDE_LENGTH_M, RUN_STRIDE_LENGTH_M, weight)
 	_phase = fposmod(_phase + TAU * distance / stride_length, TAU)
+	_ground_step = ground_step
 	apply_blended_phase(_phase, weight)
+	# Every other pose is a pure one and snaps.
+	_ground_step = INF
 
 
 ## Pose one exact point on the airborne arc. Runtime and evidence capture share
@@ -472,14 +540,23 @@ func apply_blended_phase(phase: float, run_weight: float) -> void:
 func _pose_legs(phase: float, run_weight: float) -> void:
 	var walk_stance := stance_fraction(_walk_reach, STRIDE_LENGTH_M)
 	var run_stance := stance_fraction(_run_reach, RUN_STRIDE_LENGTH_M)
-	_set_pelvis_drop(lerpf(WALK_PELVIS_DROP_M, RUN_PELVIS_DROP_M, run_weight))
+	var walk_paths: Array[Vector2] = []
+	var run_paths: Array[Vector2] = []
+	var forwards: Array[float] = []
+	for i in _legs.size():
+		var right := i == 1
+		walk_paths.append(foot_path(cycle_position(phase, walk_stance, right), walk_stance,
+			_walk_reach, WALK_FOOT_CLEARANCE_M))
+		run_paths.append(foot_path(cycle_position(phase, run_stance, right), run_stance,
+			_run_reach, RUN_FOOT_CLEARANCE_M))
+		forwards.append(lerpf(walk_paths[i].x, run_paths[i].x, run_weight))
+	var grounds := _ground_offsets(forwards, lerpf(_walk_reach, _run_reach, run_weight))
+	var lower := _ground_lower
+	_set_pelvis_drop(lerpf(WALK_PELVIS_DROP_M, RUN_PELVIS_DROP_M, run_weight) + lower)
 	for i in _legs.size():
 		var leg := _legs[i]
-		var right := i == 1
-		var walk := _leg_turns(leg, cycle_position(phase, walk_stance, right), walk_stance,
-			_walk_reach, WALK_FOOT_CLEARANCE_M, WALK_PELVIS_DROP_M, WALK_LEG_REACH)
-		var run := _leg_turns(leg, cycle_position(phase, run_stance, right), run_stance,
-			_run_reach, RUN_FOOT_CLEARANCE_M, RUN_PELVIS_DROP_M, RUN_LEG_REACH)
+		var walk := _leg_turns(leg, walk_paths[i], WALK_PELVIS_DROP_M + lower, WALK_LEG_REACH, grounds[i])
+		var run := _leg_turns(leg, run_paths[i], RUN_PELVIS_DROP_M + lower, RUN_LEG_REACH, grounds[i])
 		var turns := walk.lerp(run, run_weight)
 		var thigh: int = leg["thigh"]
 		var parent_now := _skeleton.get_bone_global_pose(_skeleton.get_bone_parent(thigh)).basis.get_rotation_quaternion()
@@ -505,14 +582,14 @@ func _pose_legs(phase: float, run_weight: float) -> void:
 
 
 ## The thigh turn and the knee turn relative to it, in radians about the lateral
-## axis, that put this leg's ankle where the gait wants it at cycle position `u`.
+## axis, that put this leg's ankle where the gait's [method foot_path] wants it,
+## `ground` metres above the body's ground plane.
 ##
 ## A foot leaving the ground keeps travelling back under the body for a moment,
 ## further than the leg reaches at the gait's `limit`. There it rises instead of
 ## the knee straightening: the heel lifts behind, as it does at lift-off.
-func _leg_turns(leg: Dictionary, u: float, stance: float, reach: float, clearance: float, drop: float, limit: float) -> Vector2:
-	var path := foot_path(u, stance, reach, clearance)
-	var target := Vector2(path.x, -(float(leg["hip_over_ankle_m"]) - drop) + path.y)
+func _leg_turns(leg: Dictionary, path: Vector2, drop: float, limit: float, ground: float) -> Vector2:
+	var target := Vector2(path.x, -(float(leg["hip_over_ankle_m"]) - drop) + path.y + ground)
 	var longest := limit * (float(leg["upper_m"]) + float(leg["lower_m"]))
 	if target.length() > longest:
 		var forward := clampf(target.x, -longest, longest)
@@ -520,6 +597,72 @@ func _leg_turns(leg: Dictionary, u: float, stance: float, reach: float, clearanc
 	var solved := solve_leg(float(leg["upper_m"]), float(leg["lower_m"]), target)
 	var thigh_turn := solved.x - float(leg["thigh_rest_angle"])
 	return Vector2(thigh_turn, solved.y - float(leg["calf_rest_angle"]) - thigh_turn)
+
+
+## How far each foot is raised (positive) or lowered off the body's own ground
+## plane to stand on the terrain, in the skeleton's own metres, for feet
+## `forwards` metres ahead of their hips; also eases [member _ground_lower].
+##
+## The plane is where the soles stand at rest: the body root's height less the
+## factory's lift. Measuring from it rather than from the ground sampled under
+## the body puts a planted foot on the terrain even while a capsule on a slope
+## rides a little above that sample. A foot whose sample finds no ground eases
+## back onto the plane, and both do when the body is not standing on the ground
+## under it.
+##
+## The extra pelvis drop comes from the ground at the two ends of each foot's
+## stance, `reach` ahead of and behind its hip, never from where the feet are
+## now: the swinging foot travels beyond those ends, and following it would bob
+## the whole body up and down every step on a slope. At the deeper end a planted
+## foot needs exactly that much more leg.
+func _ground_offsets(forwards: Array[float], reach: float) -> Array[float]:
+	var raw: Array[float] = [NAN, NAN]
+	var lower_target := 0.0
+	if (ground_height.is_valid() and _body != null and _skeleton.is_inside_tree()
+			and _body.is_inside_tree()):
+		var to_world := _skeleton.global_transform
+		var scale := to_world.basis.get_scale().y
+		var root := _body.global_transform.origin
+		var parent := _body.get_parent() as Node3D
+		var plane := root.y - _root_lift * (parent.global_transform.basis.get_scale().y if parent != null else 1.0)
+		var under_body := _ground_at(root.x, root.z)
+		if scale > 0.0 and not is_nan(under_body) and absf(plane - under_body) <= body_ground_tolerance:
+			var deepest := INF
+			for i in _legs.size():
+				var plant: Vector3 = _legs[i]["plant"]
+				raw[i] = _offset_at(to_world * (plant + _forward * forwards[i]), plane, scale)
+				for end: float in [reach, -reach]:
+					var at_end := _offset_at(to_world * (plant + _forward * end), plane, scale)
+					if not is_nan(at_end):
+						deepest = minf(deepest, at_end)
+			if deepest < INF:
+				lower_target = maxf(0.0, -deepest)
+	var offsets: Array[float] = [0.0, 0.0]
+	for i in _legs.size():
+		var found := not is_nan(raw[i])
+		if found:
+			_ground_last[i] = raw[i]
+		_ground_weights[i] = move_toward(_ground_weights[i], 1.0 if found else 0.0, _ground_step)
+		offsets[i] = _ground_weights[i] * _ground_last[i]
+	_ground_lower = move_toward(_ground_lower, lower_target, _ground_step * MAX_GROUND_OFFSET_M)
+	return offsets
+
+
+## How far the ground at a world point stands off the plane at height `plane`,
+## clamped and in skeleton metres, or NAN where there is no ground.
+func _offset_at(point: Vector3, plane: float, scale: float) -> float:
+	var ground := _ground_at(point.x, point.z)
+	if is_nan(ground):
+		return NAN
+	return clampf(ground - plane, -MAX_GROUND_OFFSET_M, MAX_GROUND_OFFSET_M) / scale
+
+
+## One [member ground_height] sample, NAN for anything that is not a height.
+func _ground_at(x: float, z: float) -> float:
+	var height: Variant = ground_height.call(x, z)
+	if not (height is float or height is int) or not is_finite(float(height)):
+		return NAN
+	return float(height)
 
 
 func _set_pelvis_drop(drop: float) -> void:

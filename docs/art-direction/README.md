@@ -504,8 +504,10 @@ lowered a few centimetres. At 6 and 10.5 m/s with these strides a leg can stay d
 quarter (walk) and a fifth (run) of each cycle, so both gaits have a flight phase between steps.
 Driven through the real controller they hold 300 and 350 steps a minute, and a foot that is down
 moves at 6% and 5% of body speed ([planted-feet evidence](../evidence/issue-904-planted-feet/README.md)).
-The feet plant on the body's own ground plane rather than the terrain under them, so on a slope a
-planted foot sits a little above or below the ground.
+A planted foot stands on the terrain under it, with the pelvis lowered further for the downhill leg,
+so on a slope it no longer sinks into the rise or hangs over the dip; it follows the ground's height,
+not its tilt, and the standing pose does not plant yet
+([terrain-feet evidence](../evidence/issue-909-terrain-feet/README.md)).
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
