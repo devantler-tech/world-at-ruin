@@ -1463,6 +1463,13 @@ jobs:
         run: ./tools/gdscript-lint.test.sh
       - name: Lint GDScript
         run: ./tools/gdscript-lint.sh client
+      # A script without its committed .uid gets a per-machine id at import and
+      # leaves every fresh checkout dirty (#1635). It reads the index, so it
+      # needs no engine and runs before any import could hide the gap.
+      - name: Prove the script .uid guard reads the index
+        run: ./tools/script-uid-guard.test.sh
+      - name: Require a tracked .uid for every client script
+        run: ./tools/script-uid-guard.sh
 
   go-vulnerability-scan:
     name: Go vulnerability scan (${{ matrix.module.name }})
