@@ -2950,7 +2950,7 @@ jobs:
           CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@da5f0839b418626a8a0b69df1f04ba931a38e371 # v19.1.0
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@c496acfebce54b27513c01d22be1c19d5c97ec32 # v20.1.2
         with:
           check-workflow-startup: "true"
           # The capture jobs and detect-visual-changes are
