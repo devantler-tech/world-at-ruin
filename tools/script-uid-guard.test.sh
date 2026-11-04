@@ -64,6 +64,13 @@ printf 'uid://c\n' >"${repo}/client/scripts/c.gd.uid"
 git -C "${repo}" add client
 expect_pass "a leftover .uid with no script is not an error" "${repo}"
 
+repo="$(new_repo newline)"
+nl_name=$'x\ny'
+printf 'extends Node\n' >"${repo}/client/scripts/${nl_name}.gd"
+printf 'uid://x\n' >"${repo}/client/scripts/${nl_name}.gd.uid"
+git -C "${repo}" add client
+expect_fail "a tracked script path with a newline fails closed" "${repo}" "cannot compare it"
+
 repo="${work}/empty"
 mkdir -p "${repo}"
 git -C "${repo}" init -q
