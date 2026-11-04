@@ -243,6 +243,7 @@ func set_character(recipe: Dictionary) -> void:
 	if _walk_locomotion == null:
 		_walk_locomotion = WalkLocomotion.new()
 		_walk_locomotion.name = "WalkLocomotion"
+		_walk_locomotion.ground_height = _foot_ground_at
 		add_child(_walk_locomotion)
 	_walk_locomotion.bind(body)
 
@@ -574,6 +575,19 @@ const NO_GROUND_BELOW := -1.0e5
 ## contact depth fluctuates tick to tick (ridge overhangs, crease crossings),
 ## so a persistence gate removes false positives no fixed threshold can.
 const EMBED_TICKS_TO_FIRE := 10
+
+
+## The ground a foot stands on at world (x, z), for the gaits' planted feet
+## (#909): the same walkable height the body is kept on, or NAN where there is
+## none to plant on — no provider, the terrain's edge, or inside a cave system,
+## where the heightfield is the roof overhead and not the floor.
+func _foot_ground_at(x: float, z: float) -> float:
+	if not ground_height_provider.is_valid():
+		return NAN
+	if underground_provider.is_valid() and underground_provider.call(x, z):
+		return NAN
+	var ground: float = ground_height_provider.call(x, z)
+	return NAN if ground < NO_GROUND_BELOW else ground
 
 ## Self-heal terrain embedding: the terrain is a pure heightfield, so an
 ## origin deeper than EMBED_THRESHOLD below the walkable mesh surface is

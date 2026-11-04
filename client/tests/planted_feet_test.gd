@@ -14,7 +14,12 @@ extends Node
 ##  5. no phase of either gait moves a foot sideways;
 ##  6. the running knee never straightens;
 ##  7. the gaits lower the pelvis, and standing and jumping restore it;
-##  8. a rig without the bones the solve needs loses the gaits but keeps the jump.
+##  8. a rig without the bones the solve needs loses the gaits but keeps the jump;
+##  9. on a slope, a planted ankle stands its standing height above the ground
+##     under it, still moves back exactly as far as the body travels, and each
+##     gait keeps its whole flat-ground share of contact (#909); ground that
+##     cannot be sampled, or that the body is not standing on, leaves the
+##     flat-plane gait exactly as it was.
 ##
 ## Run: godot --headless --path client res://tests/planted_feet_test.tscn
 
@@ -41,6 +46,10 @@ const BLEND_DT := 1.0 / 120.0
 const BLEND_WINDOW_S := 0.36
 ## The same 15% of body speed the gait is held to on the drive.
 const MAX_BLEND_SLIP := 0.15
+## The test slope rises this much per metre walked forward: about 15 degrees,
+## steeper than most of the Reach, so a foot at the end of its stance stands
+## more than ten centimetres off the body's own ground plane.
+const SLOPE_RISE := 0.27
 
 var _flag_state: Dictionary = {}
 var _recipe: Dictionary = {}
@@ -77,7 +86,10 @@ func _ready() -> void:
 		and _check_blend_holds(subject)
 		and _check_no_sideways_step(subject)
 		and _check_running_knee_bends(subject)
-		and _check_pelvis_drop(subject))
+		and _check_pelvis_drop(subject)
+		and _check_slope_plant(subject, false)
+		and _check_slope_plant(subject, true)
+		and _check_unsampled_ground_keeps_plane(subject))
 	(subject["body"] as Node).free()
 	(subject["animator"] as Node).free()
 	if not checks_passed:
@@ -307,9 +319,9 @@ func _angle_between(a: Quaternion, b: Quaternion) -> float:
 
 
 ## 4b. On the body's own ground plane each gait keeps a foot down for its whole
-## geometric share of the cycle: twice the stance, one foot at a time. The drive
-## over real terrain reads less at the run, because the plant ignores slopes
-## (#909); here, with no terrain, anything short of the share is the gait's own.
+## geometric share of the cycle: twice the stance, one foot at a time. Here, with
+## no terrain, anything short of the share is the gait's own; check 9 holds the
+## same share on a slope.
 func _check_contact_share(subject: Dictionary, running: bool) -> bool:
 	var animator: WalkLocomotion = subject["animator"]
 	var skeleton: Skeleton3D = subject["skeleton"]
@@ -392,6 +404,121 @@ func _check_pelvis_drop(subject: Dictionary) -> bool:
 	if absf(skeleton.get_bone_global_pose(pelvis).origin.y - rest_height) > POSITION_EPSILON_M:
 		return _fail("the jump is posed from a lowered pelvis")
 	return true
+
+
+## 9a. On a slope the ground under a planted foot is not the body's own ground
+## plane: ahead it is higher and behind it is lower. A foot planted on that plane
+## sank into the uphill and hung over the downhill (#909).
+func _check_slope_plant(subject: Dictionary, running: bool) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var to_world := skeleton.global_transform
+	var forward: Vector3 = animator.get("_forward")
+	var slope := _slope(skeleton, forward)
+	var stride := WalkLocomotion.RUN_STRIDE_LENGTH_M if running else WalkLocomotion.STRIDE_LENGTH_M
+	var stance := WalkLocomotion.stance_fraction(
+		float(animator.get("_run_reach" if running else "_walk_reach")), stride)
+	var gait := "run" if running else "walk"
+	var feet := [skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var standing: Array[float] = []
+	for foot: int in feet:
+		standing.append((to_world * skeleton.get_bone_global_rest(foot).origin).y - to_world.origin.y)
+	animator.ground_height = slope
+	var problem := ""
+	var deepest := 0.0
+	for k in feet.size():
+		var ground_position := NAN
+		for i in 9:
+			var cycle := 0.25 + (0.5 if k == 1 else 0.0) - stance + stance * (0.05 + 0.9 * float(i) / 8.0)
+			animator.apply_phase(TAU * cycle, running)
+			var local := skeleton.get_bone_global_pose(feet[k]).origin
+			var ankle := to_world * local
+			var off_plane := ankle.y - to_world.origin.y - standing[k]
+			deepest = maxf(deepest, absf(off_plane))
+			var clearance := ankle.y - float(slope.call(ankle.x, ankle.z))
+			if absf(clearance - standing[k]) > POSITION_EPSILON_M:
+				problem = "on a slope the %s's planted ankle sits %.4f m off its standing height above the ground at %.3f of the cycle" % [
+					gait, clearance - standing[k], cycle]
+				break
+			var over_ground := local.dot(forward) + cycle * stride
+			if is_nan(ground_position):
+				ground_position = over_ground
+			elif absf(over_ground - ground_position) > POSITION_EPSILON_M:
+				problem = "on a slope the %s's planted foot slides %.4f m over the ground at %.3f of the cycle" % [
+					gait, over_ground - ground_position, cycle]
+				break
+		if not problem.is_empty():
+			break
+	if problem.is_empty() and deepest < 0.05:
+		problem = "the slope moved the %s's planted feet only %.4f m off the body's plane, so it tested nothing" % [gait, deepest]
+	if problem.is_empty():
+		var down := 0
+		for i in CONTACT_SAMPLES:
+			animator.apply_phase(TAU * float(i) / CONTACT_SAMPLES, running)
+			for k in feet.size():
+				var ankle := to_world * skeleton.get_bone_global_pose(feet[k]).origin
+				if ankle.y - float(slope.call(ankle.x, ankle.z)) - standing[k] <= CONTACT_LIFT_M:
+					down += 1
+					break
+		var share := float(down) / CONTACT_SAMPLES
+		var bound := minf(2.0 * stance, 1.0)
+		if share < bound - 2.0 / CONTACT_SAMPLES:
+			problem = "on a slope the %s keeps a foot down for %.1f%% of the cycle, short of its %.1f%% geometric share" % [
+				gait, share * 100.0, bound * 100.0]
+		else:
+			print("slope: the %s keeps a foot down for %.1f%% of the cycle (share %.1f%%), its planted feet up to %.3f m off the body's plane" % [
+				gait, share * 100.0, bound * 100.0, deepest])
+	animator.ground_height = Callable()
+	return problem.is_empty() or _fail(problem)
+
+
+## 9b. A sample with no ground — a cave, the terrain's edge — and ground the body
+## is not standing on — a rock, a ruin — must leave the flat-plane gait exactly
+## as it was, never half-planted against a height that is not the floor.
+func _check_unsampled_ground_keeps_plane(subject: Dictionary) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var origin := skeleton.global_transform.origin
+	var bones := [skeleton.find_bone("pelvis"), skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var phases := [0.0, 0.7, 1.9, 3.3, 4.6, 5.8]
+	var flat: Array[Vector3] = []
+	animator.ground_height = Callable()
+	for running: bool in [false, true]:
+		for phase: float in phases:
+			animator.apply_phase(phase, running)
+			for bone: int in bones:
+				flat.append(skeleton.get_bone_global_pose(bone).origin)
+	var providers := {
+		"no ground anywhere": func(_x: float, _z: float) -> float: return NAN,
+		"ground well below the body": func(_x: float, _z: float) -> float: return origin.y - 0.5,
+		"not a number": func(_x: float, _z: float) -> Variant: return "high",
+	}
+	var problem := ""
+	for label: String in providers:
+		animator.ground_height = providers[label]
+		var n := 0
+		for running: bool in [false, true]:
+			for phase: float in phases:
+				animator.apply_phase(phase, running)
+				for bone: int in bones:
+					if not skeleton.get_bone_global_pose(bone).origin.is_equal_approx(flat[n]) and problem.is_empty():
+						problem = "with %s, the %s at phase %.1f moved off the flat-plane pose" % [
+							label, "run" if running else "walk", phase]
+					n += 1
+	animator.ground_height = Callable()
+	return problem.is_empty() or _fail(problem)
+
+
+## A plane through the body's own ground point that rises `SLOPE_RISE` per metre
+## along the body's forward direction.
+func _slope(skeleton: Skeleton3D, forward: Vector3) -> Callable:
+	var to_world := skeleton.global_transform
+	var uphill := to_world.basis * forward
+	uphill.y = 0.0
+	uphill = uphill.normalized()
+	var origin := to_world.origin
+	return func(x: float, z: float) -> float:
+		return origin.y + SLOPE_RISE * ((x - origin.x) * uphill.x + (z - origin.z) * uphill.z)
 
 
 ## 8. Without the pelvis and feet there is nothing to plant against; the gaits
