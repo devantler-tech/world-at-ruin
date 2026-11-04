@@ -2769,13 +2769,13 @@ jobs:
     steps:
       - name: Capture the first complete cloth mode
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@c9d45bc76f84b74fecc48feef7bb08023e87255e
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@43c727605e7b17ff7b6182758d165b36528c1791
         with:
           mode: ${{ matrix.first }}
       - name: Capture the second complete cloth mode
         if: always() && !cancelled()
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@c9d45bc76f84b74fecc48feef7bb08023e87255e
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@43c727605e7b17ff7b6182758d165b36528c1791
         with:
           mode: ${{ matrix.second }}
 
@@ -2957,7 +2957,7 @@ jobs:
           CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@da5f0839b418626a8a0b69df1f04ba931a38e371 # v19.1.0
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@c496acfebce54b27513c01d22be1c19d5c97ec32 # v20.1.2
         with:
           check-workflow-startup: "true"
           # The capture jobs and detect-visual-changes are
