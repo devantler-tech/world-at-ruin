@@ -575,6 +575,9 @@
   GDScript lint uses `gdtoolkit==4.5.0` with the repository's explicit `.gdlintrc`; after installing
   that pinned tool, run `./tools/gdscript-lint.test.sh` to prove the policy rejects a real invalid
   fixture and `./tools/gdscript-lint.sh client` to lint the product tree. Both are blocking in CI.
+  The same job runs `./tools/script-uid-guard.sh`: every tracked `client/**/*.gd` must have its
+  `.gd.uid` committed beside it. The editor import writes a missing one with a per-machine id, so
+  commit the generated file with the script.
 
 ## Tests
 
