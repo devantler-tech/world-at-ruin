@@ -4,8 +4,8 @@
   "title": "Feet that stand on the slope",
   "notes": [
     "In the walk and run previews, a foot that is down now stands on the ground under it instead of on an imaginary flat floor, so on a slope it no longer sinks into the rise ahead or hangs over the dip behind.",
-    "Going downhill, the hips come down a little so the trailing leg still reaches the ground.",
-    "Inside caves, and when you stand on a rock or a ruin, the feet move exactly as before.",
+    "Going downhill, the hips come down a little so the trailing leg still reaches the ground, and they stay steady from step to step.",
+    "Inside caves, at the edge of the world, and when you stand high on a rock or a ruin, the feet move exactly as before, and they ease back rather than jumping when you cross into or out of those places.",
     "Still a preview: launch with WAR_WALK_CYCLE=1 for the walk and WAR_RUN_CYCLE=1 for the run. Ordinary launches are unchanged."
   ]
 }

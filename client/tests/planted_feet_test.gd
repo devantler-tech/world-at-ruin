@@ -17,9 +17,12 @@ extends Node
 ##  8. a rig without the bones the solve needs loses the gaits but keeps the jump;
 ##  9. on a slope, a planted ankle stands its standing height above the ground
 ##     under it, still moves back exactly as far as the body travels, and each
-##     gait keeps its whole flat-ground share of contact (#909); ground that
-##     cannot be sampled, or that the body is not standing on, leaves the
-##     flat-plane gait exactly as it was.
+##     gait keeps its whole flat-ground share of contact without bobbing the
+##     pelvis, along or across the slope and with the body turned and scaled
+##     (#909); ground that cannot be sampled, or that the body is not standing
+##     on, leaves the flat-plane gait exactly as it was; ground that comes and
+##     goes mid-stride eases the body instead of jumping it; and a body whose
+##     root a leg-length push raised keeps its flat-ground gait.
 ##
 ## Run: godot --headless --path client res://tests/planted_feet_test.tscn
 
@@ -89,7 +92,12 @@ func _ready() -> void:
 		and _check_pelvis_drop(subject)
 		and _check_slope_plant(subject, false)
 		and _check_slope_plant(subject, true)
-		and _check_unsampled_ground_keeps_plane(subject))
+		and _check_slope_plant(subject, false, true)
+		and _check_slope_plant(subject, true, true)
+		and _check_slope_plant(subject, true, false, true)
+		and _check_unsampled_ground_keeps_plane(subject)
+		and _check_ground_fades(subject)
+		and _check_long_legs_keep_plane())
 	(subject["body"] as Node).free()
 	(subject["animator"] as Node).free()
 	if not checks_passed:
@@ -408,18 +416,28 @@ func _check_pelvis_drop(subject: Dictionary) -> bool:
 
 ## 9a. On a slope the ground under a planted foot is not the body's own ground
 ## plane: ahead it is higher and behind it is lower. A foot planted on that plane
-## sank into the uphill and hung over the downhill (#909).
-func _check_slope_plant(subject: Dictionary, running: bool) -> bool:
+## sank into the uphill and hung over the downhill (#909). `across` tilts the
+## slope sideways instead, so the two feet stand at different heights; `moved`
+## turns, scales and lifts the body first, so a mix-up between skeleton and
+## world space cannot pass.
+func _check_slope_plant(subject: Dictionary, running: bool, across: bool = false, moved: bool = false) -> bool:
 	var animator: WalkLocomotion = subject["animator"]
 	var skeleton: Skeleton3D = subject["skeleton"]
+	var body: Node3D = subject["body"]
+	var kept := body.transform
+	if moved:
+		body.transform = Transform3D(Basis(Vector3.UP, 2.3).scaled(Vector3.ONE * 1.1), Vector3(3.0, 0.5, -2.0))
 	var to_world := skeleton.global_transform
 	var forward: Vector3 = animator.get("_forward")
-	var slope := _slope(skeleton, forward)
+	var uphill: Vector3 = animator.get("_lateral") if across else forward
+	var slope := _slope(skeleton, uphill)
 	var stride := WalkLocomotion.RUN_STRIDE_LENGTH_M if running else WalkLocomotion.STRIDE_LENGTH_M
 	var stance := WalkLocomotion.stance_fraction(
 		float(animator.get("_run_reach" if running else "_walk_reach")), stride)
-	var gait := "run" if running else "walk"
+	var gait := "%s%s%s" % ["run" if running else "walk", " across the slope" if across else "",
+		" (turned, scaled and lifted)" if moved else ""]
 	var feet := [skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var pelvis := skeleton.find_bone("pelvis")
 	var standing: Array[float] = []
 	for foot: int in feet:
 		standing.append((to_world * skeleton.get_bone_global_rest(foot).origin).y - to_world.origin.y)
@@ -449,12 +467,17 @@ func _check_slope_plant(subject: Dictionary, running: bool) -> bool:
 				break
 		if not problem.is_empty():
 			break
-	if problem.is_empty() and deepest < 0.05:
+	if problem.is_empty() and deepest < (0.02 if across else 0.05):
 		problem = "the slope moved the %s's planted feet only %.4f m off the body's plane, so it tested nothing" % [gait, deepest]
 	if problem.is_empty():
 		var down := 0
+		var pelvis_low := INF
+		var pelvis_high := -INF
 		for i in CONTACT_SAMPLES:
 			animator.apply_phase(TAU * float(i) / CONTACT_SAMPLES, running)
+			var hips := (to_world * skeleton.get_bone_global_pose(pelvis).origin).y
+			pelvis_low = minf(pelvis_low, hips)
+			pelvis_high = maxf(pelvis_high, hips)
 			for k in feet.size():
 				var ankle := to_world * skeleton.get_bone_global_pose(feet[k]).origin
 				if ankle.y - float(slope.call(ankle.x, ankle.z)) - standing[k] <= CONTACT_LIFT_M:
@@ -462,13 +485,19 @@ func _check_slope_plant(subject: Dictionary, running: bool) -> bool:
 					break
 		var share := float(down) / CONTACT_SAMPLES
 		var bound := minf(2.0 * stance, 1.0)
-		if share < bound - 2.0 / CONTACT_SAMPLES:
+		# On an even slope the ground at the ends of each stance does not change
+		# with the phase, so neither may the pelvis: following the swinging foot
+		# bobbed it by over ten centimetres a step.
+		if pelvis_high - pelvis_low > POSITION_EPSILON_M:
+			problem = "on a slope the %s bobs the pelvis %.4f m over a cycle" % [gait, pelvis_high - pelvis_low]
+		elif share < bound - 2.0 / CONTACT_SAMPLES:
 			problem = "on a slope the %s keeps a foot down for %.1f%% of the cycle, short of its %.1f%% geometric share" % [
 				gait, share * 100.0, bound * 100.0]
 		else:
 			print("slope: the %s keeps a foot down for %.1f%% of the cycle (share %.1f%%), its planted feet up to %.3f m off the body's plane" % [
 				gait, share * 100.0, bound * 100.0, deepest])
 	animator.ground_height = Callable()
+	body.transform = kept
 	return problem.is_empty() or _fail(problem)
 
 
@@ -519,6 +548,87 @@ func _slope(skeleton: Skeleton3D, forward: Vector3) -> Callable:
 	var origin := to_world.origin
 	return func(x: float, z: float) -> float:
 		return origin.y + SLOPE_RISE * ((x - origin.x) * uphill.x + (z - origin.z) * uphill.z)
+
+
+## 9c. Ground that appears or disappears mid-stride — a cave mouth, the terrain's
+## edge — eases the feet and pelvis between the terrain and the flat plane. A
+## hard switch moved the pelvis by the whole downhill drop in one tick.
+func _check_ground_fades(subject: Dictionary) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var to_world := skeleton.global_transform
+	var pelvis := skeleton.find_bone("pelvis")
+	var slope := _slope(skeleton, animator.get("_forward") as Vector3)
+	var none := func(_x: float, _z: float) -> float: return NAN
+	# The most the eased drop may move in one tick, with a little room for the
+	# gait's own channels.
+	var limit := WalkLocomotion.MAX_GROUND_OFFSET_M * BLEND_DT / WalkLocomotion.GROUND_BLEND_SECONDS + POSITION_EPSILON_M
+	animator.ground_height = slope
+	animator.advance_motion(0.0, true, false, BLEND_DT)
+	var worst := 0.0
+	var sloped_drop := 0.0
+	var problem := ""
+	# Carried across the switches, which are the ticks this check is for.
+	var previous := NAN
+	for provider: Callable in [slope, none, slope]:
+		animator.ground_height = provider
+		for tick in int(0.4 / BLEND_DT):
+			animator.advance_motion(BLEND_SPEED, true, false, BLEND_DT)
+			var hips := (to_world * skeleton.get_bone_global_pose(pelvis).origin).y
+			if not is_nan(previous):
+				worst = maxf(worst, absf(hips - previous))
+			previous = hips
+		if provider == slope:
+			sloped_drop = float(animator.get("_ground_lower"))
+		elif not is_zero_approx(float(animator.get("_ground_lower"))):
+			problem = "after the ground disappeared the pelvis kept %.4f m of terrain drop" % float(animator.get("_ground_lower"))
+	animator.advance_motion(0.0, true, false, BLEND_DT)
+	animator.ground_height = Callable()
+	if problem.is_empty() and sloped_drop < 0.02:
+		problem = "the slope lowered the walking pelvis only %.4f m, so the fade tested nothing" % sloped_drop
+	if problem.is_empty() and worst > limit:
+		problem = "the pelvis moved %.4f m in one tick as the ground came and went, above %.4f m" % [worst, limit]
+	return problem.is_empty() or _fail(problem)
+
+
+## 9d. A leg-length push raises the body root to keep the historical floor
+## contact, so the root stands above the floor the soles touch. Flat ground at
+## that floor must leave such a body's gait exactly as it is with no ground.
+func _check_long_legs_keep_plane() -> bool:
+	var recipe := _recipe.duplicate(true)
+	# Versions before 5 refuse leg-length pushes.
+	recipe["version"] = 5
+	recipe["joint_push"] = {"thigh": 1.05, "calf": 1.05}
+	var body := CharacterFactory.build(recipe)
+	if body == null:
+		return _fail("could not build a leg-length-pushed %s" % RECIPE_PATH)
+	add_child(body)
+	var animator := WalkLocomotion.new()
+	add_child(animator)
+	animator.bind(body)
+	var skeleton := CharacterFactory.find_skeleton(body)
+	var lift := body.position.y
+	var problem := "" if lift > 0.01 else "the pushed legs lifted the body root only %.4f m, so this tested nothing" % lift
+	var bones := [skeleton.find_bone("pelvis"), skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var floor_y := body.global_transform.origin.y - lift
+	var flat := func(_x: float, _z: float) -> float: return floor_y
+	for running: bool in [false, true]:
+		for phase: float in [0.0, 1.2, 2.6, 4.1, 5.5]:
+			animator.ground_height = Callable()
+			animator.apply_phase(phase, running)
+			var expected: Array[Vector3] = []
+			for bone: int in bones:
+				expected.append(skeleton.get_bone_global_pose(bone).origin)
+			animator.ground_height = flat
+			animator.apply_phase(phase, running)
+			for n in bones.size():
+				var moved := skeleton.get_bone_global_pose(bones[n]).origin.distance_to(expected[n])
+				if moved > POSITION_EPSILON_M and problem.is_empty():
+					problem = "flat ground at the floor moved a long-legged body's %s %.4f m in the %s" % [
+						skeleton.get_bone_name(bones[n]), moved, "run" if running else "walk"]
+	animator.free()
+	body.free()
+	return problem.is_empty() or _fail(problem)
 
 
 ## 8. Without the pelvis and feet there is nothing to plant against; the gaits

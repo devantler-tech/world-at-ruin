@@ -32,6 +32,9 @@ const STICK_LOOK_SPEED_PITCH := 1.6
 ## into a switch. Keys and buttons report strength 0 or 1, so the value only
 ## matters to the sticks.
 const STICK_DEADZONE := 0.2
+## How far past a resting capsule's slope ride the body may stand off the ground
+## under it and still have the gaits plant their feet on that ground (#909).
+const BODY_GROUND_MARGIN_M := 0.05
 
 var spawn_point := Vector3.ZERO
 ## Analytic terrain height lookup (set by main.gd to WorldGen.height_at). The
@@ -244,6 +247,12 @@ func set_character(recipe: Dictionary) -> void:
 		_walk_locomotion = WalkLocomotion.new()
 		_walk_locomotion.name = "WalkLocomotion"
 		_walk_locomotion.ground_height = _foot_ground_at
+		# A capsule resting on the steepest floor rides r·(1/cos θ − 1) above the
+		# ground under its centre; a little more than that still counts as standing.
+		# CaveSystemGen.BODY_RADIUS is the radius cave_connectivity_test pins the
+		# collision capsule in _build_body to.
+		_walk_locomotion.body_ground_tolerance = (
+			CaveSystemGen.BODY_RADIUS * (1.0 / cos(floor_max_angle) - 1.0) + BODY_GROUND_MARGIN_M)
 		add_child(_walk_locomotion)
 	_walk_locomotion.bind(body)
 
@@ -352,6 +361,12 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	if stepping:
 		_step_up(slide_from, intended, horizontal, standing_on)
+
+	# Face the direction of travel. Before the gait poses: its planted feet sample
+	# the ground where they will be drawn this tick, at this tick's facing.
+	if horizontal.length() > 0.5:
+		var target_yaw := atan2(-horizontal.x, -horizontal.z)
+		_visual.rotation.y = lerp_angle(_visual.rotation.y, target_yaw, 10.0 * delta)
 	if _walk_locomotion != null:
 		_walk_locomotion.advance_motion(
 			Vector2(velocity.x, velocity.z).length(),
@@ -359,11 +374,6 @@ func _physics_process(delta: float) -> void:
 			sprinting,
 			delta,
 			velocity.y)
-
-	# Face the direction of travel.
-	if horizontal.length() > 0.5:
-		var target_yaw := atan2(-horizontal.x, -horizontal.z)
-		_visual.rotation.y = lerp_angle(_visual.rotation.y, target_yaw, 10.0 * delta)
 
 	# Sprint widens the view slightly.
 	_camera.fov = lerpf(_camera.fov, 78.0 if sprinting else 70.0, 6.0 * delta)
@@ -427,10 +437,10 @@ func _predicted_physics(delta: float) -> void:
 			_hop_velocity = 0.0
 	var travel := predicted.planar_velocity()
 	var sprinting := sprint_intent() and travel.length() > 0.1
-	if _walk_locomotion != null:
-		_walk_locomotion.advance_motion(travel.length(), _hop_height <= 0.0, sprinting, delta, _hop_velocity)
 	if travel.length() > 0.5:
 		_visual.rotation.y = lerp_angle(_visual.rotation.y, atan2(-travel.x, -travel.y), 10.0 * delta)
+	if _walk_locomotion != null:
+		_walk_locomotion.advance_motion(travel.length(), _hop_height <= 0.0, sprinting, delta, _hop_velocity)
 	_camera.fov = lerpf(_camera.fov, 78.0 if sprinting else 70.0, 6.0 * delta)
 
 
