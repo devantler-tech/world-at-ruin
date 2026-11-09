@@ -2769,13 +2769,13 @@ jobs:
     steps:
       - name: Capture the first complete cloth mode
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@285d8d1669ac4155de772eb774359d900e0ebda5
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@64faea97dc46be7200e4defdeb9217cc6f2475f3
         with:
           mode: ${{ matrix.first }}
       - name: Capture the second complete cloth mode
         if: always() && !cancelled()
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@285d8d1669ac4155de772eb774359d900e0ebda5
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@64faea97dc46be7200e4defdeb9217cc6f2475f3
         with:
           mode: ${{ matrix.second }}
 
