@@ -23,6 +23,7 @@ func _ready() -> void:
 	_test_correction()
 	_test_refusals()
 	_test_limits_and_reset()
+	_test_realign()
 	if not _failed:
 		print("TEST PASS: bounded tick history, sent ownership, reconciliation and reset")
 	get_tree().quit(1 if _failed else 0)
@@ -157,6 +158,33 @@ func _test_limits_and_reset() -> void:
 	_check(not maximum.step_tick()["ok"] and maximum.state()["tick"] == 9223372036854775807, "tick overflow wrapped")
 	var invalid: Object = _type.new(121, 65)
 	_check(not invalid.configure(SPEC)["ok"], "caller widened history bounds")
+
+
+## #1461: the lead moves forward by stepping held input and back by keeping
+## the newest history renumbered after the anchor, never past the history bound.
+func _test_realign() -> void:
+	var predictor := _new()
+	predictor.record_sent(1, RIGHT)
+	var ahead: Dictionary = predictor.realign(3)
+	_check(ahead["ok"] and predictor.state()["tick"] == 13 and predictor.state()["x"] == 266, "running ahead did not step the held input")
+	_check(predictor.lead() == 3 and predictor.history_count() == 3, "running ahead lost its history")
+	predictor.step_tick()
+	predictor.step_tick()
+	var back: Dictionary = predictor.realign(2)
+	var kept: Array = predictor.history()
+	_check(back["ok"] and predictor.state()["tick"] == 12 and predictor.state()["x"] == 266, "falling back moved the prediction")
+	_check(kept.size() == 2 and kept[0]["tick"] == 11 and kept[1]["tick"] == 12, "falling back did not renumber after the anchor")
+	_check(kept[0]["velocity"]["x"] == 0 and kept[1]["velocity"]["x"] == 0, "falling back kept the oldest history, not the newest")
+	var replayed: Dictionary = predictor.reconcile(_ack(1, 11, 266))
+	_check(replayed["ok"] and predictor.state() == {"tick": 12, "applied_sequence": 1, "x": 266, "y": 147, "z": 0}, "renumbered history did not replay")
+	_check(predictor.realign(0)["ok"] and predictor.history_count() == 0 and predictor.lead() == 0, "a zero lead kept history")
+	var bounded := _new(2, 2)
+	_check(bounded.realign(2)["ok"] and not bounded.realign(3)["ok"] and bounded.fault() == "prediction_lead", "lead passed the history bound")
+	var negative := _new()
+	_check(not negative.realign(-1)["ok"], "negative lead admitted")
+	var unseeded: Object = _type.new()
+	unseeded.configure(SPEC)
+	_check(not unseeded.realign(1)["ok"], "unanchored prediction realigned")
 
 
 func _check(condition: bool, detail: String) -> bool:

@@ -257,7 +257,9 @@
   30 Hz from the player's controls, interpolates it to the display rate, shows a
   correction as an offset that decays over 100 ms and snaps once a correction or
   the drawn error is wider than the 0.4 m capsule radius, holds still rather than
-  refusing when the zone is silent for the whole 120-tick replay window, keeps the
+  refusing when the zone is silent for the whole 120-tick replay window, runs
+  ahead of each ACK by the measured round trip less one tick and falls back to the
+  zone's numbering after a stall dropped ticks (#1461), keeps the
   jump a render-only hop per #814, and hands the
   body back to local physics on any refusal or lost connection; the demo zone's
   settings are its fixture configuration; `predicted_body_test`, #812),
