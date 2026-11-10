@@ -1,0 +1,11 @@
+{
+  "version": "next",
+  "date": "2026-11-10",
+  "title": "Feet ease over steps and edges",
+  "notes": [
+    "In the walk and run previews, the hips now settle onto and off a slope at the same pace as the feet, so the downhill foot no longer lifts for a moment where the ground starts or ends.",
+    "A stone lip passing under a foot now lifts that foot over a few frames instead of in one jump.",
+    "Standing on a rock or ruin on gentle ground no longer plants your feet on the sand inside it.",
+    "Try it with WAR_WALK_CYCLE=1 or WAR_RUN_CYCLE=1. Ordinary launches move exactly as before."
+  ]
+}

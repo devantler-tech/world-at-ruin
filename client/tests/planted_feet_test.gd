@@ -61,6 +61,8 @@ const SLOPE_RISE := 0.27
 ## Standing on a slope, an ankle rests within this of its standing height above
 ## the ground under it (#1638).
 const STANDING_TOLERANCE_M := 0.01
+## The raised-stone lip the step check walks over (#1639).
+const LIP_HEIGHT_M := 0.08
 
 var _flag_state: Dictionary = {}
 var _recipe: Dictionary = {}
@@ -105,6 +107,9 @@ func _ready() -> void:
 		and _check_slope_plant(subject, true, false, true)
 		and _check_unsampled_ground_keeps_plane(subject)
 		and _check_ground_fades(subject)
+		and _check_ground_fades_feet(subject)
+		and _check_lip_eases(subject)
+		and _check_tolerance_follows_floor()
 		and _check_standing_plant(subject, true)
 		and _check_standing_plant(subject, false, true)
 		and _check_standing_plant(subject, true, true)
@@ -745,6 +750,155 @@ func _check_standing_hands_over(subject: Dictionary) -> bool:
 		return _fail("starting or stopping on a slope moved the %s %.4f m in one tick beyond the flat-ground move, above %.4f m" % [
 			worst_at, worst, limit])
 	print("standing: walking off and stopping on a slope moves the feet and pelvis at most %.4f m a tick beyond flat ground (bound %.4f m)" % [worst, limit])
+	return true
+
+
+## 9c, per foot (#1639). Across the slope each foot stands at one ground height
+## while it walks, so after subtracting the same walk with no ground sampled what
+## is left of each tick's move is the terrain plant alone, which may move no
+## faster than its ease. The ground comes and goes for both feet, then for the
+## left foot only. Meanwhile the pelvis eases at the feet's own rate, so a
+## planted downhill foot never lifts during a fade.
+func _check_ground_fades_feet(subject: Dictionary) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var to_world := skeleton.global_transform
+	var lateral := to_world.basis * (animator.get("_lateral") as Vector3)
+	lateral.y = 0.0
+	lateral = lateral.normalized()
+	var origin := to_world.origin
+	var slope := _slope(skeleton, animator.get("_lateral") as Vector3)
+	var none := func(_x: float, _z: float) -> float: return NAN
+	# Ground under the right half of the body only: the left foot has none.
+	var right_only := func(x: float, z: float) -> float:
+		var side := (x - origin.x) * lateral.x + (z - origin.z) * lateral.z
+		return float(slope.call(x, z)) if side < 0.02 else NAN
+	var feet := [skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
+	var standing: Array[float] = []
+	for foot: int in feet:
+		standing.append((to_world * skeleton.get_bone_global_rest(foot).origin).y - origin.y)
+	var stance := WalkLocomotion.stance_fraction(float(animator.get("_walk_reach")), WalkLocomotion.STRIDE_LENGTH_M)
+	var plan: Array[Callable] = [slope, none, slope, right_only, slope]
+	var traces := {}
+	var problem := ""
+	var lifted := 0.0
+	var faded := 0
+	for label: String in ["ground", "plane"]:
+		animator.ground_height = Callable()
+		for _tick in int(0.4 / BLEND_DT):
+			animator.advance_motion(0.0, true, false, BLEND_DT)
+		var trace: Array[Array] = []
+		for provider: Callable in plan:
+			animator.ground_height = provider if label == "ground" else none
+			for _tick in int(0.3 / BLEND_DT):
+				animator.advance_motion(BLEND_SPEED, true, false, BLEND_DT)
+				var heights: Array[float] = []
+				for foot: int in feet:
+					heights.append((to_world * skeleton.get_bone_global_pose(foot).origin).y)
+				trace.append(heights)
+				if label != "ground":
+					continue
+				var weights: Array = animator.get("_ground_weights")
+				var body_weight := float(animator.get("_ground_body_weight"))
+				var lasts: Array = animator.get("_ground_last")
+				if provider == none and body_weight > 0.0 and body_weight < 1.0:
+					faded += 1
+					if absf(body_weight - float(weights[0])) > 0.000001 and problem.is_empty():
+						problem = "fading off the slope, the pelvis weight %.3f ran ahead of the feet's %.3f" % [
+							body_weight, float(weights[0])]
+				var phase := float(animator.get("_phase"))
+				for k in feet.size():
+					if WalkLocomotion.cycle_position(phase, stance, k == 1) >= stance:
+						continue
+					var expected := standing[k] + float(weights[k]) * float(lasts[k])
+					lifted = maxf(lifted, heights[k] - origin.y - expected)
+		traces[label] = trace
+	animator.ground_height = Callable()
+	animator.advance_motion(0.0, true, false, BLEND_DT)
+	if problem.is_empty() and faded < int(0.8 * WalkLocomotion.GROUND_BLEND_SECONDS / BLEND_DT):
+		problem = "the pelvis faded off the slope in %d ticks, faster than the feet's %.2f s" % [
+			faded, WalkLocomotion.GROUND_BLEND_SECONDS]
+	if problem.is_empty() and lifted > POSITION_EPSILON_M:
+		problem = "a planted foot lifted %.4f m off its eased ground while the ground came and went" % lifted
+	var limit := WalkLocomotion.MAX_GROUND_OFFSET_M * BLEND_DT / WalkLocomotion.GROUND_BLEND_SECONDS + POSITION_EPSILON_M
+	var worst := 0.0
+	var at := ""
+	var grounded: Array = traces["ground"]
+	var plane: Array = traces["plane"]
+	for tick in range(1, grounded.size()):
+		for k in feet.size():
+			var share := absf((grounded[tick][k] - grounded[tick - 1][k]) - (plane[tick][k] - plane[tick - 1][k]))
+			if share > worst:
+				worst = share
+				at = "%s ankle at tick %d" % ["right" if k == 1 else "left", tick]
+	if problem.is_empty() and worst > limit:
+		problem = "as the ground came and went the %s moved %.4f m beyond the flat gait in one tick, above %.4f m" % [at, worst, limit]
+	if problem.is_empty():
+		print("fade: each ankle moves at most %.4f m a tick beyond the flat gait (bound %.4f m), the pelvis fades with the feet over %d ticks, and no planted foot lifts" % [
+			worst, limit, faded])
+	return problem.is_empty() or _fail(problem)
+
+
+## 9e. A raised stone's lip passing under the feet (#1639): flat ground with an
+## 8 cm step a little ahead of the hips. Each foot's ground target, and the pelvis
+## drop, move over several ticks at the ease instead of by the lip in one.
+func _check_lip_eases(subject: Dictionary) -> bool:
+	var animator: WalkLocomotion = subject["animator"]
+	var skeleton: Skeleton3D = subject["skeleton"]
+	var to_world := skeleton.global_transform
+	var forward := to_world.basis * (animator.get("_forward") as Vector3)
+	forward.y = 0.0
+	forward = forward.normalized()
+	var origin := to_world.origin
+	var lip := func(x: float, z: float) -> float:
+		var ahead := (x - origin.x) * forward.x + (z - origin.z) * forward.z
+		return origin.y + (LIP_HEIGHT_M if ahead > 0.15 else 0.0)
+	animator.ground_height = lip
+	for _tick in int(0.4 / BLEND_DT):
+		animator.advance_motion(0.0, true, false, BLEND_DT)
+	var limit := WalkLocomotion.MAX_GROUND_OFFSET_M * BLEND_DT / WalkLocomotion.GROUND_BLEND_SECONDS + 0.000001
+	var previous: Array = (animator.get("_ground_last") as Array).duplicate()
+	previous.append(float(animator.get("_ground_lower_last")))
+	var worst := 0.0
+	var reached := 0.0
+	for _tick in int(0.6 / BLEND_DT):
+		animator.advance_motion(BLEND_SPEED, true, false, BLEND_DT)
+		var now: Array = (animator.get("_ground_last") as Array).duplicate()
+		now.append(float(animator.get("_ground_lower_last")))
+		for n in now.size():
+			worst = maxf(worst, absf(float(now[n]) - float(previous[n])))
+			reached = maxf(reached, absf(float(now[n])))
+		previous = now
+	animator.ground_height = Callable()
+	animator.advance_motion(0.0, true, false, BLEND_DT)
+	if reached < 0.9 * LIP_HEIGHT_M:
+		return _fail("the lip moved the feet only %.4f m, so it tested nothing" % reached)
+	if worst > limit:
+		return _fail("a %.2f m lip moved a ground target %.4f m in one tick, above %.4f m" % [LIP_HEIGHT_M, worst, limit])
+	print("lip: a %.2f m lip moves each ground target at most %.4f m a tick (bound %.4f m)" % [LIP_HEIGHT_M, worst, limit])
+	return true
+
+
+## 9f. The body-on-ground tolerance follows the floor under the body (#1639): on
+## level ground it is the margin alone, so a body standing 0.2 m up on a rock is
+## not planted on the terrain inside it; on the steepest walkable floor it is the
+## capsule's whole ride, as before.
+func _check_tolerance_follows_floor() -> bool:
+	var player := Player.new()
+	var steepest := cos(player.floor_max_angle)
+	var level := player.body_ground_tolerance_for(Vector3.UP)
+	var gentle := player.body_ground_tolerance_for(Vector3(0.0, cos(deg_to_rad(10.0)), sin(deg_to_rad(10.0))))
+	var worst := player.body_ground_tolerance_for(Vector3(0.0, steepest, sqrt(1.0 - steepest * steepest)))
+	var airborne := player.body_ground_tolerance_for(Vector3.ZERO)
+	player.free()
+	var ride := CaveSystemGen.BODY_RADIUS * (1.0 / steepest - 1.0) + Player.BODY_GROUND_MARGIN_M
+	if not is_equal_approx(level, Player.BODY_GROUND_MARGIN_M):
+		return _fail("on level ground the tolerance is %.4f m, not the %.2f m margin" % [level, Player.BODY_GROUND_MARGIN_M])
+	if gentle >= 0.2 - 0.01:
+		return _fail("on a 10 degree floor the tolerance %.4f m still accepts a body 0.2 m up" % gentle)
+	if not is_equal_approx(worst, ride) or not is_equal_approx(airborne, ride):
+		return _fail("the steepest floor or no floor gives %.4f m / %.4f m, not the capsule ride %.4f m" % [worst, airborne, ride])
+	print("tolerance: %.3f m on level ground, %.3f m at 10 degrees, %.3f m on the steepest floor" % [level, gentle, worst])
 	return true
 
 
