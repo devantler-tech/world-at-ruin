@@ -403,6 +403,12 @@ const DRIVE_SETTLE_STEPS := 30
 const STANDING_CAM_SIDE := 1.6
 const STANDING_CAM_RISE := 0.35
 const STANDING_CAM_AIM := 0.25
+## Set to 1 to also photograph, side-on, the walk-off from the standing pose and
+## a stop after the run (#1638 review). Local evidence only; CI keeps the plan.
+const DRIVE_TRANSITIONS_ENV := "WAR_GAIT_DRIVE_TRANSITIONS"
+const DRIVE_TRANSITION_STEPS := 24
+const DRIVE_START_FRAME_EVERY := 3
+const DRIVE_STOP_FRAME_EVERY := 6
 ## Set to 1 to take every drive frame side-on at ankle height instead of from
 ## the three-quarter front (#1639). Local evidence only; CI keeps the default.
 const DRIVE_SIDE_ENV := "WAR_GAIT_DRIVE_SIDE"
@@ -2604,6 +2610,7 @@ func _drive_gait(rig: Dictionary, cam: Camera3D, dir: String) -> Dictionary:
 
 	var dt := 1.0 / float(Engine.physics_ticks_per_second)
 	var per_tick := 1 if cam != null else DRIVE_REHEARSAL_STEPS_PER_TICK
+	var transitions := OS.get_environment(DRIVE_TRANSITIONS_ENV) == "1"
 	# Plain Arrays, not Packed*: a packed array read out of a Dictionary is a
 	# copy, so appending to it would silently record nothing.
 	var run := {
@@ -2663,6 +2670,14 @@ func _drive_gait(rig: Dictionary, cam: Camera3D, dir: String) -> Dictionary:
 			steps += 1
 			var after := player.global_position
 			travelled += Vector2(after.x - before.x, after.z - before.z).length()
+			if (cam != null and transitions and segment["label"] == "walkup" and steps <= DRIVE_TRANSITION_STEPS
+					and steps % DRIVE_START_FRAME_EVERY == 0):
+				if not await _shoot_side_frame(rig, cam, dir, run, "gait_drive_start_%02d" % steps, [
+					"camera: side-on at ankle height, walking off from the planted stand",
+					"controller step after the first input: %d" % steps,
+				]):
+					return {}
+				budget = 0
 			if cam != null and next_mark < marks.size() and travelled >= marks[next_mark]:
 				if not await _shoot_drive_frame(rig, cam, dir, run, segment, travelled):
 					return {}
@@ -2680,6 +2695,23 @@ func _drive_gait(rig: Dictionary, cam: Camera3D, dir: String) -> Dictionary:
 			if not await _shoot_follow_frame(rig, cam, dir, run, segment):
 				return {}
 			budget = 0
+	if transitions:
+		# Stop and stand again, side-on, to see the terrain plant hand back.
+		_release_drive_input()
+		for stop_step in range(1, DRIVE_TRANSITION_STEPS * 2 + 1):
+			if budget == 0:
+				await get_tree().physics_frame
+				budget = per_tick
+			if not _drive_step(rig, dt, run):
+				return {}
+			budget -= 1
+			if cam != null and stop_step % DRIVE_STOP_FRAME_EVERY == 0:
+				if not await _shoot_side_frame(rig, cam, dir, run, "gait_drive_stop_%02d" % stop_step, [
+					"camera: side-on at ankle height, stopping from the run",
+					"controller step after release: %d" % stop_step,
+				]):
+					return {}
+				budget = 0
 
 	for i in run["clear_l"].size():
 		run["lift_l"].append(float(run["clear_l"][i]) - rest_l)
@@ -2740,11 +2772,7 @@ func _shoot_drive_frame(
 	var side_on := OS.get_environment(DRIVE_SIDE_ENV) == "1"
 	if side_on:
 		# Side-on at ankle height (#1639), to see where each foot meets the ground.
-		var to_world := skeleton.global_transform
-		var feet: Vector3 = (to_world * skeleton.get_bone_global_pose(rig["bones"]["foot_l"]).origin
-			+ to_world * skeleton.get_bone_global_pose(rig["bones"]["foot_r"]).origin) * 0.5
-		cam.global_position = feet + right * STANDING_CAM_SIDE + Vector3.UP * STANDING_CAM_RISE
-		cam.look_at(feet + Vector3.UP * STANDING_CAM_AIM, Vector3.UP)
+		_place_side_camera(rig, cam)
 	else:
 		cam.global_position = (
 			chest + right * WALK_CAM_SIDE + Vector3.UP * WALK_CAM_RISE + heading * WALK_CAM_FRONT
@@ -2773,6 +2801,14 @@ func _shoot_drive_frame(
 ## foot meets the ground under it can be seen (#1638). Taken once the drive has
 ## settled, before the first input.
 func _shoot_standing_frame(rig: Dictionary, cam: Camera3D, dir: String, run: Dictionary) -> bool:
+	return await _shoot_side_frame(rig, cam, dir, run, "gait_drive_standing", [
+		"camera: side-on at ankle height, at the spawn point before any input",
+		gait_drive_standing_line(float(run["rest_l"]), float(run["rest_r"])),
+	])
+
+
+## Put the camera side-on at ankle height, centred between the feet.
+func _place_side_camera(rig: Dictionary, cam: Camera3D) -> void:
 	var skeleton: Skeleton3D = rig["skeleton"]
 	var heading: Vector3 = rig["heading"]
 	var to_world := skeleton.global_transform
@@ -2781,15 +2817,23 @@ func _shoot_standing_frame(rig: Dictionary, cam: Camera3D, dir: String, run: Dic
 	var right := heading.cross(Vector3.UP)
 	cam.global_position = feet + right * STANDING_CAM_SIDE + Vector3.UP * STANDING_CAM_RISE
 	cam.look_at(feet + Vector3.UP * STANDING_CAM_AIM, Vector3.UP)
+
+
+## One side-on frame at ankle height, centred between the feet.
+func _shoot_side_frame(
+		rig: Dictionary,
+		cam: Camera3D,
+		dir: String,
+		run: Dictionary,
+		frame_name: String,
+		details: Array[String]) -> bool:
+	_place_side_camera(rig, cam)
 	for _s in WALK_SETTLE_FRAMES:
 		cam.current = true
 		await get_tree().process_frame
 	var img := await _grab_frame()
-	return _save_drive_frame(dir, "gait_drive_standing", img, [
-		"camera: side-on at ankle height, at the spawn point before any input",
-		gait_drive_standing_line(float(run["rest_l"]), float(run["rest_r"])),
-		"reference: %s" % GAIT_TRANSITION_REFERENCE,
-	], run)
+	details.append("reference: %s" % GAIT_TRANSITION_REFERENCE)
+	return _save_drive_frame(dir, frame_name, img, details, run)
 
 
 ## How high each ankle stands over the terrain under it in the settled standing

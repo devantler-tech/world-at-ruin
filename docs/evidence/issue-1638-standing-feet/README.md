@@ -59,6 +59,36 @@ committed or used as input.
 World at Ruin's own sagittal two-bone leg solve and its own terrain sampler; no
 reference pose, timing or staging was copied.
 
+## Walking off and stopping
+
+The same drive with `WAR_GAIT_DRIVE_TRANSITIONS=1` (a local capture option; CI
+keeps its plan) also photographs, side-on at ankle height, the first 24
+controller steps of the walk-off from the standing pose (every 3rd step, 0.05 s
+apart at 60 steps a second) and 48 steps after the run's input is released
+(every 6th step, 0.1 s apart). Before and after are the same run on `main` and
+on this change. Cropped to the feet and halved.
+
+At the walk-off the first gait pose still snaps from the standing pose, as on
+`main` (pelvis drop and leg angles are unauthored transitions); what changes is
+that the terrain offsets ease from the planted stand instead of starting from
+the flat plane, so in the first frames the feet already meet the sand. Stopping
+from the run, the body slides to rest in the standing pose; after the change
+both feet settle onto the sand under them within the 0.15 s ease instead of
+returning to the flat plane.
+
+| Moment | Before | After |
+|---|---|---|
+| walk-off, step 3 | ![](start_03-before.png) | ![](start_03-after.png) |
+| walk-off, step 9 | ![](start_09-before.png) | ![](start_09-after.png) |
+| walk-off, step 15 | ![](start_15-before.png) | ![](start_15-after.png) |
+| walk-off, step 21 | ![](start_21-before.png) | ![](start_21-after.png) |
+| stop, step 6 after release | ![](stop_06-before.png) | ![](stop_06-after.png) |
+| stop, step 18 after release | ![](stop_18-before.png) | ![](stop_18-after.png) |
+| stop, step 30 after release | ![](stop_30-before.png) | ![](stop_30-after.png) |
+| stop, step 48 after release | ![](stop_48-before.png) | ![](stop_48-after.png) |
+
+Motion reference: the drive's cue, *Kingmakers* Official Announcement Trailer 1:06–1:10.
+
 ## Remaining gap
 
 - The feet follow the terrain's height, not its tilt: on a slope the sole meets
