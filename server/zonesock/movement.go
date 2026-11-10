@@ -1,6 +1,8 @@
 package zonesock
 
 import (
+	"sync/atomic"
+
 	"github.com/devantler-tech/world-at-ruin/server/sim"
 	"github.com/devantler-tech/world-at-ruin/server/wire"
 )
@@ -27,9 +29,12 @@ func (h *Hub) BeforeStep(w *sim.World) {
 		c.inputFrames = 0
 		c.inputMu.Unlock()
 		if i.Sequence != 0 {
+			c.intents.applied.Add(1)
 			c.held = movementVelocity(i, w.Get(id).MaxSpeed)
 			c.remaining = h.cfg.MovementHoldTicks
 			c.nextSequence, c.applyTick = i.Sequence, w.Tick+1
+		} else if c.remaining > 0 {
+			c.intents.held.Add(1)
 		}
 		if c.remaining > 0 {
 			w.SetIntent(id, c.held)
@@ -67,9 +72,18 @@ func (c *conn) inputBudget() bool {
 func (c *conn) offerIntent(i wire.MovementIntent) {
 	c.inputMu.Lock()
 	defer c.inputMu.Unlock()
-	if c.inputActive.Load() && i.Sequence > c.received {
-		c.received, c.latest = i.Sequence, i
+	if !c.inputActive.Load() {
+		return
 	}
+	if i.Sequence <= c.received {
+		c.intents.dropped.Add(1)
+		return
+	}
+	if c.latest.Sequence != 0 {
+		// A newer intent in the same tick supersedes the unapplied one.
+		c.intents.dropped.Add(1)
+	}
+	c.received, c.latest = i.Sequence, i
 }
 
 // Own-state acknowledgements have their own single coalesced slot. Replication
@@ -105,4 +119,36 @@ func (c *conn) takeAck() []byte {
 	b := c.ack
 	c.ack = nil
 	return b
+}
+
+// MovementCounters is one observer's movement-intent tally (#813), the
+// server half of measuring prediction before its snap budget and intent hold
+// are tuned. Applied counts intents a tick applied, each refreshing the hold.
+// Held counts ticks that moved on a held intent with no new one. Dropped counts
+// intent frames never applied: superseded by a newer one in the same tick,
+// over the per-tick input budget, malformed, or not newer than one already
+// received.
+type MovementCounters struct {
+	Applied, Held, Dropped uint64
+}
+
+// intentCounters is written by the socket reader (dropped) and the simulation
+// owner (applied, held), so each count is atomic.
+type intentCounters struct {
+	applied, held, dropped atomic.Uint64
+}
+
+func (c *intentCounters) snapshot() MovementCounters {
+	return MovementCounters{Applied: c.applied.Load(), Held: c.held.Load(), Dropped: c.dropped.Load()}
+}
+
+// MovementCounters reports an attached v3 observer's intent tally. It must be
+// called from the simulation goroutine, like Tick; the same tally is logged
+// when the observer detaches.
+func (h *Hub) MovementCounters(observer sim.EntityID) (MovementCounters, bool) {
+	c, ok := h.conns[observer]
+	if !ok || c.wireVersion() != wire.MovementVersion {
+		return MovementCounters{}, false
+	}
+	return c.intents.snapshot(), true
 }

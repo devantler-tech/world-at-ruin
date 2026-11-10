@@ -416,3 +416,104 @@ func TestMovementScheduleIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// #813: the zone tallies each observer's intents as applied, held or dropped.
+func TestMovementCountersTallyAppliedHeldAndDropped(t *testing.T) {
+	h, w, c := controlledFixture(t, 3)
+	step := func() {
+		h.BeforeStep(w)
+		w.Step()
+		h.Tick(w)
+	}
+	if got, ok := h.MovementCounters(1); !ok || got != (MovementCounters{}) {
+		t.Fatalf("fresh observer tally = %+v, %v", got, ok)
+	}
+	// Two intents in one tick: the newer supersedes the older.
+	c.offerIntent(wire.MovementIntent{Sequence: 1, X: 1000})
+	c.offerIntent(wire.MovementIntent{Sequence: 2, X: 1000, Sprint: true})
+	step()
+	// The hold of three covers the applying tick and two more; the fourth
+	// tick has nothing left to hold.
+	step()
+	step()
+	step()
+	// A replay and a zero sequence are never newer than what arrived.
+	c.offerIntent(wire.MovementIntent{Sequence: 2, Z: 1000})
+	c.offerIntent(wire.MovementIntent{})
+	c.offerIntent(wire.MovementIntent{Sequence: 3, Z: 1000})
+	step()
+	want := MovementCounters{Applied: 2, Held: 2, Dropped: 3}
+	if got, ok := h.MovementCounters(1); !ok || got != want {
+		t.Fatalf("tally = %+v, %v; want %+v", got, ok, want)
+	}
+	if _, ok := h.MovementCounters(2); ok {
+		t.Fatal("an unattached actor reported a tally")
+	}
+}
+
+// Over the per-tick input budget the reader drops intent frames; it counts
+// them with the frames a newer intent superseded.
+func TestMovementCountersCountFramesOverBudget(t *testing.T) {
+	h, w, c := movementPeer(t)
+	const sent = maxInputFramesPerTick + 6
+	for seq := uint64(1); seq <= sent; seq++ {
+		b, _ := wire.EncodeIntent(wire.MovementIntent{Sequence: seq, X: 1000})
+		if err := c.Write(t.Context(), websocket.MessageBinary, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// All but the newest admitted intent are dropped: 63 superseded, 6 over budget.
+	waitMovement(t, func() bool { return h.movementDroppedForTest() == sent-1 })
+	w.Step()
+	h.Tick(w)
+	h.BeforeStep(w)
+	if got, ok := h.MovementCounters(1); !ok || got.Applied != 1 || got.Dropped != sent-1 {
+		t.Fatalf("tally = %+v, %v", got, ok)
+	}
+}
+
+// Test-only: the dropped tally of every socket, read under the hub lock the
+// way movementSequenceForTest reads received sequences.
+func (h *Hub) movementDroppedForTest() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var dropped uint64
+	for c := range h.sockets {
+		dropped += c.intents.dropped.Load()
+	}
+	return dropped
+}
+
+// dialMovement opens one v3 movement connection for `observer`, fails the test
+// if it cannot, and closes it when the test ends.
+func dialMovement(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) *websocket.Conn {
+	t.Helper()
+	conn, resp, err := dialVersion(t, ts, secret, observer, wire.MovementVersion)
+	if resp != nil && resp.Body != nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close dial response body: %v", closeErr)
+		}
+	}
+	if err != nil {
+		t.Fatalf("dial movement peer: %v", err)
+	}
+	t.Cleanup(func() { closeConnection(t, conn) })
+	return conn
+}
+
+// movementPeer dials one v3 movement peer for entity 1 over TLS, attaches it on
+// the first manual tick and reads its join snapshot. The server and the
+// connection close when the test ends.
+func movementPeer(t *testing.T) (*Hub, *sim.World, *websocket.Conn) {
+	t.Helper()
+	h, key := newTestHub(t, Config{MovementEnabled: true})
+	s := httptest.NewTLSServer(h.Handler())
+	t.Cleanup(s.Close)
+	w := sim.NewWorld(sim.DemoBounds)
+	w.Add(sim.Entity{ID: 1, MaxSpeed: 4000})
+	c := dialMovement(t, s, key, 1)
+	waitMovementSockets(t, h, 1)
+	h.BeforeStep(w)
+	_ = readMessage(t, c)
+	return h, w, c
+}

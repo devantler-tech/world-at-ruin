@@ -231,6 +231,11 @@ func (h *Hub) detach(w *sim.World, c *conn) {
 		delete(h.conns, c.observer)
 		h.connected.Add(-1)
 		w.SetInterestRadius(c.observer, 0)
+		if c.wireVersion() == wire.MovementVersion {
+			counts := c.intents.snapshot()
+			log.Printf("zonesock: observer %d movement intents applied=%d held=%d dropped=%d",
+				c.observer, counts.Applied, counts.Held, counts.Dropped)
+		}
 	}
 }
 
@@ -423,6 +428,7 @@ type conn struct {
 	ackMu                                    sync.Mutex
 	ack                                      []byte
 	ackReady                                 chan struct{}
+	intents                                  intentCounters
 }
 
 func (c *conn) wireVersion() uint16 {
@@ -528,15 +534,15 @@ func (c *conn) readLoop(ctx context.Context) {
 			c.close(websocket.StatusPolicyViolation, "client message refused")
 			return
 		}
-		if !c.inputBudget() {
-			continue
-		}
-		if len(b) != wire.IntentFrameSize {
+		if !c.inputBudget() || len(b) != wire.IntentFrameSize {
+			c.intents.dropped.Add(1)
 			continue
 		}
 		m, err := wire.Decode(b)
 		if err == nil && m.Version == wire.MovementVersion {
 			c.offerIntent(m.Intent)
+		} else {
+			c.intents.dropped.Add(1)
 		}
 	}
 }
