@@ -454,22 +454,7 @@ func TestMovementCountersTallyAppliedHeldAndDropped(t *testing.T) {
 // Over the per-tick input budget the reader drops intent frames; it counts
 // them with the frames a newer intent superseded.
 func TestMovementCountersCountFramesOverBudget(t *testing.T) {
-	h, key := newTestHub(t, Config{MovementEnabled: true})
-	s := httptest.NewTLSServer(h.Handler())
-	defer s.Close()
-	w := sim.NewWorld(sim.DemoBounds)
-	w.Add(sim.Entity{ID: 1, MaxSpeed: 4000})
-	c, response, err := dialVersion(t, s, key, 1, wire.MovementVersion)
-	if response != nil && response.Body != nil {
-		_ = response.Body.Close()
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeConnection(t, c)
-	waitMovementSockets(t, h, 1)
-	h.BeforeStep(w)
-	_ = readMessage(t, c)
+	h, w, c := movementPeer(t)
 	const sent = maxInputFramesPerTick + 6
 	for seq := uint64(1); seq <= sent; seq++ {
 		b, _ := wire.EncodeIntent(wire.MovementIntent{Sequence: seq, X: 1000})
@@ -497,4 +482,38 @@ func (h *Hub) movementDroppedForTest() uint64 {
 		dropped += c.intents.dropped.Load()
 	}
 	return dropped
+}
+
+// dialMovement opens one v3 movement connection for `observer`, fails the test
+// if it cannot, and closes it when the test ends.
+func dialMovement(t *testing.T, ts *httptest.Server, secret []byte, observer sim.EntityID) *websocket.Conn {
+	t.Helper()
+	conn, resp, err := dialVersion(t, ts, secret, observer, wire.MovementVersion)
+	if resp != nil && resp.Body != nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close dial response body: %v", closeErr)
+		}
+	}
+	if err != nil {
+		t.Fatalf("dial movement peer: %v", err)
+	}
+	t.Cleanup(func() { closeConnection(t, conn) })
+	return conn
+}
+
+// movementPeer dials one v3 movement peer for entity 1 over TLS, attaches it on
+// the first manual tick and reads its join snapshot. The server and the
+// connection close when the test ends.
+func movementPeer(t *testing.T) (*Hub, *sim.World, *websocket.Conn) {
+	t.Helper()
+	h, key := newTestHub(t, Config{MovementEnabled: true})
+	s := httptest.NewTLSServer(h.Handler())
+	t.Cleanup(s.Close)
+	w := sim.NewWorld(sim.DemoBounds)
+	w.Add(sim.Entity{ID: 1, MaxSpeed: 4000})
+	c := dialMovement(t, s, key, 1)
+	waitMovementSockets(t, h, 1)
+	h.BeforeStep(w)
+	_ = readMessage(t, c)
+	return h, w, c
 }
