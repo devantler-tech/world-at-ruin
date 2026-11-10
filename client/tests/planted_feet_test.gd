@@ -442,9 +442,7 @@ func _check_slope_plant(subject: Dictionary, running: bool, across: bool = false
 	var animator: WalkLocomotion = subject["animator"]
 	var skeleton: Skeleton3D = subject["skeleton"]
 	var body: Node3D = subject["body"]
-	var kept := body.transform
-	if moved:
-		body.transform = Transform3D(Basis(Vector3.UP, 2.3).scaled(Vector3.ONE * 1.1), Vector3(3.0, 0.5, -2.0))
+	var kept := _place_body(body, moved)
 	var to_world := skeleton.global_transform
 	var forward: Vector3 = animator.get("_forward")
 	var uphill: Vector3 = animator.get("_lateral") if across else forward
@@ -535,11 +533,7 @@ func _check_unsampled_ground_keeps_plane(subject: Dictionary) -> bool:
 			animator.apply_phase(phase, running)
 			for bone: int in bones:
 				flat.append(skeleton.get_bone_global_pose(bone).origin)
-	var providers := {
-		"no ground anywhere": func(_x: float, _z: float) -> float: return NAN,
-		"ground well below the body": func(_x: float, _z: float) -> float: return origin.y - 0.5,
-		"not a number": func(_x: float, _z: float) -> Variant: return "high",
-	}
+	var providers := _off_ground_providers(origin.y)
 	var problem := ""
 	for label: String in providers:
 		animator.ground_height = providers[label]
@@ -554,6 +548,25 @@ func _check_unsampled_ground_keeps_plane(subject: Dictionary) -> bool:
 					n += 1
 	animator.ground_height = Callable()
 	return problem.is_empty() or _fail(problem)
+
+
+## Ground the feet must not plant on: none anywhere, ground well below the body
+## (a ledge), and a sample that is not a height. Keyed by what each one is.
+func _off_ground_providers(body_y: float) -> Dictionary:
+	return {
+		"no ground anywhere": func(_x: float, _z: float) -> float: return NAN,
+		"ground well below the body": func(_x: float, _z: float) -> float: return body_y - 0.5,
+		"not a number": func(_x: float, _z: float) -> Variant: return "high",
+	}
+
+
+## For a `moved` check, turn, scale and lift the body so a mix-up between
+## skeleton and world space cannot pass. Returns the transform to put back.
+func _place_body(body: Node3D, moved: bool) -> Transform3D:
+	var kept := body.transform
+	if moved:
+		body.transform = Transform3D(Basis(Vector3.UP, 2.3).scaled(Vector3.ONE * 1.1), Vector3(3.0, 0.5, -2.0))
+	return kept
 
 
 ## A plane through the body's own ground point that rises `SLOPE_RISE` per metre
@@ -613,15 +626,11 @@ func _check_ground_fades(subject: Dictionary) -> bool:
 ## ground under it (#1638), across the slope (the two feet at different heights)
 ## and along it, with the body turned, scaled and lifted as in 9a.
 func _check_standing_plant(subject: Dictionary, across: bool, moved: bool = false) -> bool:
+	var kept := _place_body(subject["body"], moved)
 	var animator: WalkLocomotion = subject["animator"]
 	var skeleton: Skeleton3D = subject["skeleton"]
-	var body: Node3D = subject["body"]
-	var kept := body.transform
-	if moved:
-		body.transform = Transform3D(Basis(Vector3.UP, 2.3).scaled(Vector3.ONE * 1.1), Vector3(3.0, 0.5, -2.0))
+	var slope := _slope(skeleton, animator.get("_lateral" if across else "_forward") as Vector3)
 	var to_world := skeleton.global_transform
-	var uphill: Vector3 = animator.get("_lateral") if across else animator.get("_forward")
-	var slope := _slope(skeleton, uphill)
 	var label := "standing %s the slope%s" % ["across" if across else "along", " (turned, scaled and lifted)" if moved else ""]
 	var feet := [skeleton.find_bone("foot_l"), skeleton.find_bone("foot_r")]
 	var standing: Array[float] = []
@@ -653,7 +662,7 @@ func _check_standing_plant(subject: Dictionary, across: bool, moved: bool = fals
 			label, error * 1000.0, apart])
 	animator.ground_height = Callable()
 	animator.advance_motion(0.0, true, false, BLEND_DT)
-	body.transform = kept
+	(subject["body"] as Node3D).transform = kept
 	return problem.is_empty() or _fail(problem)
 
 
@@ -671,12 +680,8 @@ func _check_standing_keeps_rest(subject: Dictionary) -> bool:
 	var rest: Array[Transform3D] = []
 	for bone in skeleton.get_bone_count():
 		rest.append(skeleton.get_bone_pose(bone))
-	var providers := {
-		"flat ground": func(_x: float, _z: float) -> float: return origin.y,
-		"no ground anywhere": func(_x: float, _z: float) -> float: return NAN,
-		"ground well below the body": func(_x: float, _z: float) -> float: return origin.y - 0.5,
-		"not a number": func(_x: float, _z: float) -> Variant: return "high",
-	}
+	var providers := _off_ground_providers(origin.y)
+	providers["flat ground"] = func(_x: float, _z: float) -> float: return origin.y
 	var problem := ""
 	for label: String in providers:
 		animator.ground_height = providers[label]
