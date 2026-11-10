@@ -416,3 +416,85 @@ func TestMovementScheduleIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// #813: the zone tallies each observer's intents as applied, held or dropped.
+func TestMovementCountersTallyAppliedHeldAndDropped(t *testing.T) {
+	h, w, c := controlledFixture(t, 3)
+	step := func() {
+		h.BeforeStep(w)
+		w.Step()
+		h.Tick(w)
+	}
+	if got, ok := h.MovementCounters(1); !ok || got != (MovementCounters{}) {
+		t.Fatalf("fresh observer tally = %+v, %v", got, ok)
+	}
+	// Two intents in one tick: the newer supersedes the older.
+	c.offerIntent(wire.MovementIntent{Sequence: 1, X: 1000})
+	c.offerIntent(wire.MovementIntent{Sequence: 2, X: 1000, Sprint: true})
+	step()
+	// The hold of three covers the applying tick and two more; the fourth
+	// tick has nothing left to hold.
+	step()
+	step()
+	step()
+	// A replay and a zero sequence are never newer than what arrived.
+	c.offerIntent(wire.MovementIntent{Sequence: 2, Z: 1000})
+	c.offerIntent(wire.MovementIntent{})
+	c.offerIntent(wire.MovementIntent{Sequence: 3, Z: 1000})
+	step()
+	want := MovementCounters{Applied: 2, Held: 2, Dropped: 3}
+	if got, ok := h.MovementCounters(1); !ok || got != want {
+		t.Fatalf("tally = %+v, %v; want %+v", got, ok, want)
+	}
+	if _, ok := h.MovementCounters(2); ok {
+		t.Fatal("an unattached actor reported a tally")
+	}
+}
+
+// Over the per-tick input budget the reader drops intent frames; it counts
+// them with the frames a newer intent superseded.
+func TestMovementCountersCountFramesOverBudget(t *testing.T) {
+	h, key := newTestHub(t, Config{MovementEnabled: true})
+	s := httptest.NewTLSServer(h.Handler())
+	defer s.Close()
+	w := sim.NewWorld(sim.DemoBounds)
+	w.Add(sim.Entity{ID: 1, MaxSpeed: 4000})
+	c, response, err := dialVersion(t, s, key, 1, wire.MovementVersion)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeConnection(t, c)
+	waitMovementSockets(t, h, 1)
+	h.BeforeStep(w)
+	_ = readMessage(t, c)
+	const sent = maxInputFramesPerTick + 6
+	for seq := uint64(1); seq <= sent; seq++ {
+		b, _ := wire.EncodeIntent(wire.MovementIntent{Sequence: seq, X: 1000})
+		if err := c.Write(t.Context(), websocket.MessageBinary, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// All but the newest admitted intent are dropped: 63 superseded, 6 over budget.
+	waitMovement(t, func() bool { return h.movementDroppedForTest() == sent-1 })
+	w.Step()
+	h.Tick(w)
+	h.BeforeStep(w)
+	if got, ok := h.MovementCounters(1); !ok || got.Applied != 1 || got.Dropped != sent-1 {
+		t.Fatalf("tally = %+v, %v", got, ok)
+	}
+}
+
+// Test-only: the dropped tally of every socket, read under the hub lock the
+// way movementSequenceForTest reads received sequences.
+func (h *Hub) movementDroppedForTest() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var dropped uint64
+	for c := range h.sockets {
+		dropped += c.intents.dropped.Load()
+	}
+	return dropped
+}
