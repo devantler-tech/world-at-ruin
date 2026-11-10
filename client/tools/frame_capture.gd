@@ -399,6 +399,10 @@ const DRIVE_HEADING := Vector2(-0.382683, -0.923880)
 ## Steps with no input after placing the body, so both drives begin from the
 ## same rest on the ground whatever the body was doing before.
 const DRIVE_SETTLE_STEPS := 30
+## The standing frame (#1638): side-on, close, at ankle height.
+const STANDING_CAM_SIDE := 1.6
+const STANDING_CAM_RISE := 0.35
+const STANDING_CAM_AIM := 0.25
 ## Photographed marks per stride cycle, matching the fixed-phase sequences so
 ## the two can be read side by side.
 const DRIVE_FRAMES_PER_CYCLE := 8
@@ -2553,6 +2557,9 @@ func _capture_gait_drive(dir: String, main: Node) -> void:
 		var contact := gait_drive_contact_line(segment["label"], metrics)
 		print("GAIT DRIVE CONTACT %s" % contact)
 		summary.append(contact)
+	var standing := gait_drive_standing_line(float(drive["rest_l"]), float(drive["rest_r"]))
+	print("GAIT DRIVE STANDING %s" % standing)
+	summary.append(standing)
 	summary.append("")
 	summary.append("controller steps: %d at %.4f s (fixed physics step)" %
 		[drive["body"].size(), dt])
@@ -2622,6 +2629,10 @@ func _drive_gait(rig: Dictionary, cam: Camera3D, dir: String) -> Dictionary:
 	# foot that floats or sinks during the gait reads as exactly that.
 	var rest_l: float = run["clear_l"][-1]
 	var rest_r: float = run["clear_r"][-1]
+	run["rest_l"] = rest_l
+	run["rest_r"] = rest_r
+	if cam != null and not await _shoot_standing_frame(rig, cam, dir, run):
+		return {}
 
 	for segment: Dictionary in gait_drive_plan():
 		Input.action_press("move_forward")
@@ -2745,6 +2756,35 @@ func _shoot_drive_frame(
 		"reference: %s" % GAIT_TRANSITION_REFERENCE,
 	], run)
 
+
+## The standing pose at the spawn point, side-on at ankle height, so where each
+## foot meets the ground under it can be seen (#1638). Taken once the drive has
+## settled, before the first input.
+func _shoot_standing_frame(rig: Dictionary, cam: Camera3D, dir: String, run: Dictionary) -> bool:
+	var skeleton: Skeleton3D = rig["skeleton"]
+	var heading: Vector3 = rig["heading"]
+	var to_world := skeleton.global_transform
+	var feet: Vector3 = (to_world * skeleton.get_bone_global_pose(rig["bones"]["foot_l"]).origin
+		+ to_world * skeleton.get_bone_global_pose(rig["bones"]["foot_r"]).origin) * 0.5
+	var right := heading.cross(Vector3.UP)
+	cam.global_position = feet + right * STANDING_CAM_SIDE + Vector3.UP * STANDING_CAM_RISE
+	cam.look_at(feet + Vector3.UP * STANDING_CAM_AIM, Vector3.UP)
+	for _s in WALK_SETTLE_FRAMES:
+		cam.current = true
+		await get_tree().process_frame
+	var img := await _grab_frame()
+	return _save_drive_frame(dir, "gait_drive_standing", img, [
+		"camera: side-on at ankle height, at the spawn point before any input",
+		gait_drive_standing_line(float(run["rest_l"]), float(run["rest_r"])),
+		"reference: %s" % GAIT_TRANSITION_REFERENCE,
+	], run)
+
+
+## How high each ankle stands over the terrain under it in the settled standing
+## pose, the baseline every lift on the drive is measured from.
+static func gait_drive_standing_line(rest_l: float, rest_r: float) -> String:
+	return "standing: the left ankle stands %.2f cm and the right %.2f cm over the terrain under it" % [
+		rest_l * 100.0, rest_r * 100.0]
 
 ## The player's own follow camera at the end of a steady gait — what the
 ## reference's camera-tracking cue is about, including the sprint's wider view.

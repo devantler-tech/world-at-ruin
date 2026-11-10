@@ -506,8 +506,9 @@ Driven through the real controller they hold 300 and 350 steps a minute, and a f
 moves at 6% and 5% of body speed ([planted-feet evidence](../evidence/issue-904-planted-feet/README.md)).
 A planted foot stands on the terrain under it, with the pelvis lowered further for the downhill leg,
 so on a slope it no longer sinks into the rise or hangs over the dip; it follows the ground's height,
-not its tilt, and the standing pose does not plant yet
-([terrain-feet evidence](../evidence/issue-909-terrain-feet/README.md)).
+not its tilt ([terrain-feet evidence](../evidence/issue-909-terrain-feet/README.md)). With either gait
+preview on, the standing pose rests both feet on the terrain under them the same way
+([standing-feet evidence](../evidence/issue-1638-standing-feet/README.md)).
 
 **Motion reference.** The [Kingmakers announcement trailer from
 1:06–1:10](https://www.youtube.com/watch?v=OvezgDni8z4&t=66s) anchors a readable full-body sprint and
