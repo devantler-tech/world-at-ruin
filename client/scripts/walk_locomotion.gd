@@ -273,6 +273,17 @@ var _root_lift := 0.0
 var _ground_weights: Array[float] = [0.0, 0.0]
 var _ground_last: Array[float] = [0.0, 0.0]
 var _ground_lower := 0.0
+# The pelvis drop the ground asks for, and how much of it applies: the body's
+# own weight on the terrain, eased over the same [constant GROUND_BLEND_SECONDS]
+# as each foot's, so the pelvis never leaves a downhill foot out of reach (#1639).
+var _ground_lower_last := 0.0
+var _ground_body_weight := 0.0
+# Per sampled channel (left foot, right foot, pelvis drop): the previous sample,
+# NAN when there was none, its previous per-tick change, and what is left of a
+# step that change could not explain. See [method _without_steps].
+var _ground_previous: Array[float] = [NAN, NAN, NAN]
+var _ground_change: Array[float] = [0.0, 0.0, 0.0]
+var _ground_residual: Array[float] = [0.0, 0.0, 0.0]
 # How far one pose may move those, as a share of the whole change: INF snaps.
 var _ground_step := INF
 # Whether the newest [method advance_motion] posed a terrain plant, moving or
@@ -642,6 +653,7 @@ func _leg_turns(leg: Dictionary, path: Vector2, drop: float, limit: float, groun
 func _ground_offsets(forwards: Array[float], reach: float) -> Array[float]:
 	var raw: Array[float] = [NAN, NAN]
 	var lower_target := 0.0
+	var body_found := false
 	if (ground_height.is_valid() and _body != null and _skeleton.is_inside_tree()
 			and _body.is_inside_tree()):
 		var to_world := _skeleton.global_transform
@@ -666,15 +678,51 @@ func _ground_offsets(forwards: Array[float], reach: float) -> Array[float]:
 						deepest = minf(deepest, at_end)
 			if deepest < INF:
 				lower_target = maxf(0.0, -deepest)
+				body_found = true
 	var offsets: Array[float] = [0.0, 0.0]
 	for i in _legs.size():
 		var found := not is_nan(raw[i])
 		if found:
-			_ground_last[i] = raw[i]
+			_ground_last[i] = _without_steps(i, raw[i])
+		else:
+			_ground_previous[i] = NAN
 		_ground_weights[i] = move_toward(_ground_weights[i], 1.0 if found else 0.0, _ground_step)
 		offsets[i] = _ground_weights[i] * _ground_last[i]
-	_ground_lower = move_toward(_ground_lower, lower_target, _ground_step * MAX_GROUND_OFFSET_M)
+	if body_found:
+		_ground_lower_last = maxf(0.0, _without_steps(2, lower_target))
+	else:
+		_ground_previous[2] = NAN
+	_ground_body_weight = move_toward(_ground_body_weight, 1.0 if body_found else 0.0, _ground_step)
+	_ground_lower = _ground_body_weight * _ground_lower_last
 	return offsets
+
+
+## One sampled channel with any step in it spread over several ticks (#1639).
+##
+## Ground the body moves over changes a sample smoothly: on an even slope by
+## about the same amount every tick, however fast the foot travels. A raised
+## stone's lip passing under a swinging foot instead steps it by the lip's
+## height in one tick. A change that differs from the previous tick's by more
+## than the ease allows one tick is taken as such a step: the part the previous
+## change does not explain is held back and released at that ease, while the
+## smooth change passes through untouched, so a steady plant is exact. A pure
+## pose (an INF step) and the first sample after none take the sample as it is.
+func _without_steps(channel: int, sample: float) -> float:
+	if is_inf(_ground_step) or is_nan(_ground_previous[channel]):
+		_ground_previous[channel] = sample
+		_ground_change[channel] = 0.0
+		_ground_residual[channel] = 0.0
+		return sample
+	var limit := _ground_step * MAX_GROUND_OFFSET_M
+	var change := sample - _ground_previous[channel]
+	var surprise := change - _ground_change[channel]
+	if absf(surprise) > limit:
+		_ground_residual[channel] -= surprise
+	else:
+		_ground_change[channel] = change
+	_ground_previous[channel] = sample
+	_ground_residual[channel] = move_toward(_ground_residual[channel], 0.0, limit)
+	return sample + _ground_residual[channel]
 
 
 ## How far the ground at a world point stands off the plane at height `plane`,

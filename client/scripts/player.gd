@@ -251,8 +251,7 @@ func set_character(recipe: Dictionary) -> void:
 		# ground under its centre; a little more than that still counts as standing.
 		# CaveSystemGen.BODY_RADIUS is the radius cave_connectivity_test pins the
 		# collision capsule in _build_body to.
-		_walk_locomotion.body_ground_tolerance = (
-			CaveSystemGen.BODY_RADIUS * (1.0 / cos(floor_max_angle) - 1.0) + BODY_GROUND_MARGIN_M)
+		_walk_locomotion.body_ground_tolerance = body_ground_tolerance_for(Vector3.ZERO)
 		add_child(_walk_locomotion)
 	_walk_locomotion.bind(body)
 
@@ -368,6 +367,10 @@ func _physics_process(delta: float) -> void:
 		var target_yaw := atan2(-horizontal.x, -horizontal.z)
 		_visual.rotation.y = lerp_angle(_visual.rotation.y, target_yaw, 10.0 * delta)
 	if _walk_locomotion != null:
+		# The floor under the body now, not the steepest one (#1639): on gentle
+		# ground a body standing well up on a rock or ruin is not on the terrain.
+		_walk_locomotion.body_ground_tolerance = body_ground_tolerance_for(
+			get_floor_normal() if is_on_floor() else Vector3.ZERO)
 		_walk_locomotion.advance_motion(
 			Vector2(velocity.x, velocity.z).length(),
 			is_grounded(),
@@ -585,6 +588,17 @@ const NO_GROUND_BELOW := -1.0e5
 ## contact depth fluctuates tick to tick (ridge overhangs, crease crossings),
 ## so a persistence gate removes false positives no fixed threshold can.
 const EMBED_TICKS_TO_FIRE := 10
+
+
+## How far the body may stand off the ground under its centre and still have the
+## gaits plant their feet on that ground: the most a resting capsule rides over
+## a floor with this normal, r·(1/n.y − 1), plus [constant BODY_GROUND_MARGIN_M].
+## With no floor normal (airborne, or a normal steeper than the walkable limit)
+## it is the steepest walkable floor's ride, as before #1639.
+func body_ground_tolerance_for(floor_normal: Vector3) -> float:
+	var steepest := cos(floor_max_angle)
+	var upright := floor_normal.y if floor_normal.y >= steepest else steepest
+	return CaveSystemGen.BODY_RADIUS * (1.0 / upright - 1.0) + BODY_GROUND_MARGIN_M
 
 
 ## The ground a foot stands on at world (x, z), for the gaits' planted feet

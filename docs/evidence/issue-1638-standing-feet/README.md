@@ -93,9 +93,7 @@ Motion reference: the drive's cue, *Kingmakers* Official Announcement Trailer 1:
 
 - The feet follow the terrain's height, not its tilt: on a slope the sole meets
   the ground at the ankle, not along its whole length.
-- Only the heightfield (and raised stone, with its preview) is sampled; a body
-  standing on a ruin or rock less than about 0.22 m above the terrain still
-  rests its feet on the terrain inside it.
+- Only the heightfield (and raised stone, with its preview) is sampled.
 - The gait's own first pose still snaps from the standing pose (pelvis drop and
   leg angles), as it did before; only the terrain offsets ease. Authored starts
   and stops remain unauthored.

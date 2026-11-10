@@ -409,6 +409,9 @@ const DRIVE_TRANSITIONS_ENV := "WAR_GAIT_DRIVE_TRANSITIONS"
 const DRIVE_TRANSITION_STEPS := 24
 const DRIVE_START_FRAME_EVERY := 3
 const DRIVE_STOP_FRAME_EVERY := 6
+## Set to 1 to take every drive frame side-on at ankle height instead of from
+## the three-quarter front (#1639). Local evidence only; CI keeps the default.
+const DRIVE_SIDE_ENV := "WAR_GAIT_DRIVE_SIDE"
 ## Photographed marks per stride cycle, matching the fixed-phase sequences so
 ## the two can be read side by side.
 const DRIVE_FRAMES_PER_CYCLE := 8
@@ -2766,10 +2769,15 @@ func _shoot_drive_frame(
 		* skeleton.get_bone_global_pose(rig["bones"]["spine_03"]).origin
 	)
 	var right := heading.cross(Vector3.UP)
-	cam.global_position = (
-		chest + right * WALK_CAM_SIDE + Vector3.UP * WALK_CAM_RISE + heading * WALK_CAM_FRONT
-	)
-	cam.look_at(chest - Vector3(0.0, 0.45, 0.0), Vector3.UP)
+	var side_on := OS.get_environment(DRIVE_SIDE_ENV) == "1"
+	if side_on:
+		# Side-on at ankle height (#1639), to see where each foot meets the ground.
+		_place_side_camera(rig, cam)
+	else:
+		cam.global_position = (
+			chest + right * WALK_CAM_SIDE + Vector3.UP * WALK_CAM_RISE + heading * WALK_CAM_FRONT
+		)
+		cam.look_at(chest - Vector3(0.0, 0.45, 0.0), Vector3.UP)
 	for _s in WALK_SETTLE_FRAMES:
 		cam.current = true
 		await get_tree().process_frame
@@ -2779,7 +2787,7 @@ func _shoot_drive_frame(
 	var speed := Vector2(player.velocity.x, player.velocity.z).length()
 	var step: int = run["body"].size()
 	return _save_drive_frame(dir, frame_name, img, [
-		"camera: three-quarter front, carried with the body",
+		"camera: %s, carried with the body" % ("side-on at ankle height" if side_on else "three-quarter front"),
 		"segment: %s (sprint %s)" % [segment["label"], "held" if segment["sprint"] else "released"],
 		"controller step: %d (%.3f s simulated)" % [step, float(step) * float(run["dt"])],
 		"travelled in segment: %.2f of %.2f m" % [travelled, segment["distance"]],
@@ -2799,14 +2807,8 @@ func _shoot_standing_frame(rig: Dictionary, cam: Camera3D, dir: String, run: Dic
 	])
 
 
-## One side-on frame at ankle height, centred between the feet.
-func _shoot_side_frame(
-		rig: Dictionary,
-		cam: Camera3D,
-		dir: String,
-		run: Dictionary,
-		frame_name: String,
-		details: Array[String]) -> bool:
+## Put the camera side-on at ankle height, centred between the feet.
+func _place_side_camera(rig: Dictionary, cam: Camera3D) -> void:
 	var skeleton: Skeleton3D = rig["skeleton"]
 	var heading: Vector3 = rig["heading"]
 	var to_world := skeleton.global_transform
@@ -2815,6 +2817,17 @@ func _shoot_side_frame(
 	var right := heading.cross(Vector3.UP)
 	cam.global_position = feet + right * STANDING_CAM_SIDE + Vector3.UP * STANDING_CAM_RISE
 	cam.look_at(feet + Vector3.UP * STANDING_CAM_AIM, Vector3.UP)
+
+
+## One side-on frame at ankle height, centred between the feet.
+func _shoot_side_frame(
+		rig: Dictionary,
+		cam: Camera3D,
+		dir: String,
+		run: Dictionary,
+		frame_name: String,
+		details: Array[String]) -> bool:
+	_place_side_camera(rig, cam)
 	for _s in WALK_SETTLE_FRAMES:
 		cam.current = true
 		await get_tree().process_frame
