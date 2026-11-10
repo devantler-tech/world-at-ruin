@@ -24,7 +24,7 @@ check() {
         length == 1 and .[0].with["persist-credentials"] == false) and
       ([.steps[] | select(.uses? | strings | startswith("oxsecurity/megalinter/flavors/go@"))] |
         length == 1 and (.[0] |
-          .uses == "oxsecurity/megalinter/flavors/go@9949bad031045f366be2467e00e8371a7328a2e2" and
+          .uses == "oxsecurity/megalinter/flavors/go@f2fe8c1cba37091848df3e524066c8c23ef353ed" and
           (has("if") or has("continue-on-error") | not) and
           .env.DEFAULT_WORKSPACE == "." and .env.VALIDATE_ALL_CODEBASE == true and
           .env.MEGALINTER_CONFIG == "${{ github.workspace }}/.mega-linter.yml" and
