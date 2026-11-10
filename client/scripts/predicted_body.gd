@@ -23,6 +23,18 @@ const MM_PER_M := 1000.0
 ## A long hitch steps at most this many ticks in one frame; the next ACK catches
 ## the prediction up instead of replaying a backlog the player never saw.
 const MAX_STEPS_PER_FRAME := 6
+## Run-ahead (#1461): the prediction leads each ACK's tick by the measured
+## round trip less the tick the zone spends applying an intent, so the zone
+## applies each intent at about the tick the client predicted it. Half the
+## 120-tick replay window keeps room for the ticks stepped between ACKs.
+const MAX_LEAD_TICKS := 60
+## Margin before an over-long lead is pulled back, so one tick of round-trip
+## jitter does not renumber the history on every ACK.
+const LEAD_SLACK := 1
+## The lead follows the smallest round trip among this many recent samples, so
+## one ACK held up on the way back cannot run the prediction ahead and then
+## pull it back (#1461 review).
+const ROUND_TRIP_WINDOW := 8
 ## Fixture configuration (ADR 0026): wire v3 does not carry a zone's movement
 ## facts, so these mirror the demo zone — `sim.DemoBounds`, the demo actor's
 ## 4 m/s cap and `zone -movement-hold-ticks`' default of 3. Carrying them on the
@@ -45,6 +57,14 @@ var _current := Vector3.ZERO
 var _offset_start := Vector3.ZERO
 var _offset_age := CORRECTION_DECAY_SEC
 var _snaps := 0
+var _last_correction := Vector3.ZERO
+## Local send clock: seconds of frame time since the body was created or reset.
+var _clock := 0.0
+## Sent sequence -> `_clock` when it was written, until an ACK applies it.
+var _sent_at: Dictionary = {}
+var _applied := 0
+var _round_trip := -1
+var _round_trips: Array[int] = []
 var _fault := ""
 
 
@@ -84,6 +104,8 @@ func advance(ack: Dictionary, sent: Array[Dictionary], delta: float) -> void:
 		if not recorded["ok"]:
 			_refuse(recorded)
 			return
+		_sent_at[entry["sequence"]] = _clock
+	_clock += maxf(delta, 0.0)
 	_accumulator += maxf(delta, 0.0)
 	var steps := 0
 	while _accumulator >= STEP_SEC:
@@ -137,6 +159,22 @@ func snap_count() -> int:
 	return _snaps
 
 
+## The newest ACK's change to the predicted tick, metres: the replay
+## correction plus any ticks stepped or dropped to realign the lead.
+func last_correction() -> Vector3:
+	return _last_correction
+
+
+## The newest measured round trip in fixed ticks, or -1 before one is measured.
+func round_trip_ticks() -> int:
+	return _round_trip
+
+
+## Ticks the prediction currently runs past the newest ACK.
+func lead_ticks() -> int:
+	return _predictor.lead()
+
+
 func fault() -> String:
 	return _fault
 
@@ -149,6 +187,12 @@ func reset() -> void:
 	_accumulator = 0.0
 	_offset_start = Vector3.ZERO
 	_offset_age = CORRECTION_DECAY_SEC
+	_last_correction = Vector3.ZERO
+	_clock = 0.0
+	_sent_at.clear()
+	_applied = 0
+	_round_trip = -1
+	_round_trips.clear()
 	_fault = ""
 
 
@@ -162,16 +206,23 @@ func _fold(ack: Dictionary) -> bool:
 		_current = _metres(_predictor.state())
 		_previous = _current
 		return true
+	var before := _predictor.state()
 	var reconciled := _predictor.reconcile(ack)
 	if not reconciled["ok"]:
 		return _refuse(reconciled)
+	var sample := _measure_round_trip(ack["applied_sequence"])
+	var aligned := _align_lead(sample)
+	if not aligned["ok"]:
+		return _refuse(aligned)
 	_last_ack = ack.duplicate(true)
-	var correction: Dictionary = reconciled["correction"]
+	var after := _predictor.state()
+	var correction := {"x": after["x"] - before["x"], "y": after["y"] - before["y"], "z": after["z"] - before["z"]}
 	var shift := Vector3(correction["x"], correction["y"], correction["z"]) / MM_PER_M
+	_last_correction = shift
 	# The tick pair moves with the prediction, so interpolation stays between
 	# two predicted ticks of the same history.
 	_previous += shift
-	_current = _metres(reconciled["state"])
+	_current = _metres(after)
 	# Keep the body where it was drawn and let the difference decay — unless
 	# this correction, or the drawn error it adds to, is wider than the body.
 	var drawn_error := correction_offset() - shift
@@ -184,6 +235,43 @@ func _fold(ack: Dictionary) -> bool:
 		_offset_start = drawn_error
 		_offset_age = 0.0
 	return true
+
+
+## The round trip of the newest sequence an ACK newly applied, against the
+## frame time it was written at, in ticks; -1 when the ACK applied nothing new.
+## The lead follows the smallest of the recent samples.
+func _measure_round_trip(applied: int) -> int:
+	if applied <= _applied:
+		return -1
+	_applied = applied
+	var sample := -1
+	if _sent_at.has(applied):
+		sample = roundi((_clock - float(_sent_at[applied])) / STEP_SEC)
+		if _round_trips.size() >= ROUND_TRIP_WINDOW:
+			_round_trips.pop_front()
+		_round_trips.append(sample)
+		_round_trip = _round_trips.min()
+	for sequence: int in _sent_at.keys():
+		if sequence <= applied:
+			_sent_at.erase(sequence)
+	return sample
+
+
+## Keep the prediction ahead of the newest ACK by the round trip, so the zone
+## applies each intent at about the tick it was predicted at. Both directions:
+## after a catch-up the lead is run back up, and after a zone stall dropped
+## ticks the numbering falls back to the zone's, so a stop is not overshot.
+## `sample` is this ACK's own round trip, or -1.
+func _align_lead(sample: int) -> Dictionary:
+	# An ACK whose own round trip is well over the recent smallest was held up on
+	# the way back: its tick is late, not the zone's, so it moves no lead.
+	if _round_trip < 0 or sample > _round_trip + LEAD_SLACK:
+		return {"ok": true}
+	var target := clampi(_round_trip - 1, 0, MAX_LEAD_TICKS)
+	var lead := _predictor.lead()
+	if lead < target or lead > target + LEAD_SLACK:
+		return _predictor.realign(target)
+	return {"ok": true}
 
 
 static func _metres(state: Dictionary) -> Vector3:

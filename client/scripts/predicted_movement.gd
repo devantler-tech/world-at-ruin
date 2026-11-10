@@ -127,6 +127,41 @@ func reconcile(ack: Dictionary) -> Dictionary:
 	return {"ok": true, "state": state(), "correction": correction}
 
 
+## Moves the newest predicted tick to `lead` ticks past the anchor (#1461).
+## Running ahead steps the held input forward, exactly as step_tick does.
+## Falling back keeps the newest `lead` history entries, which are the intents
+## the zone has not applied yet, and renumbers them to follow the anchor; the
+## position stays where it is. The lead never exceeds the history bound.
+func realign(lead: int) -> Dictionary:
+	if not _ready():
+		return _refuse("prediction_inactive")
+	if lead < 0 or lead > _history_limit or _anchor["tick"] > MAX_COUNTER - lead:
+		return _refuse("prediction_lead")
+	var target: int = _anchor["tick"] + lead
+	while _tick < target:
+		var stepped := step_tick()
+		if not stepped["ok"]:
+			return stepped
+	if _tick > target:
+		var shift := _tick - target
+		var kept: Array[Dictionary] = []
+		for entry: Dictionary in _history:
+			if entry["tick"] - shift > _anchor["tick"]:
+				var moved := entry.duplicate(true)
+				moved["tick"] = entry["tick"] - shift
+				kept.append(moved)
+		_history = kept
+		_tick = target
+	return {"ok": true, "state": state()}
+
+
+## Ticks the newest prediction runs past the anchor.
+func lead() -> int:
+	if _anchor.is_empty():
+		return 0
+	return _tick - _anchor["tick"]
+
+
 func reset() -> void:
 	_anchor = {}
 	_position = {}

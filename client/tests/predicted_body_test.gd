@@ -29,6 +29,9 @@ func _ready() -> void:
 	_test_silence_hitch_and_drawn_error()
 	_test_hop_leaves_planar_prediction()
 	_test_inactive_prediction_keeps_local_physics()
+	_test_run_ahead()
+	_test_stall_realigns_lead()
+	_test_late_ack_keeps_lead()
 	TestEnvironment.restore(env)
 	_helper.free()
 	if not _failed:
@@ -246,6 +249,138 @@ func _test_inactive_prediction_keeps_local_physics() -> void:
 	player.free()
 
 
+## #1461: over a scripted zone with a fixed three-tick round trip, steady
+## sprinting stops being corrected once the lead settles at the round trip, and
+## stopping is not corrected either. With no transport delay there is no lead,
+## exactly as in #812.
+func _test_run_ahead() -> void:
+	var delayed := _simulate(1, 2, 90, 60)
+	var body: PredictedBody = delayed["body"]
+	_check(body.fault().is_empty(), "the delayed run refused: %s" % body.fault())
+	_check(body.round_trip_ticks() == 3, "measured round trip %d, not 3 ticks" % body.round_trip_ticks())
+	_check(delayed["max_lead"] <= PredictedMovement.MAX_HISTORY, "the lead exceeded the history bound")
+	var settled: Array = delayed["corrections"].filter(func(entry: Dictionary) -> bool: return entry["frame"] >= 15)
+	_check(not settled.is_empty() and settled.all(func(entry: Dictionary) -> bool: return entry["mm"] == 0),
+		"steady sprint or the stop was still corrected after the lead settled: %s" % [_nonzero(settled)])
+	_check(body.snap_count() == 0, "the delayed run snapped %d times" % body.snap_count())
+	_check(_mm(body.predicted_position().x) > 4000, "the delayed run did not travel")
+
+	var direct := _simulate(0, 0, 60, 40)
+	var plain: PredictedBody = direct["body"]
+	_check(plain.round_trip_ticks() == 1 and direct["max_lead"] == 1,
+		"zero round trip ran ahead: rtt %d lead %d" % [plain.round_trip_ticks(), direct["max_lead"]])
+	_check(direct["corrections"].all(func(entry: Dictionary) -> bool: return entry["mm"] == 0),
+		"zero round trip was corrected: %s" % [_nonzero(direct["corrections"])])
+
+
+## #1461: a zone stall longer than its catch-up window drops ticks, so the
+## client's numbering runs ahead of the zone's. The lead falls back to the round
+## trip, the stall's lost travel is corrected once, and a later stop is not
+## overshot and pulled back.
+func _test_stall_realigns_lead() -> void:
+	var stalled := _simulate(1, 2, 150, 120, 50, 30)
+	var body: PredictedBody = stalled["body"]
+	_check(body.fault().is_empty(), "the stalled run refused: %s" % body.fault())
+	_check(stalled["max_lead"] <= PredictedMovement.MAX_HISTORY, "the lead exceeded the history bound")
+	var resumed: Array = stalled["corrections"].filter(func(entry: Dictionary) -> bool: return entry["frame"] > 84)
+	_check(not resumed.is_empty() and resumed.all(func(entry: Dictionary) -> bool: return entry["mm"] == 0),
+		"after the stall, sprinting or the stop was corrected: %s" % [_nonzero(resumed)])
+	_check(body.lead_ticks() <= body.round_trip_ticks() - 1 + PredictedBody.LEAD_SLACK,
+		"the lead did not fall back after the stall: %d" % body.lead_ticks())
+	var stall_corrected: bool = stalled["corrections"].any(func(entry: Dictionary) -> bool:
+		return entry["frame"] >= 82 and entry["frame"] <= 84 and entry["mm"] < 0)
+	_check(stall_corrected, "the stall's lost travel was never corrected: %s" % [stalled["corrections"]])
+
+
+## #1461 review: one ACK held up on the way back inflates that round-trip
+## sample. The lead must not chase it, run ahead and then fall back, which would
+## correct a steady sprint forward and then back.
+func _test_late_ack_keeps_lead() -> void:
+	var spiked := _simulate(1, 2, 90, 60, -1, 0, 58, 5)
+	var body: PredictedBody = spiked["body"]
+	_check(body.fault().is_empty(), "the late-ACK run refused: %s" % body.fault())
+	_check(body.round_trip_ticks() == 3, "one late ACK moved the round trip to %d ticks" % body.round_trip_ticks())
+	var settled: Array = spiked["corrections"].filter(func(entry: Dictionary) -> bool: return entry["frame"] >= 15)
+	_check(not settled.is_empty() and settled.all(func(entry: Dictionary) -> bool: return entry["mm"] == 0),
+		"one late ACK corrected the sprint or the stop: %s" % [_nonzero(settled)])
+	_check(body.snap_count() == 0, "one late ACK snapped the body")
+
+## A scripted zone and client, one fixed tick per frame. Intents take `up`
+## frames to reach the zone and ACKs `down` frames to come back; the zone
+## mirrors `Hub.BeforeStep`/`ackMovement` (latest intent wins, held for the
+## demo zone's hold ticks, one coalesced ACK per frame). The player sprints
+## until `stop_at`, then sends one zero sample. A stall of `stall_frames`
+## from `stall_at` runs at most the zone loop's eight catch-up steps. The ACK the
+## zone sends at `late_at` arrives `late_by` frames late, and every ACK sent
+## behind it waits for it, as on one ordered connection. `on_frame`, when
+## set, is called with the frame and the body after each frame (the motion
+## capture records the drawn position from it).
+func _simulate(up: int, down: int, frames: int, stop_at: int, stall_at: int = -1, stall_frames: int = 0,
+		late_at: int = -1, late_by: int = 0, on_frame: Callable = Callable()) -> Dictionary:
+	var spec := PredictedBody.DEMO_ZONE_SPEC
+	var body := PredictedBody.new()
+	body.configure()
+	var server := {"tick": 100, "pos": {"x": 0, "y": 0, "z": 0}, "held": {"x": 0, "y": 0, "z": 0},
+		"remaining": 0, "received": 0, "applied": 0, "next": 0, "apply_tick": 0}
+	var intents: Array[Dictionary] = []
+	var acks: Array[Dictionary] = []
+	var ack: Dictionary = {}
+	var sequence := 0
+	var was_moving := false
+	var corrections: Array[Dictionary] = []
+	var max_lead := 0
+	for frame: int in range(frames):
+		var steps := 1
+		if stall_at >= 0 and frame >= stall_at and frame < stall_at + stall_frames:
+			steps = 0
+		elif stall_at >= 0 and frame == stall_at + stall_frames:
+			steps = mini(stall_frames + 1, 8)
+		for _step: int in range(steps):
+			var latest: Dictionary = {}
+			for intent: Dictionary in intents:
+				if intent["arrive"] <= frame and intent["sequence"] > server["received"]:
+					server["received"] = intent["sequence"]
+					latest = intent
+			if not latest.is_empty():
+				server["held"] = GroundStep.direction_velocity(latest["sample"], spec)["velocity"]
+				server["remaining"] = spec["hold_ticks"]
+				server["next"] = latest["sequence"]
+				server["apply_tick"] = server["tick"] + 1
+			var velocity: Dictionary = {"x": 0, "y": 0, "z": 0}
+			if server["remaining"] > 0:
+				velocity = server["held"]
+				server["remaining"] -= 1
+			server["pos"] = GroundStep.step(server["pos"], velocity, spec)["position"]
+			server["tick"] += 1
+			if server["apply_tick"] != 0 and server["tick"] >= server["apply_tick"]:
+				server["applied"] = server["next"]
+			if _step == steps - 1:
+				acks.append({"arrive": frame + down + (late_by if frame == late_at else 0), "ack": {"applied_sequence": server["applied"],
+					"tick": server["tick"], "x": server["pos"]["x"], "y": 0, "z": server["pos"]["z"]}})
+		intents = intents.filter(func(intent: Dictionary) -> bool: return intent["sequence"] > server["received"])
+		var folded := false
+		while not acks.is_empty() and acks[0]["arrive"] <= frame:
+			ack = acks.pop_front()["ack"]
+			folded = true
+		var sent: Array[Dictionary] = []
+		var moving := frame < stop_at
+		if body.is_active() and (moving or was_moving):
+			sequence += 1
+			var sample := {"x": 1000 if moving else 0, "z": 0, "sprint": true}
+			sent.append({"sequence": sequence, "sample": sample})
+			intents.append({"arrive": frame + up, "sequence": sequence, "sample": sample})
+			was_moving = moving
+		var seeded := body.is_active()
+		body.advance(ack, sent, STEP)
+		if on_frame.is_valid():
+			on_frame.call(frame, body)
+		if folded and seeded and body.has_method("last_correction"):
+			corrections.append({"frame": frame, "mm": _mm(body.last_correction().x)})
+		if body.has_method("lead_ticks"):
+			max_lead = maxi(max_lead, body.lead_ticks())
+	return {"body": body, "corrections": corrections, "max_lead": max_lead}
+
+
 func _live(transport: Movement.Transport) -> ZoneConnection:
 	var connection := ZoneConnection.new(transport)
 	connection.connect_to(URL)
@@ -268,3 +403,7 @@ func _check(condition: bool, detail: String) -> bool:
 		print("TEST FAIL: " + detail)
 		get_tree().quit(1)
 	return condition
+
+
+static func _nonzero(corrections: Array) -> Array:
+	return corrections.filter(func(entry: Dictionary) -> bool: return entry["mm"] != 0)

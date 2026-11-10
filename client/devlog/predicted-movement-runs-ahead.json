@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-11-10",
+  "title": "Starting and stopping on the server's beat",
+  "notes": [
+    "In the private server trial with predicted movement, your wanderer now runs ahead of the server by the time a message takes to get there and back, so the server applies each step at the moment you took it.",
+    "Stopping no longer slides you back a short way after the server answers, and a server hiccup that skips time no longer makes every later stop overshoot and pull you back by a few metres.",
+    "This stays a preview for server trials only: it needs both WAR_ZONE_MOVEMENT=1 and WAR_PREDICTED_MOVEMENT=1. Ordinary launches move exactly as before."
+  ]
+}
