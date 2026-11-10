@@ -266,11 +266,12 @@ the permanent blocking policy.
   - `go-vulnerability-scan.yaml` (`push` to `main`) scans both Go modules under their own declared
     toolchains. It is the post-merge liveness signal for newly published advisories against code
     already on the default branch.
-  - `dependabot-server-tidy.yaml` (`pull_request_target`, Dependabot server branches only) runs
-    `go mod tidy` in every module that replaces the server module with the local tree and commits
-    the changed locks as the App, so a Dependabot server update passes their read-only builds
-    without hand edits (#1654). The tidy script comes from the base commit, the App token is
-    minted after `go` has finished and only the commit step sees it. Run
+  - `dependabot-server-tidy.yaml` (hourly `schedule` from `main`, plus `workflow_dispatch`) runs
+    `go mod tidy` in every module that replaces the server module with the local tree, on each
+    open same-repository Dependabot server pull request, and commits the changed locks as the
+    App, so a server update passes their read-only builds without hand edits (#1654). No pull
+    request event triggers it; the App token is minted after `go` has finished and only the
+    commit step sees it. Run
     `bash tools/server-dependents-tidy.test.sh` when changing either file.
   - `release.yaml` (`push` to `main`) calls the shared
     `devantler-tech/.github/.github/workflows/create-release.yaml`, which runs **semantic-release**

@@ -14,9 +14,16 @@
 #       Commit the changed go.mod/go.sum files to BRANCH through the GraphQL
 #       createCommitOnBranch mutation (GH_TOKEN), so GitHub signs the commit. The mutation
 #       refuses if BRANCH moved past EXPECTED_HEAD_SHA. Nothing is committed when nothing changed.
+#   server-dependents-tidy.sh prepare REPOSITORY DIRECTORY
+#       For every open same-repository Dependabot pull request on a server branch, check its
+#       head out under DIRECTORY and tidy it there. The ones that changed are listed in
+#       DIRECTORY/pending.tsv, and `pending=true|false` goes to $GITHUB_OUTPUT when set.
+#   server-dependents-tidy.sh commit-prepared REPOSITORY DIRECTORY
+#       Run `commit` for every pull request in DIRECTORY/pending.tsv.
 #
-# Every mode runs from the repository root and fails closed: no dependent module, a failed
-# tidy, or a change outside the dependents' go.mod/go.sum is an error.
+# Every mode runs from the repository root (prepare from the trusted default-branch checkout)
+# and fails closed: no dependent module, a failed tidy, or a change outside the dependents'
+# go.mod/go.sum is an error.
 set -euo pipefail
 
 readonly server_module='github.com/devantler-tech/world-at-ruin/server'
@@ -107,12 +114,57 @@ cmd_commit() {
     gh api graphql --input - --jq '.data.createCommitOnBranch.commit.oid'
 }
 
-[ "$#" -ge 1 ] || die "usage: server-dependents-tidy.sh list|tidy|commit REPOSITORY BRANCH EXPECTED_HEAD_SHA"
+cmd_prepare() {
+  [ "$#" -eq 2 ] || die "usage: prepare REPOSITORY DIRECTORY"
+  local repository=$1 directory=$2 prs number branch head files
+  [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid repository: $repository"
+  [ ! -e "$directory" ] || die "the work directory must not exist yet: $directory"
+  mkdir -p "$directory"
+  : >"$directory/pending.tsv"
+
+  prs="$directory/pull-requests.json"
+  gh pr list --repo "$repository" --state open --author app/dependabot --limit 100 \
+    --json number,headRefName,headRefOid,isCrossRepository,author >"$prs" ||
+    die "could not list open Dependabot pull requests"
+  jq -e 'type == "array"' "$prs" >/dev/null || die "unexpected pull request list"
+
+  while IFS=$'\t' read -r number branch head; do
+    [[ "$number" =~ ^[0-9]+$ && "$head" =~ ^[0-9a-f]{40}$ ]] || die "unexpected pull request entry: $number $head"
+    echo "server-dependents-tidy: #$number $branch at $head" >&2
+    git fetch --quiet --no-tags --depth=1 origin "$head" || die "could not fetch $head"
+    git worktree add --quiet --detach "$directory/$number" "$head" || die "could not check out $head"
+    files=$(cd "$directory/$number" && cmd_tidy)
+    if [ -n "$files" ]; then
+      printf '%s\t%s\t%s\n' "$number" "$branch" "$head" >>"$directory/pending.tsv"
+    fi
+  done < <(jq -r '.[]
+    | select(.author.login == "app/dependabot" and .isCrossRepository == false)
+    | select(.headRefName | startswith("dependabot/go_modules/server/"))
+    | [.number, .headRefName, .headRefOid] | @tsv' "$prs")
+
+  local pending=false
+  [ ! -s "$directory/pending.tsv" ] || pending=true
+  echo "server-dependents-tidy: $(wc -l <"$directory/pending.tsv" | tr -d ' ') pull request(s) need a tidy commit" >&2
+  [ -z "${GITHUB_OUTPUT:-}" ] || echo "pending=$pending" >>"$GITHUB_OUTPUT"
+}
+
+cmd_commit_prepared() {
+  [ "$#" -eq 2 ] || die "usage: commit-prepared REPOSITORY DIRECTORY"
+  local repository=$1 directory=$2 number branch head
+  [ -f "$directory/pending.tsv" ] || die "nothing was prepared in $directory"
+  while IFS=$'\t' read -r number branch head; do
+    (cd "$directory/$number" && cmd_commit "$repository" "$branch" "$head")
+  done <"$directory/pending.tsv"
+}
+
+[ "$#" -ge 1 ] || die "usage: server-dependents-tidy.sh list|tidy|commit|prepare|commit-prepared ..."
 mode=$1
 shift
 case "$mode" in
   list) cmd_list "$@" ;;
   tidy) cmd_tidy "$@" ;;
   commit) cmd_commit "$@" ;;
+  prepare) cmd_prepare "$@" ;;
+  commit-prepared) cmd_commit_prepared "$@" ;;
   *) die "unknown mode: $mode" ;;
 esac

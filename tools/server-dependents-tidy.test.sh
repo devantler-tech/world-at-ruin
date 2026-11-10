@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Controls for tools/server-dependents-tidy.sh and the workflow that runs it (#1654).
 # `go` and `gh` are stubbed: the controls check which modules are tidied, what is committed,
-# and that the workflow only hands its write token to trusted Dependabot server updates.
+# and that the scheduled workflow only hands its write token to the commit of tidied
+# Dependabot server updates.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,12 +25,14 @@ set -euo pipefail
 [ "$1" = -C ] && [ "$3" = mod ] && [ "$4" = tidy ] || { echo "unexpected go call: $*" >&2; exit 2; }
 echo "$2" >>"$STUB_LOG/go.calls"
 if [ "${STUB_GO_FAIL:-}" = "$2" ]; then exit 1; fi
-if [ "${STUB_GO_NOOP:-}" != 1 ]; then printf '// tidied\n' >>"$2/go.mod"; printf 'sum\n' >>"$2/go.sum"; fi
+if [ "${STUB_GO_NOOP:-}" != 1 ] && [ ! -e NOOP ]; then printf '// tidied\n' >>"$2/go.mod"; printf 'sum\n' >>"$2/go.sum"; fi
 STUB
 cat >"$work/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "$1" = pr ]; then echo "$*" >"$STUB_LOG/gh.list-args"; cat "$STUB_LOG/prs.json"; exit 0; fi
 cat >"$STUB_LOG/gh.request"
+cat "$STUB_LOG/gh.request" >>"$STUB_LOG/gh.requests"
 echo "$*" >"$STUB_LOG/gh.args"
 echo 0123456789abcdef0123456789abcdef01234567
 STUB
@@ -38,7 +41,7 @@ export PATH="$work/bin:$PATH" STUB_LOG="$work"
 
 fixture() {
   local repo=$work/repo
-  rm -rf "$repo" "$work/go.calls" "$work/gh.request" "$work/gh.args"
+  rm -rf "$repo" "$work/go.calls" "$work/gh.request" "$work/gh.requests" "$work/gh.args"
   mkdir -p "$repo/server/issued" "$repo/tools/trial" "$repo/tools/other" "$repo/server/testdata/x"
   printf 'module github.com/devantler-tech/world-at-ruin/server\n\ngo 1.27.3\n' >"$repo/server/go.mod"
   printf 'module issued\n\ngo 1.27.3\n\nreplace github.com/devantler-tech/world-at-ruin/server => ..\n' >"$repo/server/issued/go.mod"
@@ -97,36 +100,91 @@ if "$script" commit devantler-tech/world-at-ruin b 0123456789abcdef0123456789abc
 rm -rf server/issued tools/trial
 if "$script" list >/dev/null 2>&1; then fail "no dependents was accepted"; fi
 
-# 6. The workflow hands the write token only to a same-repository Dependabot server update,
-# never to the step that runs go, and never persists a checkout credential.
+# 6. Prepare tidies only same-repository Dependabot server pull requests, each at its own head,
+# and lists only the ones that changed.
+fixture
+commit_on() {
+  git checkout -q -b "$1" main
+  shift
+  "$@"
+  git add -A .
+  git -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm change
+  git rev-parse HEAD
+}
+git branch -q -m main
+main_sha=$(git rev-parse HEAD)
+sha_a=$(commit_on dependabot/go_modules/server/a sh -c 'echo "// bump a" >>server/go.mod')
+sha_b=$(commit_on dependabot/go_modules/server/b sh -c 'echo "// bump b" >>server/go.mod && touch NOOP')
+git checkout -q main
+git clone -q "file://$work/repo" "$work/clone"
+cd "$work/clone"
+cat >"$work/prs.json" <<JSON
+[
+  {"number": 11, "headRefName": "dependabot/go_modules/server/a", "headRefOid": "$sha_a", "isCrossRepository": false, "author": {"login": "app/dependabot", "is_bot": true}},
+  {"number": 12, "headRefName": "dependabot/go_modules/server/b", "headRefOid": "$sha_b", "isCrossRepository": false, "author": {"login": "app/dependabot", "is_bot": true}},
+  {"number": 13, "headRefName": "dependabot/go_modules/server/c", "headRefOid": "$main_sha", "isCrossRepository": true, "author": {"login": "app/dependabot", "is_bot": true}},
+  {"number": 14, "headRefName": "dependabot/go_modules/server/d", "headRefOid": "$main_sha", "isCrossRepository": false, "author": {"login": "someone", "is_bot": false}},
+  {"number": 15, "headRefName": "dependabot/github_actions/e", "headRefOid": "$main_sha", "isCrossRepository": false, "author": {"login": "app/dependabot", "is_bot": true}}
+]
+JSON
+rm -f "$work/go.calls"
+GITHUB_OUTPUT="$work/output" "$script" prepare devantler-tech/world-at-ruin "$work/prepared" 2>/dev/null
+[ "$(cat "$work/gh.list-args")" = "pr list --repo devantler-tech/world-at-ruin --state open --author app/dependabot --limit 100 --json number,headRefName,headRefOid,isCrossRepository,author" ] ||
+  fail "prepare listed the wrong pull requests: $(cat "$work/gh.list-args")"
+[ "$(cat "$work/prepared/pending.tsv")" = "$(printf '11\tdependabot/go_modules/server/a\t%s' "$sha_a")" ] || fail "prepare listed the wrong pending pull requests"
+[ "$(cat "$work/output")" = pending=true ] || fail "prepare did not report pending work"
+[ "$(git -C "$work/prepared/11" rev-parse HEAD)" = "$sha_a" ] && [ "$(git -C "$work/prepared/12" rev-parse HEAD)" = "$sha_b" ] || fail "prepare did not tidy each head"
+for skipped in 13 14 15; do [ ! -e "$work/prepared/$skipped" ] || fail "prepare checked out #$skipped"; done
+[ -z "$(git status --porcelain)" ] || fail "prepare changed the trusted checkout"
+[ ! -e "$work/gh.request" ] || fail "prepare called GitHub with a write"
+
+GH_TOKEN=x "$script" commit-prepared devantler-tech/world-at-ruin "$work/prepared" >/dev/null 2>&1
+[ "$(jq -s length "$work/gh.requests")" = 1 ] || fail "commit-prepared did not send exactly one commit"
+jq -e --arg head "$sha_a" '.variables.input.expectedHeadOid == $head
+  and .variables.input.branch.branchName == "dependabot/go_modules/server/a"
+  and ([.variables.input.fileChanges.additions[].path] == ["server/issued/go.mod","server/issued/go.sum","tools/trial/go.mod","tools/trial/go.sum"])' \
+  "$work/gh.request" >/dev/null || fail "commit-prepared sent the wrong commit"
+
+# Nothing to do: no pending work and no write.
+printf '[]' >"$work/prs.json"
+rm -f "$work/output" "$work/gh.request" "$work/gh.requests"
+GITHUB_OUTPUT="$work/output" "$script" prepare devantler-tech/world-at-ruin "$work/prepared-empty" 2>/dev/null
+[ "$(cat "$work/output")" = pending=false ] || fail "prepare reported work when there was none"
+GH_TOKEN=x "$script" commit-prepared devantler-tech/world-at-ruin "$work/prepared-empty" >/dev/null 2>&1
+[ ! -e "$work/gh.request" ] || fail "commit-prepared wrote with nothing prepared"
+
+# Fail closed on a reused work directory, a malformed list and a malformed entry.
+if "$script" prepare devantler-tech/world-at-ruin "$work/prepared" >/dev/null 2>&1; then fail "prepare reused a work directory"; fi
+printf '{}' >"$work/prs.json"
+if "$script" prepare devantler-tech/world-at-ruin "$work/prepared-bad" >/dev/null 2>&1; then fail "prepare accepted a malformed list"; fi
+printf '[{"number": 16, "headRefName": "dependabot/go_modules/server/f", "headRefOid": "main", "isCrossRepository": false, "author": {"login": "app/dependabot"}}]' >"$work/prs.json"
+if "$script" prepare devantler-tech/world-at-ruin "$work/prepared-bad2" >/dev/null 2>&1; then fail "prepare accepted a head that is not a full SHA"; fi
+if "$script" commit-prepared devantler-tech/world-at-ruin "$work/missing" >/dev/null 2>&1; then fail "commit-prepared accepted a missing preparation"; fi
+
+# 7. The workflow runs on a schedule from the default branch with a read-only token, and only
+# the commit step, after go has run, sees the App token.
 cd "$root"
 command -v yq >/dev/null || fail "yq is required"
 [ "$(yq '.permissions | length' "$workflow")" = 0 ] || fail "workflow-level permissions must be empty"
-[ "$(yq '.on | keys | join(",")' "$workflow")" = pull_request_target ] || fail "the only trigger must be pull_request_target"
-[ "$(yq '.on.pull_request_target.paths | join(",")' "$workflow")" = server/go.mod ] || fail "the trigger must be limited to server/go.mod"
-condition=$(yq '.jobs.tidy.if' "$workflow")
-for clause in \
-  "github.actor == 'dependabot[bot]'" \
-  "github.event.pull_request.user.login == 'dependabot[bot]'" \
-  "github.event.pull_request.head.repo.full_name == github.repository" \
-  "startsWith(github.event.pull_request.head.ref, 'dependabot/go_modules/server/')"; do
-  case "$condition" in *"$clause"*) ;; *) fail "the job condition lacks: $clause" ;; esac
-done
-case "$condition" in *'||'*) fail "the job condition must not contain an alternative" ;; esac
-[ "$(yq -o=json -I=0 '.jobs.tidy.permissions' "$workflow")" = '{"contents":"read"}' ] || fail "the job's GITHUB_TOKEN must only read contents"
+[ "$(yq '.on | keys | join(",")' "$workflow")" = schedule,workflow_dispatch ] || fail "the workflow must only run on a schedule or by hand"
+[ "$(yq -o=json -I=0 '.jobs.tidy.permissions' "$workflow")" = '{"contents":"read","pull-requests":"read"}' ] || fail "the job's GITHUB_TOKEN must only read"
+[ "$(yq '.jobs | keys | join(",")' "$workflow")" = tidy ] || fail "expected the one tidy job"
 checkouts='[.jobs.tidy.steps[] | select(.uses == "actions/checkout@*")]'
-[ "$(yq "$checkouts | length" "$workflow")" = 2 ] || fail "expected exactly the base and head checkouts"
-[ "$(yq "$checkouts | map(.with.\"persist-credentials\" == false) | all" "$workflow")" = true ] || fail "no checkout may persist credentials"
-[ "$(yq "$checkouts | map(select(.with.path == \"base\")) | .[0].with.ref" "$workflow")" = null ] || fail "the script must come from the base commit"
-[ "$(yq "$checkouts | map(select(.with.path == \"base\")) | .[0].with.\"sparse-checkout\"" "$workflow")" = tools/server-dependents-tidy.sh ] || fail "the base checkout must hold only the tidy script"
-[ "$(yq "$checkouts | map(select(.with.path == \"pr\")) | .[0].with.ref" "$workflow")" = "\${{ github.event.pull_request.head.sha }}" ] || fail "the head checkout must pin the head SHA"
-[ "$(yq '[.jobs.tidy.steps[] | select(has("run")) | .run | test("^bash \.\./base/tools/server-dependents-tidy\.sh ")] | all' "$workflow")" = true ] || fail "every run step must use the base copy of the script"
+[ "$(yq "$checkouts | length" "$workflow")" = 1 ] || fail "expected one checkout"
+[ "$(yq "$checkouts | .[0].with | to_entries | map(.key + \"=\" + (.value | tostring)) | join(\",\")" "$workflow")" = persist-credentials=false ] ||
+  fail "the checkout must be the default branch without a persisted credential"
 [ "$(yq '[.jobs.tidy.steps[] | select(.uses == "actions/setup-go@*")] | .[0].with.cache' "$workflow")" = false ] || fail "the job must not use the shared Go cache"
 token_users=$(yq '[.jobs.tidy.steps[] | select(to_yaml | test("steps\.app-token\.outputs\.token")) | .name] | join(",")' "$workflow")
 [ "$token_users" = "Commit the tidied locks" ] || fail "only the commit step may see the App token (saw: $token_users)"
-[ "$(yq '.jobs.tidy.steps[] | select(.name == "Commit the tidied locks") | .run' "$workflow")" = "bash ../base/tools/server-dependents-tidy.sh commit \"\$REPOSITORY\" \"\$BRANCH\" \"\$HEAD_SHA\"" ] || fail "the commit step must only commit"
+[ "$(yq '.jobs.tidy.steps[] | select(.name == "Commit the tidied locks") | .run' "$workflow")" = "bash tools/server-dependents-tidy.sh commit-prepared \"\$REPOSITORY\" \"\$RUNNER_TEMP/server-tidy\"" ] ||
+  fail "the commit step must only commit what was prepared"
+[ "$(yq '.jobs.tidy.steps[] | select(.id == "prepare") | .run' "$workflow")" = "bash tools/server-dependents-tidy.sh prepare \"\$REPOSITORY\" \"\$RUNNER_TEMP/server-tidy\"" ] ||
+  fail "the prepare step must run the tidy script"
+[ "$(yq '.jobs.tidy.steps[] | select(.id == "prepare") | .env.GH_TOKEN' "$workflow")" = "\${{ github.token }}" ] || fail "prepare must use the read-only token"
 token_index=$(yq '.jobs.tidy.steps | to_entries | map(select(.value.id == "app-token")) | .[0].key' "$workflow")
-tidy_index=$(yq '.jobs.tidy.steps | to_entries | map(select(.value.run // "" | test(" tidy$"))) | .[0].key' "$workflow")
-[ "$token_index" != null ] && [ "$tidy_index" != null ] && [ "$tidy_index" -lt "$token_index" ] || fail "the App token must be minted after go has run"
+prepare_index=$(yq '.jobs.tidy.steps | to_entries | map(select(.value.id == "prepare")) | .[0].key' "$workflow")
+[ "$token_index" != null ] && [ "$prepare_index" != null ] && [ "$prepare_index" -lt "$token_index" ] || fail "the App token must be minted after go has run"
+[ "$(yq '[.jobs.tidy.steps[] | select(.id == "app-token" or .name == "Commit the tidied locks") | .if] | unique | join(",")' "$workflow")" = "steps.prepare.outputs.pending == 'true'" ] ||
+  fail "the token and commit steps must run only when something was prepared"
 
 echo "server-dependents-tidy: PASS"
