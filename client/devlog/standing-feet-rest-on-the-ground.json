@@ -1,0 +1,10 @@
+{
+  "version": "next",
+  "date": "2026-11-10",
+  "title": "Standing feet rest on the ground",
+  "notes": [
+    "With the walk or run preview switched on, your wanderer now stands with both feet on the ground under them when you stop on a slope, instead of one foot sinking in and the other hovering.",
+    "Walking off and stopping again ease the feet onto and off the slope instead of jumping them.",
+    "This is part of the walk and run previews: launch with WAR_WALK_CYCLE=1 or WAR_RUN_CYCLE=1 to try it. Ordinary launches stand exactly as before."
+  ]
+}
