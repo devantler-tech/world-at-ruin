@@ -312,9 +312,11 @@ func _test_late_ack_keeps_lead() -> void:
 ## until `stop_at`, then sends one zero sample. A stall of `stall_frames`
 ## from `stall_at` runs at most the zone loop's eight catch-up steps. The ACK the
 ## zone sends at `late_at` arrives `late_by` frames late, and every ACK sent
-## behind it waits for it, as on one ordered connection.
+## behind it waits for it, as on one ordered connection. `on_frame`, when
+## set, is called with the frame and the body after each frame (the motion
+## capture records the drawn position from it).
 func _simulate(up: int, down: int, frames: int, stop_at: int, stall_at: int = -1, stall_frames: int = 0,
-		late_at: int = -1, late_by: int = 0) -> Dictionary:
+		late_at: int = -1, late_by: int = 0, on_frame: Callable = Callable()) -> Dictionary:
 	var spec := PredictedBody.DEMO_ZONE_SPEC
 	var body := PredictedBody.new()
 	body.configure()
@@ -370,9 +372,12 @@ func _simulate(up: int, down: int, frames: int, stop_at: int, stall_at: int = -1
 			was_moving = moving
 		var seeded := body.is_active()
 		body.advance(ack, sent, STEP)
-		if folded and seeded:
+		if on_frame.is_valid():
+			on_frame.call(frame, body)
+		if folded and seeded and body.has_method("last_correction"):
 			corrections.append({"frame": frame, "mm": _mm(body.last_correction().x)})
-		max_lead = maxi(max_lead, body.lead_ticks())
+		if body.has_method("lead_ticks"):
+			max_lead = maxi(max_lead, body.lead_ticks())
 	return {"body": body, "corrections": corrections, "max_lead": max_lead}
 
 
