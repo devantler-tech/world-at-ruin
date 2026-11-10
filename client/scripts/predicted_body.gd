@@ -31,6 +31,10 @@ const MAX_LEAD_TICKS := 60
 ## Margin before an over-long lead is pulled back, so one tick of round-trip
 ## jitter does not renumber the history on every ACK.
 const LEAD_SLACK := 1
+## The lead follows the smallest round trip among this many recent samples, so
+## one ACK held up on the way back cannot run the prediction ahead and then
+## pull it back (#1461 review).
+const ROUND_TRIP_WINDOW := 8
 ## Fixture configuration (ADR 0026): wire v3 does not carry a zone's movement
 ## facts, so these mirror the demo zone — `sim.DemoBounds`, the demo actor's
 ## 4 m/s cap and `zone -movement-hold-ticks`' default of 3. Carrying them on the
@@ -60,6 +64,7 @@ var _clock := 0.0
 var _sent_at: Dictionary = {}
 var _applied := 0
 var _round_trip := -1
+var _round_trips: Array[int] = []
 var _fault := ""
 
 
@@ -187,6 +192,7 @@ func reset() -> void:
 	_sent_at.clear()
 	_applied = 0
 	_round_trip = -1
+	_round_trips.clear()
 	_fault = ""
 
 
@@ -204,8 +210,8 @@ func _fold(ack: Dictionary) -> bool:
 	var reconciled := _predictor.reconcile(ack)
 	if not reconciled["ok"]:
 		return _refuse(reconciled)
-	_measure_round_trip(ack["applied_sequence"])
-	var aligned := _align_lead()
+	var sample := _measure_round_trip(ack["applied_sequence"])
+	var aligned := _align_lead(sample)
 	if not aligned["ok"]:
 		return _refuse(aligned)
 	_last_ack = ack.duplicate(true)
@@ -232,24 +238,34 @@ func _fold(ack: Dictionary) -> bool:
 
 
 ## The round trip of the newest sequence an ACK newly applied, against the
-## frame time it was written at.
-func _measure_round_trip(applied: int) -> void:
+## frame time it was written at, in ticks; -1 when the ACK applied nothing new.
+## The lead follows the smallest of the recent samples.
+func _measure_round_trip(applied: int) -> int:
 	if applied <= _applied:
-		return
+		return -1
 	_applied = applied
+	var sample := -1
 	if _sent_at.has(applied):
-		_round_trip = roundi((_clock - float(_sent_at[applied])) / STEP_SEC)
+		sample = roundi((_clock - float(_sent_at[applied])) / STEP_SEC)
+		if _round_trips.size() >= ROUND_TRIP_WINDOW:
+			_round_trips.pop_front()
+		_round_trips.append(sample)
+		_round_trip = _round_trips.min()
 	for sequence: int in _sent_at.keys():
 		if sequence <= applied:
 			_sent_at.erase(sequence)
+	return sample
 
 
 ## Keep the prediction ahead of the newest ACK by the round trip, so the zone
 ## applies each intent at about the tick it was predicted at. Both directions:
 ## after a catch-up the lead is run back up, and after a zone stall dropped
 ## ticks the numbering falls back to the zone's, so a stop is not overshot.
-func _align_lead() -> Dictionary:
-	if _round_trip < 0:
+## `sample` is this ACK's own round trip, or -1.
+func _align_lead(sample: int) -> Dictionary:
+	# An ACK whose own round trip is well over the recent smallest was held up on
+	# the way back: its tick is late, not the zone's, so it moves no lead.
+	if _round_trip < 0 or sample > _round_trip + LEAD_SLACK:
 		return {"ok": true}
 	var target := clampi(_round_trip - 1, 0, MAX_LEAD_TICKS)
 	var lead := _predictor.lead()

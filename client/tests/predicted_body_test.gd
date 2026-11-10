@@ -31,6 +31,7 @@ func _ready() -> void:
 	_test_inactive_prediction_keeps_local_physics()
 	_test_run_ahead()
 	_test_stall_realigns_lead()
+	_test_late_ack_keeps_lead()
 	TestEnvironment.restore(env)
 	_helper.free()
 	if not _failed:
@@ -291,13 +292,29 @@ func _test_stall_realigns_lead() -> void:
 	_check(stall_corrected, "the stall's lost travel was never corrected: %s" % [stalled["corrections"]])
 
 
+## #1461 review: one ACK held up on the way back inflates that round-trip
+## sample. The lead must not chase it, run ahead and then fall back, which would
+## correct a steady sprint forward and then back.
+func _test_late_ack_keeps_lead() -> void:
+	var spiked := _simulate(1, 2, 90, 60, -1, 0, 58, 5)
+	var body: PredictedBody = spiked["body"]
+	_check(body.fault().is_empty(), "the late-ACK run refused: %s" % body.fault())
+	_check(body.round_trip_ticks() == 3, "one late ACK moved the round trip to %d ticks" % body.round_trip_ticks())
+	var settled: Array = spiked["corrections"].filter(func(entry: Dictionary) -> bool: return entry["frame"] >= 15)
+	_check(not settled.is_empty() and settled.all(func(entry: Dictionary) -> bool: return entry["mm"] == 0),
+		"one late ACK corrected the sprint or the stop: %s" % [_nonzero(settled)])
+	_check(body.snap_count() == 0, "one late ACK snapped the body")
+
 ## A scripted zone and client, one fixed tick per frame. Intents take `up`
 ## frames to reach the zone and ACKs `down` frames to come back; the zone
 ## mirrors `Hub.BeforeStep`/`ackMovement` (latest intent wins, held for the
 ## demo zone's hold ticks, one coalesced ACK per frame). The player sprints
 ## until `stop_at`, then sends one zero sample. A stall of `stall_frames`
-## from `stall_at` runs at most the zone loop's eight catch-up steps.
-func _simulate(up: int, down: int, frames: int, stop_at: int, stall_at: int = -1, stall_frames: int = 0) -> Dictionary:
+## from `stall_at` runs at most the zone loop's eight catch-up steps. The ACK the
+## zone sends at `late_at` arrives `late_by` frames late, and every ACK sent
+## behind it waits for it, as on one ordered connection.
+func _simulate(up: int, down: int, frames: int, stop_at: int, stall_at: int = -1, stall_frames: int = 0,
+		late_at: int = -1, late_by: int = 0) -> Dictionary:
 	var spec := PredictedBody.DEMO_ZONE_SPEC
 	var body := PredictedBody.new()
 	body.configure()
@@ -336,7 +353,7 @@ func _simulate(up: int, down: int, frames: int, stop_at: int, stall_at: int = -1
 			if server["apply_tick"] != 0 and server["tick"] >= server["apply_tick"]:
 				server["applied"] = server["next"]
 			if _step == steps - 1:
-				acks.append({"arrive": frame + down, "ack": {"applied_sequence": server["applied"],
+				acks.append({"arrive": frame + down + (late_by if frame == late_at else 0), "ack": {"applied_sequence": server["applied"],
 					"tick": server["tick"], "x": server["pos"]["x"], "y": 0, "z": server["pos"]["z"]}})
 		intents = intents.filter(func(intent: Dictionary) -> bool: return intent["sequence"] > server["received"])
 		var folded := false
