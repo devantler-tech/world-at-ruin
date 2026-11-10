@@ -64,6 +64,57 @@ moved.
 | run 18 | ![](side-18_run-before.png) | ![](side-18_run-after.png) |
 | run 20 | ![](side-20_run-before.png) | ![](side-20_run-after.png) |
 
+## The transitions that changed, in motion
+
+`client/tools/plant_transition_capture.tscn` drives the walk preview's
+`WalkLocomotion` directly along +X at 2 m/s on a bare stage and photographs it
+side-on at ankle height every third 60 Hz tick (0.05 s apart), windowed at
+1280×720, cropped and halved. "Before" is the same tool with `main`'s
+locomotion and player scripts (which already carry #1638). Frame numbers are
+ticks since the walk started.
+
+**An 8 cm stone lip** at x = 0, crossed by the swinging and then the planted
+feet. Before, a foot's ground target jumps the lip's height in the tick it
+crosses; after, it rises over a few ticks.
+
+| Tick | Before | After |
+|---|---|---|
+| 24 | ![](plant-lip_24-before.png) | ![](plant-lip_24-after.png) |
+| 27 | ![](plant-lip_27-before.png) | ![](plant-lip_27-after.png) |
+| 30 | ![](plant-lip_30-before.png) | ![](plant-lip_30-after.png) |
+| 33 | ![](plant-lip_33-before.png) | ![](plant-lip_33-after.png) |
+| 36 | ![](plant-lip_36-before.png) | ![](plant-lip_36-after.png) |
+
+**Ground that cannot be sampled**: the walk leaves a 15° slope that runs across
+the body (one foot higher than the other) for a cave-style floor that answers no
+height at x = 0. Before, the pelvis left the slope's drop in a few ticks while
+the feet took nine, so the downhill foot was briefly out of reach; after, the
+pelvis and both feet fade together over 0.15 s.
+
+| Tick | Before | After |
+|---|---|---|
+| 24 | ![](plant-loss_24-before.png) | ![](plant-loss_24-after.png) |
+| 27 | ![](plant-loss_27-before.png) | ![](plant-loss_27-after.png) |
+| 30 | ![](plant-loss_30-before.png) | ![](plant-loss_30-after.png) |
+| 33 | ![](plant-loss_33-before.png) | ![](plant-loss_33-after.png) |
+| 36 | ![](plant-loss_36-before.png) | ![](plant-loss_36-after.png) |
+| 39 | ![](plant-loss_39-before.png) | ![](plant-loss_39-after.png) |
+
+**Standing 0.2 m up on a flat rock** over level terrain (the standing pose under
+the walk preview). Before, the steepest-floor tolerance of 0.216 m counted the
+body as standing on the terrain inside the rock, so both feet were planted
+inside the stone; after, the tolerance on a level floor is 5 cm, and the feet
+stand on the rock.
+
+| Tick | Before | After |
+|---|---|---|
+| 3 | ![](plant-rock_03-before.png) | ![](plant-rock_03-after.png) |
+| 15 | ![](plant-rock_15-before.png) | ![](plant-rock_15-after.png) |
+| 30 | ![](plant-rock_30-before.png) | ![](plant-rock_30-after.png) |
+
+These stages are bare boxes and planes: they judge where the feet go, not the scene.
+
+
 Reference: the drive's own cue, *Kingmakers* Official Announcement Trailer
 1:06–1:10 (full-body stride), as recorded in
 [`docs/art-direction/`](../../art-direction/README.md). No reference media is
