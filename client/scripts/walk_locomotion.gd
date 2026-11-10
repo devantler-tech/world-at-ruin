@@ -59,6 +59,11 @@ extends Node
 ## flat-plane one; mid-stride, the feet ease between the two over
 ## [constant GROUND_BLEND_SECONDS] instead of jumping.
 ##
+## Standing still under either gait opt-in plants the same way (#1638): each
+## ankle rests its standing height above the ground under it and the pelvis
+## drops by the deeper foot's offset. On flat or unsampled ground the standing
+## pose is the rest pose exactly, and with no gait opted in it is never touched.
+##
 ## ## Speed comes from stride length, not cadence
 ##
 ## [constant RUN_STRIDE_LENGTH_M] is longer than [constant STRIDE_LENGTH_M], so
@@ -270,6 +275,9 @@ var _ground_last: Array[float] = [0.0, 0.0]
 var _ground_lower := 0.0
 # How far one pose may move those, as a share of the whole change: INF snaps.
 var _ground_step := INF
+# Whether the newest [method advance_motion] posed a terrain plant, moving or
+# standing, so the next one eases from it rather than snapping.
+var _planted := false
 
 
 ## Bind the driver to the newest recipe-built body. Character editing rebuilds
@@ -281,6 +289,7 @@ func bind(body: Node3D) -> void:
 	_phase = 0.0
 	_run_blend = 0.0
 	_has_active_gait = false
+	_planted = false
 	_walk_enabled = OS.get_environment(FLAG_ENV) == "1"
 	_run_enabled = OS.get_environment(RUN_FLAG_ENV) == "1"
 	if _skeleton == null:
@@ -350,6 +359,9 @@ func _capture_legs() -> bool:
 			"thigh_rest_angle": atan2(upper.x, -upper.y),
 			"calf_rest_angle": atan2(lower.x, -lower.y),
 			"hip_over_ankle_m": -_sagittal(ankle - hip).y,
+			# How far ahead of its hip the ankle stands at rest: where the standing
+			# pose samples the ground under it.
+			"rest_forward_m": _sagittal(ankle - hip).x,
 			"thigh_rest": _skeleton.get_bone_rest(thigh).basis.get_rotation_quaternion(),
 			"calf_rest": _skeleton.get_bone_rest(calf).basis.get_rotation_quaternion(),
 			"foot_rest": _skeleton.get_bone_rest(foot).basis.get_rotation_quaternion(),
@@ -407,16 +419,18 @@ func advance_motion(
 	if not grounded:
 		_phase = 0.0
 		_has_active_gait = false
+		_planted = false
 		apply_jump(vertical_speed)
 		return
 	if not _any_gait_enabled():
 		_has_active_gait = false
+		_planted = false
 		_reset_pose()
 		return
 	if horizontal_speed < MIN_WALK_SPEED:
 		_phase = 0.0
 		_has_active_gait = false
-		_reset_pose()
+		_pose_standing(INF if not _planted else maxf(delta, 0.0) / GROUND_BLEND_SECONDS)
 		return
 	# The gait this state needs, and whether its own flag is on. An un-opted-in
 	# gait resets rather than borrowing the other one — the same honesty the
@@ -424,12 +438,15 @@ func advance_motion(
 	if not (_run_enabled if sprinting else _walk_enabled):
 		_phase = 0.0
 		_has_active_gait = false
+		_planted = false
 		_reset_pose()
 		return
 	var target_blend := 1.0 if sprinting else 0.0
-	# The terrain plant eases only within a moving gait; its first pose snaps,
-	# exactly as the gait itself does.
-	var ground_step := INF if not _has_active_gait else maxf(delta, 0.0) / GROUND_BLEND_SECONDS
+	# The terrain plant eases within a moving gait and from a planted stand
+	# (#1638); after anything else its first pose snaps, exactly as the gait
+	# itself does.
+	var ground_step := INF if not (_has_active_gait or _planted) else maxf(delta, 0.0) / GROUND_BLEND_SECONDS
+	_planted = true
 	if not _has_active_gait:
 		# There is no prior moving gait to blend from after a bind, stop, jump or
 		# un-opted state. Snap the first active gait so steady walk/run behavior
@@ -558,27 +575,32 @@ func _pose_legs(phase: float, run_weight: float) -> void:
 		var walk := _leg_turns(leg, walk_paths[i], WALK_PELVIS_DROP_M + lower, WALK_LEG_REACH, grounds[i])
 		var run := _leg_turns(leg, run_paths[i], RUN_PELVIS_DROP_M + lower, RUN_LEG_REACH, grounds[i])
 		var turns := walk.lerp(run, run_weight)
-		var thigh: int = leg["thigh"]
-		var parent_now := _skeleton.get_bone_global_pose(_skeleton.get_bone_parent(thigh)).basis.get_rotation_quaternion()
-		var hip_frame: Quaternion = leg["hip_frame"]
-		var thigh_rest: Quaternion = leg["thigh_rest"]
-		# The thigh's pose is whatever carries the live pelvis to the turned rest
-		# chain. Axes and results are renormalised: a unit vector carried through a
-		# frame change drifts off unit length, and a rotation built on it would stop
-		# being exactly one.
-		_skeleton.set_bone_pose_rotation(thigh,
-			(parent_now.inverse() * Quaternion(_lateral, turns.x) * hip_frame * thigh_rest).normalized())
-		# The knee turns about the same lateral axis, expressed in the thigh's rest
-		# frame before its own turn, so the shin stays in the thigh's plane.
-		var thigh_frame := hip_frame * thigh_rest
-		var calf_rest: Quaternion = leg["calf_rest"]
-		_skeleton.set_bone_pose_rotation(int(leg["calf"]),
-			(Quaternion((thigh_frame.inverse() * _lateral).normalized(), turns.y) * calf_rest).normalized())
-		# The foot undoes the leg's whole turn, so it keeps its standing orientation.
-		var calf_frame := thigh_frame * calf_rest
-		var foot_rest: Quaternion = leg["foot_rest"]
-		_skeleton.set_bone_pose_rotation(int(leg["foot"]),
-			(Quaternion((calf_frame.inverse() * _lateral).normalized(), -(turns.x + turns.y)) * foot_rest).normalized())
+		_apply_leg_turns(leg, turns)
+
+
+## Pose one leg from its solved thigh and knee turns (see [method _leg_turns]).
+func _apply_leg_turns(leg: Dictionary, turns: Vector2) -> void:
+	var thigh: int = leg["thigh"]
+	var parent_now := _skeleton.get_bone_global_pose(_skeleton.get_bone_parent(thigh)).basis.get_rotation_quaternion()
+	var hip_frame: Quaternion = leg["hip_frame"]
+	var thigh_rest: Quaternion = leg["thigh_rest"]
+	# The thigh's pose is whatever carries the live pelvis to the turned rest
+	# chain. Axes and results are renormalised: a unit vector carried through a
+	# frame change drifts off unit length, and a rotation built on it would stop
+	# being exactly one.
+	_skeleton.set_bone_pose_rotation(thigh,
+		(parent_now.inverse() * Quaternion(_lateral, turns.x) * hip_frame * thigh_rest).normalized())
+	# The knee turns about the same lateral axis, expressed in the thigh's rest
+	# frame before its own turn, so the shin stays in the thigh's plane.
+	var thigh_frame := hip_frame * thigh_rest
+	var calf_rest: Quaternion = leg["calf_rest"]
+	_skeleton.set_bone_pose_rotation(int(leg["calf"]),
+		(Quaternion((thigh_frame.inverse() * _lateral).normalized(), turns.y) * calf_rest).normalized())
+	# The foot undoes the leg's whole turn, so it keeps its standing orientation.
+	var calf_frame := thigh_frame * calf_rest
+	var foot_rest: Quaternion = leg["foot_rest"]
+	_skeleton.set_bone_pose_rotation(int(leg["foot"]),
+		(Quaternion((calf_frame.inverse() * _lateral).normalized(), -(turns.x + turns.y)) * foot_rest).normalized())
 
 
 ## The thigh turn and the knee turn relative to it, in radians about the lateral
@@ -615,6 +637,8 @@ func _leg_turns(leg: Dictionary, path: Vector2, drop: float, limit: float, groun
 ## now: the swinging foot travels beyond those ends, and following it would bob
 ## the whole body up and down every step on a slope. At the deeper end a planted
 ## foot needs exactly that much more leg.
+## A NAN `reach` is the standing pose (#1638): both feet are down where they
+## stand, so the drop comes from the deeper of the two.
 func _ground_offsets(forwards: Array[float], reach: float) -> Array[float]:
 	var raw: Array[float] = [NAN, NAN]
 	var lower_target := 0.0
@@ -631,6 +655,11 @@ func _ground_offsets(forwards: Array[float], reach: float) -> Array[float]:
 			for i in _legs.size():
 				var plant: Vector3 = _legs[i]["plant"]
 				raw[i] = _offset_at(to_world * (plant + _forward * forwards[i]), plane, scale)
+				if is_nan(reach):
+					# Standing: both feet are down where they are.
+					if not is_nan(raw[i]):
+						deepest = minf(deepest, raw[i])
+					continue
 				for end: float in [reach, -reach]:
 					var at_end := _offset_at(to_world * (plant + _forward * end), plane, scale)
 					if not is_nan(at_end):
@@ -789,6 +818,32 @@ static func run_angles(phase: float) -> Dictionary:
 		"lowerarm_l": RUN_ELBOW_FLEX_DEG - RUN_ELBOW_PUMP_DEG * stride,
 		"lowerarm_r": RUN_ELBOW_FLEX_DEG + RUN_ELBOW_PUMP_DEG * stride,
 	}
+
+
+## The standing pose while a gait is opted in (#1638): each foot rests on the
+## ground under it, as a planted gait foot does. Each ankle is raised or lowered
+## by how far that ground stands off the body's plane, and the pelvis drops by
+## the deeper foot's offset so that leg still reaches. On flat ground, and where
+## no ground is sampled or the body is not standing on it, the pose is exactly
+## the rest pose. `ground_step` eases the offsets as [method advance_motion]
+## does; INF snaps them.
+func _pose_standing(ground_step: float) -> void:
+	_reset_pose()
+	_planted = true
+	if not _legs_ready:
+		return
+	var forwards: Array[float] = []
+	for leg: Dictionary in _legs:
+		forwards.append(float(leg["rest_forward_m"]))
+	_ground_step = ground_step
+	var grounds := _ground_offsets(forwards, NAN)
+	_ground_step = INF
+	if grounds[0] == 0.0 and grounds[1] == 0.0 and _ground_lower == 0.0:
+		return
+	var lower := _ground_lower
+	_set_pelvis_drop(lower)
+	for i in _legs.size():
+		_apply_leg_turns(_legs[i], _leg_turns(_legs[i], Vector2(forwards[i], 0.0), lower, 1.0, grounds[i]))
 
 
 func _reset_pose() -> void:
