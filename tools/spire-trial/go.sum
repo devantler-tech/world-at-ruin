@@ -77,8 +77,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/hashicorp/hcl v1.0.0 h1:0Anlzjpi4vEasTeNFn2mLJgTSwt0+6sfsiTG8qcWGx4=
 github.com/hashicorp/hcl v1.0.0/go.mod h1:E5yfLk+7swimpb2L/Alb/PJmXilQ/rhwaUYs4T20WEQ=
-github.com/heroiclabs/nakama-common v1.48.0 h1:7fS78yNiscIB6tl7AOdBrdz+GtonRJ8OajyXwbxHBgw=
-github.com/heroiclabs/nakama-common v1.48.0/go.mod h1:dZzLuoiS2JEs1GN74w7UP52SjqYmPE7wPKKuBlXBOk4=
+github.com/heroiclabs/nakama-common v1.49.0 h1:12lavIxPU3Ep9ovRB8ZT0aT6138kal+1LYHIZO+1YlM=
+github.com/heroiclabs/nakama-common v1.49.0/go.mod h1:UVj7IzTJyDk48o7wKbJXQOTfxQJngsbg6sY/ekCRzs8=
 github.com/heroiclabs/nakama/v3 v3.41.0 h1:gFJZTtixd04HqfOWo62D/zg0usX4R+SB/FSVF6UkNB8=
 github.com/heroiclabs/nakama/v3 v3.41.0/go.mod h1:oK11Di9s7wPyTc6gnfgH4NG3zAENvd7iGT1xgblQlGg=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=

@@ -17,7 +17,7 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/gofrs/uuid/v5 v5.5.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
-	github.com/heroiclabs/nakama-common v1.48.0 // indirect
+	github.com/heroiclabs/nakama-common v1.49.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
