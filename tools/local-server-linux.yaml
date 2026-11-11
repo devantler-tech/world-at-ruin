@@ -34,7 +34,7 @@ provision:
       archive=$(mktemp /tmp/go-linux.XXXXXXXX.tar.gz)
       trap 'rm -f "$archive"' EXIT
       curl --fail --location --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 \
-        --output "$archive" https://go.dev/dl/go1.27.3.linux-arm64.tar.gz
-      printf '%s  %s\n' a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 "$archive" | sha256sum --check --strict
+        --output "$archive" https://go.dev/dl/go1.27.4.linux-arm64.tar.gz
+      printf '%s  %s\n' 3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92 "$archive" | sha256sum --check --strict
       tar -C /usr/local -xzf "$archive"
       /usr/local/go/bin/go version

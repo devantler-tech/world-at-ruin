@@ -6,7 +6,7 @@
 ## Native acceptance
 
 - **Native Nakama acceptance:** the separate generated `server/nakama-runtime/go.mod`/`go.sum`
-  graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.3
+  graph builds Nakama 3.40 and its WAR plugin with runtime API 1.47, exact Go 1.27.4
   and native CGO. Keep the ordinary server graph intact. The explicitly experimental
   `server/Dockerfile.nakama-native` image is unpublished;
   `tools/smoke-nakama-native.sh <local-image> --experimental` requires every named
