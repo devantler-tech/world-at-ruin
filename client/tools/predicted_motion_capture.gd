@@ -63,12 +63,10 @@ func _ready() -> void:
 
 
 func _stage() -> bool:
-	var fixture := LocomotionTestSupport.recipe_fixture(RECIPE_PATH)
-	if not fixture["problem"].is_empty():
-		return _fail(fixture["problem"])
-	_body = CharacterFactory.build(fixture["recipe"])
-	if _body == null:
-		return _fail("could not build %s" % RECIPE_PATH)
+	var built := LocomotionTestSupport.recipe_body(RECIPE_PATH)
+	if not built["problem"].is_empty():
+		return _fail(built["problem"])
+	_body = built["body"]
 	add_child(_body)
 	# Turned toward the camera so the whole body reads against the post.
 	_body.rotation.y = -PI / 2.0
