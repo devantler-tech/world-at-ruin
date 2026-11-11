@@ -75,6 +75,17 @@ jq -e '.variables.input.expectedHeadOid == "0123456789abcdef0123456789abcdef0123
   and (.query | test("createCommitOnBranch"))' "$work/gh.request" >/dev/null || fail "commit request is wrong"
 [ "$(jq -r '.variables.input.fileChanges.additions[0].contents | @base64d' "$work/gh.request")" = "$(cat server/issued/go.mod)" ] || fail "commit contents do not match the tidied file"
 
+# 3b. Large locks: the request must not pass file contents as one command-line argument. Linux
+# caps a single argument at 128 KiB and macOS caps all of them at 1 MiB, so a real go.sum
+# failed with "Argument list too long" (#1654 follow-up). 2 MiB of lock exceeds both.
+fixture
+"$script" tidy >/dev/null
+head -c 2097152 /dev/zero | tr '\0' 'h' >>server/issued/go.sum
+GH_TOKEN=x "$script" commit devantler-tech/world-at-ruin b 0123456789abcdef0123456789abcdef01234567 >/dev/null ||
+  fail "commit failed on a lock larger than the argument limit"
+[ "$(jq -j '.variables.input.fileChanges.additions[1].contents | @base64d' "$work/gh.request" | wc -c | tr -d ' ')" = "$(wc -c <server/issued/go.sum | tr -d ' ')" ] ||
+  fail "a large lock did not reach the commit request whole"
+
 # 4. Nothing changed: no commit request at all.
 fixture
 STUB_GO_NOOP=1 "$script" tidy >/dev/null
