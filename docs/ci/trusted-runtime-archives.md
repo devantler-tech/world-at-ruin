@@ -14,7 +14,7 @@ a runtime or update the repository.
 
 The current lock was derived from the complete snapshot-only report emitted by
 successful proposal run
-[39541538194, job 119030174725](https://github.com/devantler-tech/world-at-ruin/actions/runs/39541538194/job/119030174725).
+[43040332418, job 130708536722](https://github.com/devantler-tech/world-at-ruin/actions/runs/43040332418/job/130708536722).
 The committed source-report digest and image ID let a reviewer match the proposed
 lock to those retained job logs. They do not make the report an authority.
 

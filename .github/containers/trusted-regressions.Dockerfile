@@ -1,6 +1,6 @@
 # Linux/amd64 children verified by trusted-runtime-bases.lock.json.
 # Update the metadata proof and these references together; see docs/ci/trusted-runtime-bases.md.
-FROM golang:1.27.3@sha256:1ad9754cfcca40bdb57424ff4ad9ca754f5d5e4660944a9b266da90f8a6853a5 AS certificates
+FROM golang:1.27.4@sha256:2cd7e1ebf475c6208122d2b9cefc638d98fcc8dfd8554c8872c9dd0c21f4ac61 AS certificates
 COPY trusted-runtime-origin.go trusted-runtime-archives.go /tmp/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /trusted-runtime-origin /tmp/trusted-runtime-origin.go \
     && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /trusted-runtime-archives /tmp/trusted-runtime-archives.go
