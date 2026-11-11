@@ -116,12 +116,10 @@ func _tolerance() -> float:
 
 
 func _stage() -> bool:
-	var fixture := LocomotionTestSupport.recipe_fixture(RECIPE_PATH)
-	if not fixture["problem"].is_empty():
-		return _fail(fixture["problem"])
-	_body = CharacterFactory.build(fixture["recipe"])
-	if _body == null:
-		return _fail("could not build %s" % RECIPE_PATH)
+	var built := LocomotionTestSupport.recipe_body(RECIPE_PATH)
+	if not built["problem"].is_empty():
+		return _fail(built["problem"])
+	_body = built["body"]
 	# Walk along +X, side-on to the camera.
 	_holder = Node3D.new()
 	add_child(_holder)

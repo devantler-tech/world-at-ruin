@@ -77,6 +77,8 @@ jobs:
         run: bash tools/cloth-capture.test.sh
       - name: Local lint boundaries cannot be skipped with the lint job
         run: bash tools/local-lint-workflow.test.sh
+      - name: Dependabot server updates tidy the modules that replace the server
+        run: bash tools/server-dependents-tidy.test.sh
       - name: Source capture preserves every scenario and joins complete evidence
         run: |
           bash tools/source-capture-inputs.test.sh
