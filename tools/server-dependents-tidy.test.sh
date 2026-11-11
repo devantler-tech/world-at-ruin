@@ -83,8 +83,18 @@ fixture
 head -c 2097152 /dev/zero | tr '\0' 'h' >>server/issued/go.sum
 GH_TOKEN=x "$script" commit devantler-tech/world-at-ruin b 0123456789abcdef0123456789abcdef01234567 >/dev/null ||
   fail "commit failed on a lock larger than the argument limit"
-[ "$(jq -j '.variables.input.fileChanges.additions[1].contents | @base64d' "$work/gh.request" | wc -c | tr -d ' ')" = "$(wc -c <server/issued/go.sum | tr -d ' ')" ] ||
+jq -j '.variables.input.fileChanges.additions[1].contents | @base64d' "$work/gh.request" | cmp -s - server/issued/go.sum ||
   fail "a large lock did not reach the commit request whole"
+
+# 3c. A changed lock that cannot be read fails the commit before GitHub sees a partial request,
+# even when it is not the last file.
+fixture
+"$script" tidy >/dev/null
+rm server/issued/go.sum
+if GH_TOKEN=x "$script" commit devantler-tech/world-at-ruin b 0123456789abcdef0123456789abcdef01234567 >/dev/null 2>&1; then
+  fail "a commit with an unreadable lock was accepted"
+fi
+[ ! -e "$work/gh.request" ] || fail "a partial commit request reached GitHub"
 
 # 4. Nothing changed: no commit request at all.
 fixture
