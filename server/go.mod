@@ -9,7 +9,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/devantler-tech/world-at-ruin/server/nakama-issued-runtime v0.0.0-20261014211334-319e59eaf107
 	github.com/gofrs/uuid/v5 v5.5.1
-	github.com/heroiclabs/nakama-common v1.48.0
+	github.com/heroiclabs/nakama-common v1.49.0
 	github.com/heroiclabs/nakama/v3 v3.41.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/spiffe/go-spiffe/v2 v2.9.0
