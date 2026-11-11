@@ -1,0 +1,71 @@
+name: Dependabot server tidy
+
+# A Dependabot update to server/go.mod changes only the server's own locks. The modules that
+# replace the server module with the local tree (the issued runtime and the native trials)
+# keep their own go.mod/go.sum, so their -mod=readonly builds and tests fail until
+# `go mod tidy` runs in them (#1654). Every hour this workflow tidies each open Dependabot
+# server pull request and commits the result to its branch, so a server update passes CI
+# without hand edits.
+#
+# Trust boundary:
+# - It runs on a schedule from the default branch, never from a pull request event, so no
+#   pull request can change what runs here or reach the App key.
+# - It only picks same-repository pull requests opened by Dependabot on its server branches.
+#   Their heads supply only the module files that `go mod tidy` reads; tidy downloads and
+#   checks modules but runs no module code.
+# - The checkout does not persist a credential. The App token is minted after go has finished
+#   and only the commit step sees it. Commits go through createCommitOnBranch, so GitHub signs
+#   them, and each is pinned to the head that was tidied.
+# - The App commit starts the normal CI on the new head; nothing here skips or relaxes a check.
+# tools/server-dependents-tidy.test.sh pins these properties.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: dependabot-server-tidy
+  cancel-in-progress: false
+
+jobs:
+  tidy:
+    name: Tidy the modules that replace the server module
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the default branch and fetch the pull request heads
+      pull-requests: read # list the open Dependabot pull requests
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Tidy every open Dependabot server update
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: bash tools/server-dependents-tidy.sh prepare "$REPOSITORY" "$RUNNER_TEMP/server-tidy"
+      - name: Get GitHub App token
+        id: app-token
+        if: steps.prepare.outputs.pending == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Commit the tidied locks
+        if: steps.prepare.outputs.pending == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: bash tools/server-dependents-tidy.sh commit-prepared "$REPOSITORY" "$RUNNER_TEMP/server-tidy"
