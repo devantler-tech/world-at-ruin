@@ -11,6 +11,17 @@ static func recipe_fixture(path: String) -> Dictionary:
 	return {"problem": "", "recipe": loaded}
 
 
+## The body a recipe fixture builds, for previews that stage it without a Player.
+static func recipe_body(path: String) -> Dictionary:
+	var fixture := recipe_fixture(path)
+	if not fixture["problem"].is_empty():
+		return fixture
+	var body := CharacterFactory.build(fixture["recipe"])
+	if body == null:
+		return {"problem": "could not build %s" % path}
+	return {"problem": "", "body": body}
+
+
 static func build_subject(parent: Node, recipe: Dictionary, bones: Array, motion: String) -> Dictionary:
 	var player := Player.new()
 	parent.add_child(player)
