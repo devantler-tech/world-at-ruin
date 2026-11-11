@@ -80,7 +80,7 @@ cmd_tidy() {
 
 cmd_commit() {
   [ "$#" -eq 3 ] || die "usage: commit REPOSITORY BRANCH EXPECTED_HEAD_SHA"
-  local repository=$1 branch=$2 head=$3 list files additions query
+  local repository=$1 branch=$2 head=$3 list files query request status
   [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid repository: $repository"
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || die "expected head must be a full commit SHA"
   [ -n "${GH_TOKEN:-}" ] || die "GH_TOKEN is required to commit"
@@ -92,26 +92,35 @@ cmd_commit() {
     return 0
   fi
 
-  additions=$(while IFS= read -r path; do
-    jq -n --arg path "$path" --rawfile contents "$path" '{path: $path, contents: ($contents | @base64)}'
-  done <<<"$files" | jq -s .)
-
+  # The file contents reach jq through files and stdin only, never as an argument: a real
+  # go.sum is larger than one command-line argument may be ("Argument list too long"). The
+  # whole request is built before GitHub is called, so a lock that cannot be read fails the
+  # commit instead of sending the files encoded before it.
   query="mutation(\$input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: \$input) { commit { oid } } }"
-  jq -n \
+  request=$(mktemp) || die "could not create the commit request file"
+  if ! while IFS= read -r path; do
+    jq -n --arg path "$path" --rawfile contents "$path" '{path: $path, contents: ($contents | @base64)}' || exit 1
+  done <<<"$files" | jq -s \
     --arg query "$query" \
     --arg repository "$repository" \
     --arg branch "$branch" \
     --arg head "$head" \
     --arg headline "$headline" \
     --arg body "Ran go mod tidy in every module that replaces the server module with the local tree, so their read-only builds accept this server update (#1654)." \
-    --argjson additions "$additions" \
-    '{query: $query, variables: {input: {
+    '. as $additions | {query: $query, variables: {input: {
         branch: {repositoryNameWithOwner: $repository, branchName: $branch},
         expectedHeadOid: $head,
         message: {headline: $headline, body: $body},
         fileChanges: {additions: $additions}
-      }}}' |
-    gh api graphql --input - --jq '.data.createCommitOnBranch.commit.oid'
+      }}}' >"$request"; then
+    rm -f "$request"
+    die "could not read every changed lock; nothing was committed"
+  fi
+
+  status=0
+  gh api graphql --input - --jq '.data.createCommitOnBranch.commit.oid' <"$request" || status=$?
+  rm -f "$request"
+  return "$status"
 }
 
 cmd_prepare() {

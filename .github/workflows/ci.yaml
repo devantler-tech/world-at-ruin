@@ -1244,7 +1244,7 @@ jobs:
         id: capture-exported
         if: needs.detect-visual-changes.outputs.export_affecting == 'true'
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@64faea97dc46be7200e4defdeb9217cc6f2475f3
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-exported-head@e7af2e413d7cb29d0a30a5bc2020484819aaae8b
         with:
           archive-sha256: ${{ steps.export-client.outputs.archive-sha256 }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -2771,13 +2771,13 @@ jobs:
     steps:
       - name: Capture the first complete cloth mode
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@64faea97dc46be7200e4defdeb9217cc6f2475f3
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@e7af2e413d7cb29d0a30a5bc2020484819aaae8b
         with:
           mode: ${{ matrix.first }}
       - name: Capture the second complete cloth mode
         if: always() && !cancelled()
         timeout-minutes: 15
-        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@64faea97dc46be7200e4defdeb9217cc6f2475f3
+        uses: devantler-tech/world-at-ruin/.github/actions/capture-cloth-mode@e7af2e413d7cb29d0a30a5bc2020484819aaae8b
         with:
           mode: ${{ matrix.second }}
 
@@ -2959,7 +2959,7 @@ jobs:
           CLOTH_RESULT: ${{ needs.frame-capture-cloth.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash tools/client-proof-gate.sh
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@1a0eb6f18b88a7816b91cbf692b8ad8ea9a08123 # v20.1.17
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@8d4066324a5e15b864967fe3771a25ff0cd6a42b # v20.1.20
         with:
           check-workflow-startup: "true"
           # The capture jobs and detect-visual-changes are

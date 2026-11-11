@@ -43,10 +43,10 @@ fixture() {
   local repo=$work/repo
   rm -rf "$repo" "$work/go.calls" "$work/gh.request" "$work/gh.requests" "$work/gh.args"
   mkdir -p "$repo/server/issued" "$repo/tools/trial" "$repo/tools/other" "$repo/server/testdata/x"
-  printf 'module github.com/devantler-tech/world-at-ruin/server\n\ngo 1.27.3\n' >"$repo/server/go.mod"
-  printf 'module issued\n\ngo 1.27.3\n\nreplace github.com/devantler-tech/world-at-ruin/server => ..\n' >"$repo/server/issued/go.mod"
-  printf 'module trial\n\ngo 1.27.3\n\nreplace (\n\tgithub.com/devantler-tech/world-at-ruin/server v0.0.0 => ../../server\n)\n' >"$repo/tools/trial/go.mod"
-  printf 'module other\n\ngo 1.27.3\n\nreplace github.com/devantler-tech/world-at-ruin/server => github.com/example/fork v1.0.0\n' >"$repo/tools/other/go.mod"
+  printf 'module github.com/devantler-tech/world-at-ruin/server\n\ngo 1.27.4\n' >"$repo/server/go.mod"
+  printf 'module issued\n\ngo 1.27.4\n\nreplace github.com/devantler-tech/world-at-ruin/server => ..\n' >"$repo/server/issued/go.mod"
+  printf 'module trial\n\ngo 1.27.4\n\nreplace (\n\tgithub.com/devantler-tech/world-at-ruin/server v0.0.0 => ../../server\n)\n' >"$repo/tools/trial/go.mod"
+  printf 'module other\n\ngo 1.27.4\n\nreplace github.com/devantler-tech/world-at-ruin/server => github.com/example/fork v1.0.0\n' >"$repo/tools/other/go.mod"
   printf 'module fixture\n\nreplace github.com/devantler-tech/world-at-ruin/server => ../..\n' >"$repo/server/testdata/x/go.mod"
   touch "$repo/server/issued/go.sum" "$repo/tools/trial/go.sum"
   git -C "$repo" init -q
@@ -74,6 +74,27 @@ jq -e '.variables.input.expectedHeadOid == "0123456789abcdef0123456789abcdef0123
   and (.variables.input.fileChanges.deletions == null)
   and (.query | test("createCommitOnBranch"))' "$work/gh.request" >/dev/null || fail "commit request is wrong"
 [ "$(jq -r '.variables.input.fileChanges.additions[0].contents | @base64d' "$work/gh.request")" = "$(cat server/issued/go.mod)" ] || fail "commit contents do not match the tidied file"
+
+# 3b. Large locks: the request must not pass file contents as one command-line argument. Linux
+# caps a single argument at 128 KiB and macOS caps all of them at 1 MiB, so a real go.sum
+# failed with "Argument list too long" (#1654 follow-up). 2 MiB of lock exceeds both.
+fixture
+"$script" tidy >/dev/null
+head -c 2097152 /dev/zero | tr '\0' 'h' >>server/issued/go.sum
+GH_TOKEN=x "$script" commit devantler-tech/world-at-ruin b 0123456789abcdef0123456789abcdef01234567 >/dev/null ||
+  fail "commit failed on a lock larger than the argument limit"
+jq -j '.variables.input.fileChanges.additions[1].contents | @base64d' "$work/gh.request" | cmp -s - server/issued/go.sum ||
+  fail "a large lock did not reach the commit request whole"
+
+# 3c. A changed lock that cannot be read fails the commit before GitHub sees a partial request,
+# even when it is not the last file.
+fixture
+"$script" tidy >/dev/null
+rm server/issued/go.sum
+if GH_TOKEN=x "$script" commit devantler-tech/world-at-ruin b 0123456789abcdef0123456789abcdef01234567 >/dev/null 2>&1; then
+  fail "a commit with an unreadable lock was accepted"
+fi
+[ ! -e "$work/gh.request" ] || fail "a partial commit request reached GitHub"
 
 # 4. Nothing changed: no commit request at all.
 fixture
