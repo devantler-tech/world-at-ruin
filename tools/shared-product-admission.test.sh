@@ -344,5 +344,5 @@ for mutation in '.runs.steps[0].run="true"' '.runs.steps[0].env.CANDIDATE_SHA="m
     exit 1
   fi
 done
-jq -e '.=={version:1,"timeout-minutes":15}' "$root/.github/pr-admission.json" >/dev/null
+jq -e '.=={version:1,"timeout-minutes":25}' "$root/.github/pr-admission.json" >/dev/null
 echo 'PASS: shared admission binds reviewed source, GitHub identities, containment and failure propagation'

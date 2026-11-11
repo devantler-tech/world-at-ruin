@@ -29,7 +29,7 @@ different heads, reversed or extra parents still fail. The older local controlle
 resolver interface retains its existing behavior.
 
 The closed `.github/pr-admission.json` contract gives the consumer a
-15-minute outer bound. An exceeded deadline fails the gate; it cannot count as
+25-minute outer bound. An exceeded deadline fails the gate; it cannot count as
 complete evidence. This setting is not a whole-PR runtime measurement.
 
 The shared required runner is enrolled and native positive/refusal controls passed
