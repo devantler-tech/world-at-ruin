@@ -43,10 +43,10 @@ fixture() {
   local repo=$work/repo
   rm -rf "$repo" "$work/go.calls" "$work/gh.request" "$work/gh.requests" "$work/gh.args"
   mkdir -p "$repo/server/issued" "$repo/tools/trial" "$repo/tools/other" "$repo/server/testdata/x"
-  printf 'module github.com/devantler-tech/world-at-ruin/server\n\ngo 1.27.3\n' >"$repo/server/go.mod"
-  printf 'module issued\n\ngo 1.27.3\n\nreplace github.com/devantler-tech/world-at-ruin/server => ..\n' >"$repo/server/issued/go.mod"
-  printf 'module trial\n\ngo 1.27.3\n\nreplace (\n\tgithub.com/devantler-tech/world-at-ruin/server v0.0.0 => ../../server\n)\n' >"$repo/tools/trial/go.mod"
-  printf 'module other\n\ngo 1.27.3\n\nreplace github.com/devantler-tech/world-at-ruin/server => github.com/example/fork v1.0.0\n' >"$repo/tools/other/go.mod"
+  printf 'module github.com/devantler-tech/world-at-ruin/server\n\ngo 1.27.4\n' >"$repo/server/go.mod"
+  printf 'module issued\n\ngo 1.27.4\n\nreplace github.com/devantler-tech/world-at-ruin/server => ..\n' >"$repo/server/issued/go.mod"
+  printf 'module trial\n\ngo 1.27.4\n\nreplace (\n\tgithub.com/devantler-tech/world-at-ruin/server v0.0.0 => ../../server\n)\n' >"$repo/tools/trial/go.mod"
+  printf 'module other\n\ngo 1.27.4\n\nreplace github.com/devantler-tech/world-at-ruin/server => github.com/example/fork v1.0.0\n' >"$repo/tools/other/go.mod"
   printf 'module fixture\n\nreplace github.com/devantler-tech/world-at-ruin/server => ../..\n' >"$repo/server/testdata/x/go.mod"
   touch "$repo/server/issued/go.sum" "$repo/tools/trial/go.sum"
   git -C "$repo" init -q

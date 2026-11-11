@@ -288,7 +288,7 @@ contract() {
     .runs.steps[0].shell=="bash" and .runs.steps[0].env=={CANDIDATE_SHA:"${{ inputs.candidate-sha }}"} and
     .runs.steps[0].run=="bash \"$GITHUB_ACTION_PATH/../../../tools/shared-product-admission.sh\" check" and
     .runs.steps[1].uses=="actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e" and
-    .runs.steps[1].with=={"go-version":"1.27.3",cache:false} and
+    .runs.steps[1].with=={"go-version":"1.27.4",cache:false} and
     .runs.steps[2].shell=="bash" and .runs.steps[2].env=={
       GODOT_VERSION:"4.7.2",
       GODOT_SHA512:"9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65"} and
