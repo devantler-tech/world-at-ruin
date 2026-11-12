@@ -27,7 +27,7 @@ printf '%s  %s\n' "${helm_hash}" "${scratch}/helm.tar.gz" | sha256sum --check --
 tar -xzf "${scratch}/envtest.tar.gz" -C "${scratch}"
 tar -xzf "${scratch}/helm.tar.gz" -C "${scratch}"
 agones_version="$(go list -m -f '{{.Version}}' agones.dev/agones)"
-[[ "${agones_version}" == v1.61.0 ]] || { echo 'Review the fixture CRD pin with the Agones upgrade' >&2; exit 1; }
+[[ "${agones_version}" == v1.62.0 ]] || { echo 'Review the fixture CRD pin with the Agones upgrade' >&2; exit 1; }
 agones_directory="$(go list -m -f '{{.Dir}}' agones.dev/agones)"
 [[ -n "${agones_directory}" ]] || { echo 'Pinned Agones module unavailable' >&2; exit 1; }
 mkdir -- "${destination}"
