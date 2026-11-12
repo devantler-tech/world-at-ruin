@@ -11,7 +11,7 @@ require (
 )
 
 require (
-	agones.dev/agones v1.61.0 // indirect
+	agones.dev/agones v1.62.0 // indirect
 	cloud.google.com/go/auth v0.24.1-0.20261001053825-dbc26066f70a // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.1 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect

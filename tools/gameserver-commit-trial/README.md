@@ -9,7 +9,7 @@ Darwin arm64 also needs Helm **v4.3.0** installed; Linux amd64 downloads and
 verifies that Helm version. The runner downloads and verifies envtest **v1.37.0**, so allow
 network access and local scratch space before starting.
 
-Download the server modules first: rendering the Agones **v1.61.0** CRD reads the module cache.
+Download the server modules first: rendering the Agones **v1.62.0** CRD reads the module cache.
 
 ```sh
 go -C server mod download

@@ -111,7 +111,7 @@ actual="$(shasum -a 512 "${scratch}/envtest.tar.gz")"
 [ "${actual%% *}" = "${archive_hash}" ] || { echo 'Control-plane archive digest mismatch' >&2; exit 1; }
 tar -xzf "${scratch}/envtest.tar.gz" -C "${scratch}"
 agones_version="$(go -C "${root}/server" list -m -f '{{.Version}}' agones.dev/agones)"
-[ "${agones_version}" = v1.61.0 ] || { echo 'Review the trial CRD pin with the Agones upgrade' >&2; exit 1; }
+[ "${agones_version}" = v1.62.0 ] || { echo 'Review the trial CRD pin with the Agones upgrade' >&2; exit 1; }
 agones_dir="$(go -C "${root}/server" list -m -f '{{.Dir}}' agones.dev/agones)"
 [ -n "${agones_dir}" ] || { echo 'Download the pinned server modules first' >&2; exit 1; }
 helm template commit-trial "${agones_dir}/install/helm/agones" \
