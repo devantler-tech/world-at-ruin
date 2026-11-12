@@ -5,7 +5,7 @@ go 1.27.4
 replace github.com/devantler-tech/world-at-ruin/server => ../../server
 
 require (
-	agones.dev/agones v1.61.0
+	agones.dev/agones v1.62.0
 	github.com/devantler-tech/world-at-ruin/server v0.0.0
 	k8s.io/api v0.37.2
 	k8s.io/apimachinery v0.37.2

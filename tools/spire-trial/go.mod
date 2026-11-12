@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	agones.dev/agones v1.61.0 // indirect
+	agones.dev/agones v1.62.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
