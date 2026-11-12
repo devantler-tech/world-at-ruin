@@ -19,10 +19,10 @@ The input stops at frame 60.
 
 | Frame | Before (drawn x) | After (drawn x) |
 |---|---|---|
-| 56 | ![](delay_056-before.png) | ![](delay_056-after.png) |
-| 60 | ![](delay_060-before.png) | ![](delay_060-after.png) |
-| 64 | ![](delay_064-before.png) | ![](delay_064-after.png) |
-| 68 | ![](delay_068-before.png) | ![](delay_068-after.png) |
+| 56 | ![Predicted wanderer near the stop post, three-tick zone delay, frame 56, before the change](delay_056-before.png) | ![Predicted wanderer near the stop post, three-tick zone delay, frame 56, after the change](delay_056-after.png) |
+| 60 | ![Predicted wanderer near the stop post, three-tick zone delay, frame 60, before the change](delay_060-before.png) | ![Predicted wanderer near the stop post, three-tick zone delay, frame 60, after the change](delay_060-after.png) |
+| 64 | ![Predicted wanderer near the stop post, three-tick zone delay, frame 64, before the change](delay_064-before.png) | ![Predicted wanderer near the stop post, three-tick zone delay, frame 64, after the change](delay_064-after.png) |
+| 68 | ![Predicted wanderer near the stop post, three-tick zone delay, frame 68, before the change](delay_068-before.png) | ![Predicted wanderer near the stop post, three-tick zone delay, frame 68, after the change](delay_068-after.png) |
 
 Before, the body lags the input by about a round trip and keeps moving after
 the stop: 6.783 m at frame 56, 7.315 m when the input stops, reaching the
@@ -36,11 +36,11 @@ catch-up steps; the input stops at frame 120.
 
 | Frame | Before | After |
 |---|---|---|
-| 118 | ![](stall_118-before.png) | ![](stall_118-after.png) |
-| 124 | ![](stall_124-before.png) | ![](stall_124-after.png) |
-| 130 | ![](stall_130-before.png) | ![](stall_130-after.png) |
-| 136 | ![](stall_136-before.png) | ![](stall_136-after.png) |
-| 142 | ![](stall_142-before.png) | ![](stall_142-after.png) |
+| 118 | ![Predicted wanderer near the stop post, one-second zone stall, frame 118, before the change](stall_118-before.png) | ![Predicted wanderer near the stop post, one-second zone stall, frame 118, after the change](stall_118-after.png) |
+| 124 | ![Predicted wanderer near the stop post, one-second zone stall, frame 124, before the change](stall_124-before.png) | ![Predicted wanderer near the stop post, one-second zone stall, frame 124, after the change](stall_124-after.png) |
+| 130 | ![Predicted wanderer near the stop post, one-second zone stall, frame 130, before the change](stall_130-before.png) | ![Predicted wanderer near the stop post, one-second zone stall, frame 130, after the change](stall_130-after.png) |
+| 136 | ![Predicted wanderer near the stop post, one-second zone stall, frame 136, before the change](stall_136-before.png) | ![Predicted wanderer near the stop post, one-second zone stall, frame 136, after the change](stall_136-after.png) |
+| 142 | ![Predicted wanderer near the stop post, one-second zone stall, frame 142, before the change](stall_142-before.png) | ![Predicted wanderer near the stop post, one-second zone stall, frame 142, after the change](stall_142-after.png) |
 
 Before, the body runs on past the post to 14.630 m and is then pulled back
 2.8 m over the next second (13.822 m at frame 130, 12.502 m at 140). After, the

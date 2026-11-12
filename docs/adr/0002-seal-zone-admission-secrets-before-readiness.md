@@ -316,9 +316,9 @@ cannot release a newer session.
 |---|---|
 | Successful handoff | Finalize the exact GameServer and `SecretRef` before returning an endpoint or token. |
 | Agones timeout after allocation | Keep the dispatch quarantined and list managed GameServers with the exact attempt digest. Reconcile one match, or release it if the lease expired. For duplicates, release each matching object individually with its own exact-UID precondition. Never retry allocation for that attempt. No-match observation alone is not a completion fence. |
-| Empty pool (definitive unallocated answer; refinement recorded with #818, 2026-09-22) | Fence the dispatched version as `releasing`, release by the exact attempt label, then delete the lease and return `ResourceExhausted`; a fresh attempt may follow. Never allocate the same attempt again. If the fence loses to an adopter that finalized a commit the answer hid, return that winner. A fence write that fails in storage or loses its acknowledgement is retried against the reloaded lease within the staged-cleanup budget while it is still the unfinalized dispatch. A failed release leaves a `releasing` lease the next expiry sweep reclaims without waiting for expiry. |
+| Empty pool (definitive unallocated answer; refinement recorded with #818, 2026-09-22) | See [empty pool handling](#empty-pool-handling). |
 | Same-attempt replay | Reuse the staging expiry and the exact attempt-labelled GameServer. A dispatched no-match attempt remains ambiguous and does not allocate again. |
-| Same reservation, newer transport attempt | Adopt an ambiguous older dispatch as the durable owner and observe only its exact attempt, or resolve its unexpired finalized allocation; never dispatch the transient retry. Every published allocation and ambiguous post-dispatch error refuses outer response cleanup, so either finalization order is safe and the existing no-show lease is the sole bounded cleanup owner. Only an expired older lease is marked `releasing`, deleted by exact UID, and replaced. A new logical operation uses a new reservation. |
+| Same reservation, newer transport attempt | See [newer transport attempt](#newer-transport-attempt). |
 | Stale-attempt release | Validate the attempt digest, allocation ID, UID digest, and envelope digest; never delete a newer attempt's GameServer. |
 | Claim racing cleanup | The Nakama exact-version `Claim`/`BeginRelease` barrier decides the winner before external deletion. |
 | No-show expiry | For a non-ambiguous unclaimed lease, the supervised reconciler begins release, deletes the exact GameServer with a UID precondition, and retries transient storage or resource-cleanup failures until host cancellation. A dispatched no-match lease remains quarantined past expiry until a late object is released or an allocator-generation fence clears it. |
@@ -328,6 +328,22 @@ cannot release a newer session.
 | Claimed Allocated zone restart | Call `Shutdown`; the system-only session-end transition must fence and release the exact claimed session before a replacement attempt. |
 | Orphan after a crash | A startup and periodic sweep compares attempt-labelled Allocated GameServers with live private leases. After a bounded grace and two observations, it deletes only exact-UID orphans. Ready pool members have no attempt label and are excluded. |
 | Delete timeout | Re-read by name; absence is success, the same UID is retried, and a different UID is left untouched. |
+
+#### Empty pool handling
+
+Fence the dispatched version as `releasing`, release by the exact attempt label, then delete the lease and return
+`ResourceExhausted`; a fresh attempt may follow. Never allocate the same attempt again. If the fence loses to an adopter
+that finalized a commit the answer hid, return that winner. A fence write that fails in storage or loses its
+acknowledgement is retried against the reloaded lease within the staged-cleanup budget while it is still the unfinalized
+dispatch. A failed release leaves a `releasing` lease the next expiry sweep reclaims without waiting for expiry.
+
+#### Newer transport attempt
+
+Adopt an ambiguous older dispatch as the durable owner and observe only its exact attempt, or resolve its unexpired
+finalized allocation; never dispatch the transient retry. Every published allocation and ambiguous post-dispatch error
+refuses outer response cleanup, so either finalization order is safe and the existing no-show lease is the sole bounded
+cleanup owner. Only an expired older lease is marked `releasing`, deleted by exact UID, and replaced. A new logical
+operation uses a new reservation.
 
 The sweep may list managed GameServer metadata and private Nakama leases. It
 never lists Kubernetes Secrets because this protocol creates none.
