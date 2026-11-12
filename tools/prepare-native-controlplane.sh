@@ -28,6 +28,9 @@ tar -xzf "${scratch}/envtest.tar.gz" -C "${scratch}"
 tar -xzf "${scratch}/helm.tar.gz" -C "${scratch}"
 agones_version="$(go list -m -f '{{.Version}}' agones.dev/agones)"
 [[ "${agones_version}" == v1.62.0 ]] || { echo 'Review the fixture CRD pin with the Agones upgrade' >&2; exit 1; }
+# The retained native runtime graph can cache a different Agones release.
+# Materialize the fixture's independently pinned module before reading its chart.
+go mod download agones.dev/agones
 agones_directory="$(go list -m -f '{{.Dir}}' agones.dev/agones)"
 [[ -n "${agones_directory}" ]] || { echo 'Pinned Agones module unavailable' >&2; exit 1; }
 mkdir -- "${destination}"
