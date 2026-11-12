@@ -46,8 +46,8 @@ and the far (right) foot rises onto it.
 
 | | Before | After |
 |---|---|---|
-| Standing | ![](standing-before.png) | ![](standing-after.png) |
-| Feet | ![](standing-feet-before.png) | ![](standing-feet-after.png) |
+| Standing | ![Side view of the standing wanderer on uneven ground, before the change](standing-before.png) | ![Side view of the standing wanderer on uneven ground, after the change](standing-after.png) |
+| Feet | ![Close view of the standing wanderer’s feet on uneven ground, before the change](standing-feet-before.png) | ![Close view of the standing wanderer’s feet on uneven ground, after the change](standing-feet-after.png) |
 
 Reference: the drive's own cue, *Kingmakers* Official Announcement Trailer
 1:06–1:10 (full-body stride and camera tracking), as recorded in
@@ -78,14 +78,14 @@ returning to the flat plane.
 
 | Moment | Before | After |
 |---|---|---|
-| walk-off, step 3 | ![](start_03-before.png) | ![](start_03-after.png) |
-| walk-off, step 9 | ![](start_09-before.png) | ![](start_09-after.png) |
-| walk-off, step 15 | ![](start_15-before.png) | ![](start_15-after.png) |
-| walk-off, step 21 | ![](start_21-before.png) | ![](start_21-after.png) |
-| stop, step 6 after release | ![](stop_06-before.png) | ![](stop_06-after.png) |
-| stop, step 18 after release | ![](stop_18-before.png) | ![](stop_18-after.png) |
-| stop, step 30 after release | ![](stop_30-before.png) | ![](stop_30-after.png) |
-| stop, step 48 after release | ![](stop_48-before.png) | ![](stop_48-after.png) |
+| walk-off, step 3 | ![Wanderer walking off, step 3, before the change](start_03-before.png) | ![Wanderer walking off, step 3, after the change](start_03-after.png) |
+| walk-off, step 9 | ![Wanderer walking off, step 9, before the change](start_09-before.png) | ![Wanderer walking off, step 9, after the change](start_09-after.png) |
+| walk-off, step 15 | ![Wanderer walking off, step 15, before the change](start_15-before.png) | ![Wanderer walking off, step 15, after the change](start_15-after.png) |
+| walk-off, step 21 | ![Wanderer walking off, step 21, before the change](start_21-before.png) | ![Wanderer walking off, step 21, after the change](start_21-after.png) |
+| stop, step 6 after release | ![Wanderer stopping after input release, step 6, before the change](stop_06-before.png) | ![Wanderer stopping after input release, step 6, after the change](stop_06-after.png) |
+| stop, step 18 after release | ![Wanderer stopping after input release, step 18, before the change](stop_18-before.png) | ![Wanderer stopping after input release, step 18, after the change](stop_18-after.png) |
+| stop, step 30 after release | ![Wanderer stopping after input release, step 30, before the change](stop_30-before.png) | ![Wanderer stopping after input release, step 30, after the change](stop_30-after.png) |
+| stop, step 48 after release | ![Wanderer stopping after input release, step 48, before the change](stop_48-before.png) | ![Wanderer stopping after input release, step 48, after the change](stop_48-after.png) |
 
 Motion reference: the drive's cue, *Kingmakers* Official Announcement Trailer 1:06–1:10.
 

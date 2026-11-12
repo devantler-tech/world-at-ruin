@@ -56,7 +56,7 @@ storage image is not stated in Mesa's llvmpipe documentation, the lavapipe exten
 throwaway CI job that ran this repository's own `Volumetrics.supported()` against lavapipe and was
 deleted once it had answered:
 
-```
+```text
 Vulkan 1.4.318 - Forward+ - Using Device #0: llvmpipe (LLVM 20.1.2, 256 bits)
 PROBE_ADAPTER          llvmpipe (LLVM 20.1.2, 256 bits)
 PROBE_RD_PRESENT       true

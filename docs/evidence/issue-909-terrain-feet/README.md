@@ -63,14 +63,14 @@ is the measurement.
 
 | Frame | Before | After |
 |---|---|---|
-| walk 0 | ![](drive-00_walk-before.png) | ![](drive-00_walk-after.png) |
-| walk 2 | ![](drive-02_walk-before.png) | ![](drive-02_walk-after.png) |
-| walk 4 | ![](drive-04_walk-before.png) | ![](drive-04_walk-after.png) |
-| walk 6 | ![](drive-06_walk-before.png) | ![](drive-06_walk-after.png) |
-| run 14 | ![](drive-14_run-before.png) | ![](drive-14_run-after.png) |
-| run 16 | ![](drive-16_run-before.png) | ![](drive-16_run-after.png) |
-| run 18 | ![](drive-18_run-before.png) | ![](drive-18_run-after.png) |
-| run 20 | ![](drive-20_run-before.png) | ![](drive-20_run-after.png) |
+| walk 0 | ![Wanderer walking over terrain, frame 0, before the change](drive-00_walk-before.png) | ![Wanderer walking over terrain, frame 0, after the change](drive-00_walk-after.png) |
+| walk 2 | ![Wanderer walking over terrain, frame 2, before the change](drive-02_walk-before.png) | ![Wanderer walking over terrain, frame 2, after the change](drive-02_walk-after.png) |
+| walk 4 | ![Wanderer walking over terrain, frame 4, before the change](drive-04_walk-before.png) | ![Wanderer walking over terrain, frame 4, after the change](drive-04_walk-after.png) |
+| walk 6 | ![Wanderer walking over terrain, frame 6, before the change](drive-06_walk-before.png) | ![Wanderer walking over terrain, frame 6, after the change](drive-06_walk-after.png) |
+| run 14 | ![Wanderer running over terrain, frame 14, before the change](drive-14_run-before.png) | ![Wanderer running over terrain, frame 14, after the change](drive-14_run-after.png) |
+| run 16 | ![Wanderer running over terrain, frame 16, before the change](drive-16_run-before.png) | ![Wanderer running over terrain, frame 16, after the change](drive-16_run-after.png) |
+| run 18 | ![Wanderer running over terrain, frame 18, before the change](drive-18_run-before.png) | ![Wanderer running over terrain, frame 18, after the change](drive-18_run-after.png) |
+| run 20 | ![Wanderer running over terrain, frame 20, before the change](drive-20_run-before.png) | ![Wanderer running over terrain, frame 20, after the change](drive-20_run-after.png) |
 
 Reference: the drive's own cue, *Kingmakers* Official Announcement Trailer
 1:06–1:10 (full-body stride and camera tracking at speed), linked from the

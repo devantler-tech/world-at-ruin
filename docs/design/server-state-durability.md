@@ -480,11 +480,11 @@ needs to write a guard for.
 | No blind **finalize** — finalize requires the dispatched barrier and presents its observed version | `nakamalease.Store` | `TestFinalizeRefusesAStagingAttemptThatWasNeverDispatched`; coordinator success and conflict paths exercise exact-version finalization |
 | No blind **release** — release deletes conditionally | `nakamalease.Store` | `TestReleaseRejectsAStaleAttemptWithoutDeleting`, `TestReleaseReconcilesNakamaConditionalDeleteRejections` |
 | No blind **begin-release** — the fencing write presents the observed version | `nakamalease.Store` | `TestBeginReleaseMarksTheCurrentAttemptBeforeExternalCleanup`, `TestBeginReleaseReplayKeepsTheExistingBarrier`, `TestClaimAndBeginReleaseLeaveExactlyOneOwner` |
-| No blind **begin-dispatch** — exactly one uniquely identified caller exact-version persists and reconciles the point of no return before the external call | `nakamalease.Store` + `handoffalloc.Coordinator` | `TestBeginDispatchUsesObservedVersionAndReplaysTheWinner`, `TestBeginDispatchReconcilesACommittedBarrierWhoseAcknowledgementWasLost`, `TestAllocatePersistsDispatchBarrierBeforeProvisioning`, `TestAllocateProvisionsAfterACommittedDispatchBarrierLosesItsAcknowledgement`, `TestAllocateNeverDispatchesWhenBarrierWriteFails`, `TestAllocateConcurrentCoordinatorsDispatchOnce` |
+| [Dispatch barrier](#dispatch-barrier) | `nakamalease.Store` + `handoffalloc.Coordinator` | See the complete guard list below. |
 | An outer failure cleanup cannot erase an ambiguous dispatched attempt without an observed resource identity | `handoff.Service` + `handoffalloc.Coordinator` | `TestServiceFailureCleanupPreservesAmbiguousDispatchQuarantine` |
-| Only the dispatch's own definitive unallocated answer ends a quarantine without a resource: it fences the exact version, releases by attempt label before deleting the lease, admits a fresh attempt and never re-dispatches; every other failure, including that answer from observation, stays quarantined | `agonesalloc.Client` + `agonesresources.Adapter` + `handoffalloc.Coordinator` | `TestAllocateReleasesADefinitivelyUnallocatedDispatch`, `TestServiceHandoffAfterAnEmptyPoolSucceedsOnTheNextAttempt`, `TestReconcileCannotReportAnAttemptUnallocated`, `TestUnallocatedReleaseFailureIsFinishedByTheExpirySweep`, `TestUnallocatedFenceWriteFailureIsRetried`, `TestUnallocatedFenceRetryYieldsToAnAdopterThatFinalizedMeanwhile`, `TestUnallocatedAnswerYieldsToAnAdopterThatObservedAHiddenCommit`, `TestAllocateQuarantinesCanceledAndAmbiguousDispatchOutcomes`, `TestReserveNeverReportsAnAmbiguousFailureAsUnallocated`, `TestHandoffIntegrationUnallocatedAnswerDeletesAHiddenCommit` |
-| A transport retry adopts a quarantined dispatch for observation-only reconciliation or resolves its unexpired finalized allocation; it never redispatches or crosses a release fence | `handoffalloc.Coordinator` | `TestAllocateAdoptsQuarantinedDispatchWithoutRedispatch`, `TestAllocateRetryCannotAdoptAQuarantineWhoseReleaseHasBegun`, `TestServiceRetryReconcilesTheQuarantinedAttemptWithoutRedispatch`, `TestServiceRetryReusesFinalizedAllocationWithoutRedispatch` |
-| Every published allocation and ambiguous post-dispatch error refuses outer response cleanup; the durable no-show lease owns bounded cleanup in either finalization order | `handoff.Service` + `handoffalloc.Coordinator` | `TestRetainedAllocationFailureSkipsOuterRelease`, `TestServiceRetryRetainsAReconciledAttemptWhenLaterStageFails`, `TestOverlappingTransportRetriesRetainTheSharedDurableAllocation`, `TestAllocateConcurrentCoordinatorsDispatchOnce`, `TestDispatchOwnerRetainsTheWinnerWhenAnAdopterFinalizesFirst`, `TestCanceledDispatchOwnerRetainsTheAdopterWinner` |
+| [Definitively unallocated dispatch](#definitively-unallocated-dispatch) | `agonesalloc.Client` + `agonesresources.Adapter` + `handoffalloc.Coordinator` | See the complete guard list below. |
+| [Transport retry](#transport-retry) | `handoffalloc.Coordinator` | See the complete guard list below. |
+| [Retained allocation cleanup](#retained-allocation-cleanup) | `handoff.Service` + `handoffalloc.Coordinator` | See the complete guard list below. |
 | The supervised no-show loop retries transient storage and resource-cleanup failures until host cancellation | `handoffalloc.Coordinator` | `TestRunExpiryReconcilerRetriesTransientCleanupFailure` |
 | Once a resource identity is observed, its complete fence-and-cleanup path survives caller cancellation | `handoffalloc.Coordinator` | `TestAllocateDetachesKnownResourceCleanupFromCallerCancellation` |
 | No blind **expiry reclaim** — the sweep fences with the listed version, then deletes conditionally | `nakamalease.Store` | **unguarded** — `TestReclaimExpiredContinuesAfterOneResourceTimesOut` covers per-object error tolerance, not a stale-version reclaim |
@@ -501,7 +501,7 @@ needs to write a guard for.
 | Every shipped player-mutation audit schema stays readable, permanently | `playerstate` audit decode | `TestEveryShippedAuditSchemaStaysReadable` plus `server/playerstate/testdata/shipped_audit_versions.txt` and its matching golden |
 | The character writer declares an exact schema and its reader refuses unknown, repeated, missing, trailing or public records | `nakamacharacter` document encode/decode | `TestSavePersistsPrivateVersionedCharacterForVerifiedAccount`, `TestLoadRejectsMalformedOrPublicCharacterRecords` |
 | Every shipped character-record schema stays readable, permanently | `nakamacharacter` document decode | `TestLoadKeepsEveryShippedCharacterSchemaReadable` plus `server/nakamacharacter/testdata/shipped_character_versions.txt` and its matching golden |
-| Expanded records remain quarantined across restart, reconstructed observations, retries and cleanup | `nakamalease.Store`, `handoffalloc.Coordinator`, `claimrpc` | `TestExpandedLeaseCannotBeDowngradedOrRetiredByLegacyMutations`, `TestExpandedLeaseRestartHoldsAllResourceOperations`, `TestPrivateClaimHoldsExpandedSchemaBeforeSecretResolution` and `TestExpandedLeaseCorruptionFailsCompleteObservation` |
+| [Expanded record quarantine](#expanded-record-quarantine) | `nakamalease.Store`, `handoffalloc.Coordinator`, `claimrpc` | See the complete guard list below. |
 | A refusal quarantines a character record across replicas | `nakamacharacter.Store` | `TestSaveCannotOverwriteMalformedDurableCharacterWithItsVersion` pins the strict-read + version-match form |
 | A newer field on a legacy schema is refused **by presence, not by truth** | `nakamalease` document decode | `TestLoadRefusesLegacySchemaCarryingPostLegacyKeys`, `TestLoadRefusesSchemaTwoCarryingDispatched` |
 | Read support ships and bakes before its writer activates | every record owner, **incl. `nakamalease` today** | **pending runtime evidence** — concrete resource adapters exist, but production allocator composition is inactive; expanded reader fixtures do not prove serving rollout or compatibility of an actual retained rollback artifact |
@@ -527,7 +527,7 @@ needs to write a guard for.
 | A replay **not** identified by its own content applies once | `playerstate.Store` | `TestApplyReplaysTheOriginalOutcomeWithoutWritingAgain`, `TestApplyReplayAfterProcessCrashDoesNotWriteAgain` |
 | A friend-graph edit acts only for the verified session identity and names only another player, never the caller or the system owner | `nakamafriends.Boundary` | `TestEveryOperationRefusesActingForAnotherSubject`, `TestEveryOperationRefusesAnInvalidTargetBeforeTheGraph` |
 | A friend-graph read is a closed vocabulary — any other shape, or another player's edge where the caller's was asked for, is refused rather than trusted | `nakamafriends.Boundary` | `TestStatusAndListRejectMalformedGraphOutput` |
-| A friend edge is written by Nakama's own friends API, so its versioning and conflict handling are Nakama's; the boundary holds no storage client and adds no blind write of its own, and every graph failure reaches the caller as its own cancellation or `ErrGraph`, never as Nakama's text | `nakamafriends.Boundary` | structural — the boundary depends on `nakamafriends.Graph` only; `TestGraphFailuresAreSanitizedAndCancellationIsPreserved` |
+| [Friend graph writes](#friend-graph-writes) | `nakamafriends.Boundary` | See the complete guard list below. |
 | A world-owned record states its own recovery invariant | first world-owned record owner | not yet built — no such record exists |
 
 The four labels mean different things, and the difference is the point of the table:
@@ -552,3 +552,73 @@ meaning anything.
 way: a named guard existed and looked sufficient, and the case that would actually catch the
 regression was not among its cases. A guard cited here should be opened and checked before it is
 trusted — including by whoever next edits this table.
+
+### Dispatch barrier
+
+No blind **begin-dispatch** — exactly one uniquely identified caller exact-version persists and reconciles the point of
+no return before the external call
+
+Owner: `nakamalease.Store` + `handoffalloc.Coordinator`.
+
+`TestBeginDispatchUsesObservedVersionAndReplaysTheWinner`,
+`TestBeginDispatchReconcilesACommittedBarrierWhoseAcknowledgementWasLost`,
+`TestAllocatePersistsDispatchBarrierBeforeProvisioning`,
+`TestAllocateProvisionsAfterACommittedDispatchBarrierLosesItsAcknowledgement`,
+`TestAllocateNeverDispatchesWhenBarrierWriteFails`, `TestAllocateConcurrentCoordinatorsDispatchOnce`
+
+### Definitively unallocated dispatch
+
+Only the dispatch's own definitive unallocated answer ends a quarantine without a resource: it fences the exact version,
+releases by attempt label before deleting the lease, admits a fresh attempt and never re-dispatches; every other
+failure, including that answer from observation, stays quarantined
+
+Owner: `agonesalloc.Client` + `agonesresources.Adapter` + `handoffalloc.Coordinator`.
+
+`TestAllocateReleasesADefinitivelyUnallocatedDispatch`, `TestServiceHandoffAfterAnEmptyPoolSucceedsOnTheNextAttempt`,
+`TestReconcileCannotReportAnAttemptUnallocated`, `TestUnallocatedReleaseFailureIsFinishedByTheExpirySweep`,
+`TestUnallocatedFenceWriteFailureIsRetried`, `TestUnallocatedFenceRetryYieldsToAnAdopterThatFinalizedMeanwhile`,
+`TestUnallocatedAnswerYieldsToAnAdopterThatObservedAHiddenCommit`,
+`TestAllocateQuarantinesCanceledAndAmbiguousDispatchOutcomes`, `TestReserveNeverReportsAnAmbiguousFailureAsUnallocated`,
+`TestHandoffIntegrationUnallocatedAnswerDeletesAHiddenCommit`
+
+### Transport retry
+
+A transport retry adopts a quarantined dispatch for observation-only reconciliation or resolves its unexpired finalized
+allocation; it never redispatches or crosses a release fence
+
+Owner: `handoffalloc.Coordinator`.
+
+`TestAllocateAdoptsQuarantinedDispatchWithoutRedispatch`, `TestAllocateRetryCannotAdoptAQuarantineWhoseReleaseHasBegun`,
+`TestServiceRetryReconcilesTheQuarantinedAttemptWithoutRedispatch`,
+`TestServiceRetryReusesFinalizedAllocationWithoutRedispatch`
+
+### Retained allocation cleanup
+
+Every published allocation and ambiguous post-dispatch error refuses outer response cleanup; the durable no-show lease
+owns bounded cleanup in either finalization order
+
+Owner: `handoff.Service` + `handoffalloc.Coordinator`.
+
+`TestRetainedAllocationFailureSkipsOuterRelease`, `TestServiceRetryRetainsAReconciledAttemptWhenLaterStageFails`,
+`TestOverlappingTransportRetriesRetainTheSharedDurableAllocation`, `TestAllocateConcurrentCoordinatorsDispatchOnce`,
+`TestDispatchOwnerRetainsTheWinnerWhenAnAdopterFinalizesFirst`, `TestCanceledDispatchOwnerRetainsTheAdopterWinner`
+
+### Expanded record quarantine
+
+Expanded records remain quarantined across restart, reconstructed observations, retries and cleanup
+
+Owner: `nakamalease.Store`, `handoffalloc.Coordinator`, `claimrpc`.
+
+`TestExpandedLeaseCannotBeDowngradedOrRetiredByLegacyMutations`, `TestExpandedLeaseRestartHoldsAllResourceOperations`,
+`TestPrivateClaimHoldsExpandedSchemaBeforeSecretResolution` and `TestExpandedLeaseCorruptionFailsCompleteObservation`
+
+### Friend graph writes
+
+A friend edge is written by Nakama's own friends API, so its versioning and conflict handling are Nakama's; the boundary
+holds no storage client and adds no blind write of its own, and every graph failure reaches the caller as its own
+cancellation or `ErrGraph`, never as Nakama's text
+
+Owner: `nakamafriends.Boundary`.
+
+structural — the boundary depends on `nakamafriends.Graph` only;
+`TestGraphFailuresAreSanitizedAndCancellationIsPreserved`

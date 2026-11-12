@@ -55,14 +55,14 @@ moved.
 
 | Frame | Before | After |
 |---|---|---|
-| walk 0 | ![](side-00_walk-before.png) | ![](side-00_walk-after.png) |
-| walk 2 | ![](side-02_walk-before.png) | ![](side-02_walk-after.png) |
-| walk 4 | ![](side-04_walk-before.png) | ![](side-04_walk-after.png) |
-| walk 6 | ![](side-06_walk-before.png) | ![](side-06_walk-after.png) |
-| run 14 | ![](side-14_run-before.png) | ![](side-14_run-after.png) |
-| run 16 | ![](side-16_run-before.png) | ![](side-16_run-after.png) |
-| run 18 | ![](side-18_run-before.png) | ![](side-18_run-after.png) |
-| run 20 | ![](side-20_run-before.png) | ![](side-20_run-after.png) |
+| walk 0 | ![Side view of the walking wanderer, frame 0, before the change](side-00_walk-before.png) | ![Side view of the walking wanderer, frame 0, after the change](side-00_walk-after.png) |
+| walk 2 | ![Side view of the walking wanderer, frame 2, before the change](side-02_walk-before.png) | ![Side view of the walking wanderer, frame 2, after the change](side-02_walk-after.png) |
+| walk 4 | ![Side view of the walking wanderer, frame 4, before the change](side-04_walk-before.png) | ![Side view of the walking wanderer, frame 4, after the change](side-04_walk-after.png) |
+| walk 6 | ![Side view of the walking wanderer, frame 6, before the change](side-06_walk-before.png) | ![Side view of the walking wanderer, frame 6, after the change](side-06_walk-after.png) |
+| run 14 | ![Side view of the running wanderer, frame 14, before the change](side-14_run-before.png) | ![Side view of the running wanderer, frame 14, after the change](side-14_run-after.png) |
+| run 16 | ![Side view of the running wanderer, frame 16, before the change](side-16_run-before.png) | ![Side view of the running wanderer, frame 16, after the change](side-16_run-after.png) |
+| run 18 | ![Side view of the running wanderer, frame 18, before the change](side-18_run-before.png) | ![Side view of the running wanderer, frame 18, after the change](side-18_run-after.png) |
+| run 20 | ![Side view of the running wanderer, frame 20, before the change](side-20_run-before.png) | ![Side view of the running wanderer, frame 20, after the change](side-20_run-after.png) |
 
 ## The transitions that changed, in motion
 
@@ -79,11 +79,11 @@ crosses; after, it rises over a few ticks.
 
 | Tick | Before | After |
 |---|---|---|
-| 24 | ![](plant-lip_24-before.png) | ![](plant-lip_24-after.png) |
-| 27 | ![](plant-lip_27-before.png) | ![](plant-lip_27-after.png) |
-| 30 | ![](plant-lip_30-before.png) | ![](plant-lip_30-after.png) |
-| 33 | ![](plant-lip_33-before.png) | ![](plant-lip_33-after.png) |
-| 36 | ![](plant-lip_36-before.png) | ![](plant-lip_36-after.png) |
+| 24 | ![Wanderer crossing a step underfoot, tick 24, before the change](plant-lip_24-before.png) | ![Wanderer crossing a step underfoot, tick 24, after the change](plant-lip_24-after.png) |
+| 27 | ![Wanderer crossing a step underfoot, tick 27, before the change](plant-lip_27-before.png) | ![Wanderer crossing a step underfoot, tick 27, after the change](plant-lip_27-after.png) |
+| 30 | ![Wanderer crossing a step underfoot, tick 30, before the change](plant-lip_30-before.png) | ![Wanderer crossing a step underfoot, tick 30, after the change](plant-lip_30-after.png) |
+| 33 | ![Wanderer crossing a step underfoot, tick 33, before the change](plant-lip_33-before.png) | ![Wanderer crossing a step underfoot, tick 33, after the change](plant-lip_33-after.png) |
+| 36 | ![Wanderer crossing a step underfoot, tick 36, before the change](plant-lip_36-before.png) | ![Wanderer crossing a step underfoot, tick 36, after the change](plant-lip_36-after.png) |
 
 **Ground that cannot be sampled**: the walk leaves a 15° slope that runs across
 the body (one foot higher than the other) for a cave-style floor that answers no
@@ -93,12 +93,12 @@ pelvis and both feet fade together over 0.15 s.
 
 | Tick | Before | After |
 |---|---|---|
-| 24 | ![](plant-loss_24-before.png) | ![](plant-loss_24-after.png) |
-| 27 | ![](plant-loss_27-before.png) | ![](plant-loss_27-after.png) |
-| 30 | ![](plant-loss_30-before.png) | ![](plant-loss_30-after.png) |
-| 33 | ![](plant-loss_33-before.png) | ![](plant-loss_33-after.png) |
-| 36 | ![](plant-loss_36-before.png) | ![](plant-loss_36-after.png) |
-| 39 | ![](plant-loss_39-before.png) | ![](plant-loss_39-after.png) |
+| 24 | ![Wanderer leaving sampled ground, tick 24, before the change](plant-loss_24-before.png) | ![Wanderer leaving sampled ground, tick 24, after the change](plant-loss_24-after.png) |
+| 27 | ![Wanderer leaving sampled ground, tick 27, before the change](plant-loss_27-before.png) | ![Wanderer leaving sampled ground, tick 27, after the change](plant-loss_27-after.png) |
+| 30 | ![Wanderer leaving sampled ground, tick 30, before the change](plant-loss_30-before.png) | ![Wanderer leaving sampled ground, tick 30, after the change](plant-loss_30-after.png) |
+| 33 | ![Wanderer leaving sampled ground, tick 33, before the change](plant-loss_33-before.png) | ![Wanderer leaving sampled ground, tick 33, after the change](plant-loss_33-after.png) |
+| 36 | ![Wanderer leaving sampled ground, tick 36, before the change](plant-loss_36-before.png) | ![Wanderer leaving sampled ground, tick 36, after the change](plant-loss_36-after.png) |
+| 39 | ![Wanderer leaving sampled ground, tick 39, before the change](plant-loss_39-before.png) | ![Wanderer leaving sampled ground, tick 39, after the change](plant-loss_39-after.png) |
 
 **Standing 0.2 m up on a flat rock** over level terrain (the standing pose under
 the walk preview). Before, the steepest-floor tolerance of 0.216 m counted the
@@ -108,9 +108,9 @@ stand on the rock.
 
 | Tick | Before | After |
 |---|---|---|
-| 3 | ![](plant-rock_03-before.png) | ![](plant-rock_03-after.png) |
-| 15 | ![](plant-rock_15-before.png) | ![](plant-rock_15-after.png) |
-| 30 | ![](plant-rock_30-before.png) | ![](plant-rock_30-after.png) |
+| 3 | ![Wanderer standing on raised stone, tick 3, before the change](plant-rock_03-before.png) | ![Wanderer standing on raised stone, tick 3, after the change](plant-rock_03-after.png) |
+| 15 | ![Wanderer standing on raised stone, tick 15, before the change](plant-rock_15-before.png) | ![Wanderer standing on raised stone, tick 15, after the change](plant-rock_15-after.png) |
+| 30 | ![Wanderer standing on raised stone, tick 30, before the change](plant-rock_30-before.png) | ![Wanderer standing on raised stone, tick 30, after the change](plant-rock_30-after.png) |
 
 These stages are bare boxes and planes: they judge where the feet go, not the scene.
 
