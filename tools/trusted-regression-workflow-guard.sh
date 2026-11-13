@@ -26,7 +26,7 @@ if ! yq -o=json '.' "$workflow" | jq -e --arg installer "$installer" --arg selec
     and .permissions == {contents:"read"} and ."runs-on" == "ubuntu-latest"
     and ."timeout-minutes" == 90 and (.steps | length) == 8
     and (.steps[0]|keys) == ["name","uses","with"]
-    and .steps[0].uses == "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43"
+    and .steps[0].uses == "step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a"
     and .steps[0].with == {"egress-policy":"audit"}
     and (.steps[1]|keys) == ["name","uses","with"]
     and .steps[1].uses == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
