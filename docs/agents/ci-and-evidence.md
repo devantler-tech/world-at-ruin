@@ -398,40 +398,15 @@ the permanent blocking policy.
     it — so a private package harms no player today while blocking every release on it would. The
     job going red is the signal; the release still ships. **Make it blocking the moment the updater
     actually resolves against GHCR**, at which point an unreachable origin is a real defect (tracked as #141).
-  - **Homebrew cask** — CD renders `Casks/world-at-ruin.rb` and opens/updates ONE evergreen PR on
-    `devantler-tech/homebrew-tap`. It runs **after** `publish-release`, because the cask's `url`
-    points at the release asset and a draft release's asset URL 404s for `brew install`.
-    Before downloading the asset, the checkout-free job checks the existing tap token's REST and
-    GraphQL allowances and waits up to 3700 seconds for a known primary reset. Secondary limits
-    honor bounded backoff; unknown initial metadata warns and leaves publication's own checks in
-    charge. The 80-minute job includes this admission wait plus the existing 780-second delivery
-    deadline, whose clock starts after admission and before the asset download. Validate the
-    actual inline steps with `bash tools/test-cd-cask-api-budget.sh`.
-    **The job arms the PR's auto-merge itself** (squash, GraphQL off the node id — the `gh`
-    subcommand needs a `login` scope the tap token lacks), so the tap's required checks alone gate
-    the merge with no agent in the loop; nothing else would ever arm it (the org auto-merge
-    workflow classifies on allowlisted bot authors, and this PR is authored by the tap token). The
-    PR title is **re-derived from the branch's cask content every run** (`chore(cask): update
-    world-at-ruin to vX.Y.Z`) — the evergreen branch absorbs releases faster than PRs merge, and
-    the tap squash-merges on the title, so a creation-time title would ship lying changelog
-    entries. Arming failures fail the job loudly: a cask PR that silently never merges is how the
-    tap once fell six releases behind (#169).
-    **`auto_updates` is deliberately ABSENT**: it tells Homebrew "this app updates itself, do not
-    upgrade it", and there is no working in-client updater yet. `UpdateDecision` is pure decision
-    logic; `UpdateTrust.verify_and_decide()` authenticates a signing-key certificate with a
-    caller-supplied offline-root public key, authenticates the root-signed embedded revocation list,
-    refuses a listed certificate id, refuses an embedded list that a caller-supplied
-    independently fetched revocation head does not vouch for as current, then authenticates the
-    manifest with the remaining certified key before entering the decision core. No runtime caller
-    fetches or promotes an update, no production root or signing material is published, and nothing
-    fetches a revocation head — which the boundary treats as fail-closed, so no update can currently
-    be authorized at all. Declaring
-    `auto_updates` now would make `brew upgrade` skip the cask and strand players on the version
-    they installed. Add it only once the self-updater ships (#106). The `postflight_steps`
-    quarantine strip is **mandatory, not cosmetic** — the build is ad-hoc signed
-    (`codesign/codesign=1` with an empty identity), so Gatekeeper blocks it otherwise.
-    No `verified:` on the `url`: `brew audit --strict` rejects it when the download and homepage
-    domains match, which they do here.
+  - **Homebrew cask** — `devantler-tech/homebrew-tap` owns `Casks/world-at-ruin.rb`. Its hourly
+    `bump-casks.yaml` reads this repo's latest GitHub release through the cask's
+    `strategy :github_latest` livecheck and opens a `brew bump-cask-pr` PR (devantler-tech/homebrew-tap#2568).
+    GitHub's latest release never points at a draft or a prerelease, so the cask only moves once
+    `publish-release` has published the assets. CD no longer writes to the tap and needs no tap token.
+    **Keep `auto_updates` absent from the cask**: it tells Homebrew "this app updates itself, do not
+    upgrade it", and there is no working in-client updater yet (#106), so `brew upgrade` would strand
+    players on the version they installed. The cask's `postflight_steps` quarantine strip is
+    **mandatory**: the build is ad-hoc signed, so Gatekeeper blocks it otherwise.
   - The version is therefore **derived, never maintained**. The in-tree constants are dev values;
     only a released build carries a real version.
   - **`CI - Required Checks` is the repo's single repository-authored required status context.**
