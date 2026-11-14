@@ -75,10 +75,10 @@ jobs:
           set -euo pipefail
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
           [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || exit 1
-          [[ "$(grep -c '^          image: ghcr.io/devantler-tech/world-at-ruin/zone:unpublished$' deploy/deployment.yaml)" == 1 ]] || exit 1
+          [[ "$(grep -c '^          image: ghcr.io/devantler-tech/world-at-ruin/zone:unpublished$' deploy/base/deployment.yaml)" == 1 ]] || exit 1
           sed "s|ghcr.io/devantler-tech/world-at-ruin/zone:unpublished|${IMAGE}@${DIGEST}|" \
-            deploy/deployment.yaml > deploy/deployment.yaml.tmp
-          mv deploy/deployment.yaml.tmp deploy/deployment.yaml
+            deploy/base/deployment.yaml > deploy/base/deployment.yaml.tmp
+          mv deploy/base/deployment.yaml.tmp deploy/base/deployment.yaml
           flux push artifact "oci://${ARTIFACT}:staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --path ./deploy \
             --source "$SOURCE" --revision "${RELEASE_TAG}@sha1:${SOURCE_SHA}" \
             --reproducible --output json > manifests.json

@@ -1,0 +1,21 @@
+# Dev zone (#1700), reconciled at ./dev into its own namespace. It holds no prod
+# secret path or disruption budget; its own admission secret, TLS material and
+# player/world state arrive with #1700. Dev runs one replica with the documented
+# experimental movement flag on.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+replicas:
+  - name: world-at-ruin-zone
+    count: 1
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: world-at-ruin-zone
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: -movement-intents

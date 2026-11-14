@@ -39,11 +39,10 @@ func TestZoneManifestPublication(t *testing.T) {
 			if err := os.MkdirAll(bin, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			deployment, err := os.ReadFile(filepath.Join(publishedBundlePath(t), "deployment.yaml"))
-			if err != nil {
+			// The whole tree is the artifact: prod and dev overlays share base.
+			if err := os.CopyFS(filepath.Join(dir, "deploy"), os.DirFS(publishedBundlePath(t))); err != nil {
 				t.Fatal(err)
 			}
-			writeFixture(t, filepath.Join(dir, "deploy", "deployment.yaml"), string(deployment))
 			publicationClient(t, bin, "flux", publicationFluxStub)
 			publicationClient(t, bin, "cosign", publicationCosignStub)
 
@@ -141,9 +140,13 @@ func TestZoneManifestPublication(t *testing.T) {
 			if !strings.Contains(trace, "staged:oci://ghcr.io/devantler-tech/world-at-ruin/zone-manifests:staging-123456-2\n") {
 				t.Fatalf("artifact was not staged outside stable version selection:\n%s", trace)
 			}
-			pinned, err := os.ReadFile(filepath.Join(dir, "deploy", "deployment.yaml"))
-			if err != nil || !strings.Contains(string(pinned), "ghcr.io/devantler-tech/world-at-ruin/zone@"+publicationImageDigest) {
-				t.Fatalf("published declaration lost its tested image digest: %v", err)
+			// Every entry point the platform reconciles must carry the pin.
+			for _, entry := range publishedEntryPoints {
+				pinned, err := renderDirectory(t.Context(), filepath.Join(dir, "deploy", entry))
+				if err != nil || strings.Contains(string(pinned), "zone:unpublished") ||
+					!strings.Contains(string(pinned), "image: ghcr.io/devantler-tech/world-at-ruin/zone@"+publicationImageDigest+"\n") {
+					t.Fatalf("published %q declaration lost its tested image digest: %v", entry, err)
+				}
 			}
 		})
 	}

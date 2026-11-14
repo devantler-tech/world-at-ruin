@@ -35,6 +35,16 @@ connections on an hourly certificate-refresh timer. Explicit `-duration` still
 bounds command-line exercises. Token minting remains short-lived, and normal
 deployment restarts never affect player saves.
 
+The artifact is the whole `deploy/` tree, laid out as Kustomize overlays.
+`deploy/base` holds the Deployment and Service that prod and dev share; Server
+CD pins the image digest in `deploy/base/deployment.yaml`. `deploy/prod` adds
+the disruption budget and the admission secret seeded into and read back from
+prod's own vault path. The platform reconciles prod at the artifact root, so
+`deploy/kustomization.yaml` renders exactly `deploy/prod`. `deploy/dev` is the
+dev zone (#1700): one replica with the experimental `-movement-intents` flag
+on, and no prod secret path, disruption budget, route, certificate or hostname.
+Its own admission secret, TLS material and state arrive with #1700.
+
 The host must install a namespace-wide default-deny policy for both ingress and
 egress before enabling the trial. Standard Kubernetes NetworkPolicy resources
 are host-owned and must not be included in the tenant bundle; the tenant's
@@ -51,7 +61,8 @@ the authenticated stream probe separately proves advancing simulation state.
 
 Validate the complete rendered bundle, including nested Kustomizations, with
 `go -C server run ../tools/deploy-manifests/main.go ../deploy` (requires Go and
-`kubectl`). CI checks the shipped bundle and exercises injected nested policies,
+`kubectl`); pass `../deploy/dev` for the dev overlay. CI checks the root, prod
+and dev renders, and exercises injected nested policies,
 List expansion, and malformed or empty output through the same validator.
 This checks the host-owned network boundary and both TLS-only health commands
 with their deadline ordering; the hosting platform separately
