@@ -1,0 +1,10 @@
+# Prod-only: the disruption budget and the admission secret seeded into and read
+# back from prod's own vault path.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - pod-disruption-budget.yaml
+  - password.yaml
+  - push-secret.yaml
+  - external-secret.yaml

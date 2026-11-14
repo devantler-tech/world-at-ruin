@@ -1,9 +1,6 @@
+# Prod entry: the platform reconciles the published artifact at its root.
+# Dev is reconciled from ./dev; both overlays share ./base.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - deployment.yaml
-  - service.yaml
-  - pod-disruption-budget.yaml
-  - password.yaml
-  - push-secret.yaml
-  - external-secret.yaml
+  - prod

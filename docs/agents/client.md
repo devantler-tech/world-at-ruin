@@ -437,7 +437,8 @@
   and its flag retirement (#1177), session-end recovery,
   platform deployment of the default-off Nakama RPC plugin and broader persistence remain later children of the server-foundation
   epic (#4);
-  `deploy/` contains the opt-in private zone trial's tenant manifests. The host
+  `deploy/` contains the opt-in private zone trial's tenant manifests as `base/`, `prod/` and
+  `dev/` Kustomize overlays; the root renders exactly `prod/` (see `docs/zone-container.md`). The host
   owns namespace-wide default-deny ingress and egress; standard Kubernetes
   NetworkPolicy resources must stay out of the tenant artifact. Run
   `go -C server test -count=1 ../tools/deploy-manifests/main.go ../tools/deploy-manifests/main_test.go`
