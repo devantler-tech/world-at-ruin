@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,7 +91,7 @@ func TestBrokenRenderIsRejected(t *testing.T) {
 
 // TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment prevents unchecked publication.
 func TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment(t *testing.T) {
-	rendered := renderPublishedBundle(t)
+	rendered := renderPublishedBundle(t, "")
 	if err := validateBundle(strings.NewReader(string(rendered)+"\n---\n"+string(rendered)), true); err == nil {
 		t.Fatal("published checker accepted duplicate zone Deployments")
 	}
@@ -113,14 +115,110 @@ func TestPublishedZoneCannotOmitRenameOrDuplicateItsDeployment(t *testing.T) {
 // TestPublishedDeploymentUsesHostOwnedNetworkIsolation checks this repository's
 // actual publishable bundle rather than a copied deployment fixture.
 func TestPublishedDeploymentUsesHostOwnedNetworkIsolation(t *testing.T) {
-	deployment := publishedBundlePath(t)
-	assertError(t, validateDirectory(t.Context(), deployment), "")
+	for _, entry := range publishedEntryPoints {
+		deployment := filepath.Join(publishedBundlePath(t), entry)
+		assertError(t, validateDirectory(t.Context(), deployment), "")
+	}
+}
+
+// The platform reconciles prod at the artifact root, so the root must render
+// exactly what the prod overlay renders.
+func TestPublishedRootIsTheProdOverlay(t *testing.T) {
+	if !bytes.Equal(renderPublishedBundle(t, ""), renderPublishedBundle(t, "prod")) {
+		t.Fatal("artifact root no longer renders exactly the prod overlay")
+	}
+}
+
+// TestDevOverlayHoldsNoProdIdentity keeps dev (#1700) to one replica with its
+// documented experimental flag, and without a prod secret path, disruption
+// budget, route, certificate, DNS record or hostname.
+func TestDevOverlayHoldsNoProdIdentity(t *testing.T) {
+	prodPaths := map[string]bool{}
+	for _, document := range decodeRendered(t, renderPublishedBundle(t, "prod")) {
+		collectSecretPaths(document, prodPaths)
+	}
+	if len(prodPaths) == 0 {
+		t.Fatal("prod render names no secret path to compare dev against")
+	}
+	dev := renderPublishedBundle(t, "dev")
+	for path := range prodPaths {
+		if strings.Contains(string(dev), path) {
+			t.Fatalf("dev references prod secret path %q", path)
+		}
+	}
+	if regexp.MustCompile(`(^|[^.a-z0-9-])zone-trial\.devantler\.tech`).Match(dev) {
+		t.Fatal("dev references the prod hostname")
+	}
+	prodOnly := []string{
+		"PodDisruptionBudget", "Ingress", "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute",
+		"Certificate", "Issuer", "ClusterIssuer", "DNSEndpoint",
+	}
+	for entry, wantFlag := range map[string]bool{"dev": true, "prod": false} {
+		zones := 0
+		for _, document := range decodeRendered(t, renderPublishedBundle(t, entry)) {
+			kind, _ := document["kind"].(string)
+			if entry == "dev" && slices.Contains(prodOnly, kind) {
+				t.Fatalf("dev renders prod-only %s", kind)
+			}
+			if kind != "Deployment" {
+				continue
+			}
+			zones++
+			spec := document["spec"].(map[string]any)
+			if entry == "dev" && spec["replicas"] != 1 {
+				t.Fatalf("dev zone runs %v replicas, want 1", spec["replicas"])
+			}
+			pod := spec["template"].(map[string]any)["spec"].(map[string]any)
+			for _, container := range pod["containers"].([]any) {
+				zone := container.(map[string]any)
+				if zone["name"] != "world-at-ruin" {
+					continue
+				}
+				args, _ := zone["args"].([]any)
+				if slices.Contains(args, any("-movement-intents")) != wantFlag {
+					t.Fatalf("%s experimental movement flag = %t, want %t", entry, !wantFlag, wantFlag)
+				}
+			}
+		}
+		if zones != 1 {
+			t.Fatalf("%s renders %d Deployments, want 1", entry, zones)
+		}
+	}
+}
+
+// collectSecretPaths records every external secret store path a rendered object names.
+func collectSecretPaths(node any, paths map[string]bool) {
+	switch value := node.(type) {
+	case map[string]any:
+		if ref, ok := value["remoteRef"].(map[string]any); ok {
+			for _, field := range []string{"key", "remoteKey"} {
+				if path, ok := ref[field].(string); ok && path != "" {
+					paths[path] = true
+				}
+			}
+		}
+		for _, child := range value {
+			collectSecretPaths(child, paths)
+		}
+	case []any:
+		for _, child := range value {
+			collectSecretPaths(child, paths)
+		}
+	}
 }
 
 // Certificate refresh belongs to new TLS handshakes, not a timer that regularly
-// terminates a healthy Deployment. Check the actual publishable render.
+// terminates a healthy Deployment. Check every actual publishable render.
 func TestPublishedZoneRunsUntilSignalled(t *testing.T) {
-	decoder := yaml.NewDecoder(bytes.NewReader(renderPublishedBundle(t)))
+	for _, entry := range publishedEntryPoints {
+		t.Run("deploy/"+entry, func(t *testing.T) { assertZoneRunsUntilSignalled(t, renderPublishedBundle(t, entry)) })
+	}
+}
+
+// assertZoneRunsUntilSignalled requires listener arguments without a recycle timer.
+func assertZoneRunsUntilSignalled(t *testing.T, rendered []byte) {
+	t.Helper()
+	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
 	found := false
 	for {
 		var resource struct {
@@ -167,20 +265,7 @@ func TestPublishedZoneRunsUntilSignalled(t *testing.T) {
 // Render the actual bundle, then mutate the rendered probe contract. This
 // catches drift after Kustomize transformations rather than matching source.
 func TestRenderedZoneHealthProbesRejectUnsafeDrift(t *testing.T) {
-	rendered := renderPublishedBundle(t)
-	var documents []map[string]any
-	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
-	for {
-		var document map[string]any
-		err := decoder.Decode(&document)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		documents = append(documents, document)
-	}
+	documents := decodeRendered(t, renderPublishedBundle(t, ""))
 	var container map[string]any
 	for _, document := range documents {
 		if document["kind"] == "Deployment" {
@@ -287,13 +372,35 @@ func publishedBundlePath(t *testing.T) string {
 	return filepath.Join(filepath.Dir(source), "..", "..", "deploy")
 }
 
-// renderPublishedBundle exercises real Kustomize transformations for each caller.
-func renderPublishedBundle(t *testing.T) []byte {
+// publishedEntryPoints are the Kustomizations the platform reconciles from the
+// one artifact: the root (prod), the prod overlay itself and the dev overlay.
+var publishedEntryPoints = []string{"", "prod", "dev"}
+
+// renderPublishedBundle exercises real Kustomize transformations of one entry point.
+func renderPublishedBundle(t *testing.T, entry string) []byte {
 	t.Helper()
-	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", publishedBundlePath(t))
+	command := exec.CommandContext(t.Context(), "kubectl", "kustomize", filepath.Join(publishedBundlePath(t), entry))
 	rendered, err := command.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return rendered
+}
+
+// decodeRendered splits a render into generic documents and fails on malformed output.
+func decodeRendered(t *testing.T, rendered []byte) []map[string]any {
+	t.Helper()
+	var documents []map[string]any
+	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
+	for {
+		var document map[string]any
+		err := decoder.Decode(&document)
+		if errors.Is(err, io.EOF) {
+			return documents
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		documents = append(documents, document)
+	}
 }
