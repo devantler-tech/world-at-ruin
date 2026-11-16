@@ -1038,7 +1038,7 @@ jobs:
       ]
     if: ${{ always() }}
     steps:
-      - uses: devantler-tech/.github/actions/aggregate-job-checks@d2eeb91d37fcc8a13423c1bdfaf5079b30426625 # v21.1.5
+      - uses: devantler-tech/.github/actions/aggregate-job-checks@a3f8fa3a54ef440dc4c5783f65c108413de9205d # v21.7.0
         with:
           job-results: >-
             ${{ needs.publish-macos.result }}
