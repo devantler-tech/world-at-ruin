@@ -11,7 +11,7 @@ require (
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/heroiclabs/nakama-common v1.49.0
 	github.com/heroiclabs/nakama/v3 v3.42.0
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/spiffe/go-spiffe/v2 v2.9.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.50.0
