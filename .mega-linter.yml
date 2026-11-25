@@ -118,8 +118,10 @@ EXCLUDED_DIRECTORIES:
 # links — `.../Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip`, `ghcr.io/token?scope=
 # repository:${REPO_PATH}:pull`, and the OIDC audience token.actions.githubusercontent.com
 # (an identifier, not a fetchable page). All 13 "broken links" it reports are of that
-# shape. Point it at documentation, which is what it is good at.
-SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (\.github/workflows/.*)
+# shape. Point it at documentation, which is what it is good at. The GitHub token broker's
+# trust policies in .github/chainguard name the same OIDC issuer as an identifier, so they
+# are skipped for the same reason.
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (\.github/(workflows|chainguard)/.*)
 
 # lychee's default 20-second timeout is tight for third-party pages fetched from a CI runner.
 # The art-direction document cites commercial game sites whose marketing pages are heavy, and

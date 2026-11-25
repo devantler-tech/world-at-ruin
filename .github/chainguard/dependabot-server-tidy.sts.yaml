@@ -3,7 +3,9 @@
 # (devantler-tech/monorepo ADR 0020). Only that workflow, on this repository's main branch,
 # may exchange its Actions OIDC token. It grants contents write, to push the tidy commit onto Dependabot's branch on this repository alone.
 issuer: https://token.actions.githubusercontent.com
-subject: repo:devantler-tech/world-at-ruin:ref:refs/heads/main
+# This repository issues the immutable OIDC subject form (use_immutable_subject), with the owner and
+# repository IDs, so the subject names both.
+subject: repo:devantler-tech@178524219/world-at-ruin@1303188705:ref:refs/heads/main
 claim_pattern:
   repository_owner_id: "178524219"
   job_workflow_ref: devantler-tech/world-at-ruin/\.github/workflows/dependabot-server-tidy\.yaml@refs/heads/main
