@@ -952,7 +952,7 @@ jobs:
         run: |
           set -o pipefail
           bash tools/trusted-regression-phase.sh "editor import" godot --headless --editor --quit --path client 2>&1 | tee import.log
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
       - name: Offline update publisher interoperates with the real client
@@ -1057,7 +1057,7 @@ jobs:
           persist-credentials: false
       - name: Initialize the scene worker's private save seam
         run: printf 'XDG_DATA_HOME=%s/war-client-scenes-%s\n' "$RUNNER_TEMP" "$SCENE_SHARD" >> "$GITHUB_ENV"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
           cache: false
@@ -1093,7 +1093,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
           cache: false
@@ -1407,7 +1407,7 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
           cache: false
@@ -1494,7 +1494,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           # Each matrix leg installs the exact toolchain its module declares,
           # so standard-library findings describe the binary that module ships.
@@ -1699,7 +1699,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: |
@@ -1734,7 +1734,7 @@ jobs:
           # Full history: the shipped-save-schema guard reads the base commit
           # (BASE_SHA) with git show, and a depth-1 checkout cannot reach it.
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
           # Real dependencies exist now (the Agones SDK and its gRPC stack),
@@ -2050,7 +2050,7 @@ jobs:
         with:
           name: source-base-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/source-base
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: server/go.mod
           cache: false
@@ -2099,7 +2099,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version-file: server/go.mod
           cache: false
@@ -2685,7 +2685,7 @@ jobs:
         id: source-base-checkout
         if: always() && !cancelled() && matrix.group == 'world'
         timeout-minutes: 1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         timeout-minutes: 1
         with:
           go-version-file: server/go.mod
