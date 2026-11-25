@@ -4,7 +4,7 @@
 
 # Brief rate limits can outlast the default three retries even with host pacing.
 # Allow five retries (six attempts total), retaining lychee's exponential backoff.
-# The MegaLinter adapter owns this budget for 429, 503 and 504. Native 0.24.2
+# The MegaLinter adapter owns this budget for timeouts, 429, 503 and 504. Native 0.24.2
 # rejects 503/504 without retrying; nested native retries are disabled so mixed
 # statuses share six attempts. Persistent errors and dead links still fail.
 # tools/lychee-retry/lychee_test.go exercises this policy with the CI binary.

@@ -191,8 +191,9 @@ the permanent blocking policy.
     runs the real HTTP controls against that adapter, its own lychee binary and the production
     config. Native 0.24.2 does not retry rejected 503/504 responses. The adapter uses native
     extraction, refuses extraction warnings, deduplicates citations and owns one bounded budget
-    across 429/503/504, with no nested native retries. Temporary errors recover; persistent errors
-    exhaust six attempts; healthy pages and 404s receive one request. It rejects malformed,
+    across request timeouts and HTTP 429/503/504, with no nested native retries. Temporary
+    failures recover, persistent failures exhaust six attempts, and healthy pages and 404s
+    receive one request. It rejects malformed,
     incomplete or inconsistent reports. Local validation: run the two Go tests named in
     `.mega-linter.yml`, build the adapter, and set `LYCHEE_VALIDATOR` to that binary for the HTTP
     tests. Go and lychee are required; requests use a local fixture. Never accept an error status
