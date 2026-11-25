@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,6 +73,59 @@ func forEachServerError(t *testing.T, test func(*testing.T, int)) {
 func TestRateLimitThenServerErrorSharesBudget(t *testing.T) {
 	t.Parallel()
 	checkLink(t, "mixed-status.html", 429, 2, 503, []int{429, 429, 503, 503, 503, 503}, false)
+}
+
+func TestTimeoutRetries(t *testing.T) {
+	t.Parallel()
+	const timeout = 0 // The fixture waits for the client to give up without sending a response.
+	for _, tc := range []struct {
+		name     string
+		outcomes []int
+		failure  string
+	}{
+		{"recovered timeout", []int{timeout, http.StatusOK}, ""},
+		{"timeout then dead link", []int{timeout, http.StatusNotFound}, "[404]"},
+		{"server error then timeout", []int{http.StatusServiceUnavailable, timeout, http.StatusOK}, ""},
+		{"shared budget exhausted", []int{timeout, 429, timeout, 503, timeout, timeout}, "[timeout]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := int(requests.Add(1))
+				if attempt > len(tc.outcomes) {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				status := tc.outcomes[attempt-1]
+				if status == timeout {
+					<-r.Context().Done()
+					return
+				}
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+			target := server.URL + "/page"
+			input := filepath.Join(t.TempDir(), "links.md")
+			if err := os.WriteFile(input, []byte("[Documentation]("+target+")\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := lycheeCommand(t, ctx, "--no-progress", "--timeout", "1", "--", input)
+			output, err := cmd.CombinedOutput()
+			if got := int(requests.Load()); got != len(tc.outcomes) {
+				t.Errorf("observed %d requests, want %d\n%s", got, len(tc.outcomes), output)
+			}
+			if tc.failure == "" {
+				if err != nil || !strings.Contains(string(output), "Errors............0") {
+					t.Fatalf("recovered link did not pass: %v\n%s", err, output)
+				}
+			} else if err == nil || !strings.Contains(string(output), tc.failure+" "+target) {
+				t.Fatalf("validator did not report %s for the link: %v\n%s", tc.failure, err, output)
+			}
+		})
+	}
 }
 
 func TestHealthyLinkPassesWithoutRetry(t *testing.T) {

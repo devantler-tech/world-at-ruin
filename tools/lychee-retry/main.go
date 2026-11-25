@@ -1,4 +1,4 @@
-// MegaLinter's lychee 0.24.2 retries 429 but rejects 503/504 without retrying.
+// MegaLinter's lychee 0.24.2 does not retry every transient failure.
 // Keep its extraction and exclusions; own one bounded budget per affected URL.
 package main
 
@@ -22,6 +22,7 @@ type link struct {
 		Code int    `json:"code"`
 		Text string `json:"text"`
 	} `json:"status"`
+	timedOut bool
 }
 
 type report struct {
@@ -84,98 +85,104 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Native retries are disabled in every pass: transitions between 429 and
-	// 503/504 must share one budget, including duplicate citations across files.
+	// Native retries are disabled in every pass so timeout and HTTP failures
+	// share one budget, including duplicate citations across files.
+	failures := result.failedLinks()
 	recovered := make(map[string]bool)
 	processed := make(map[string]link)
-	for source, links := range result.ErrorMap {
-		for i := range links {
-			entry := &links[i]
-			if previous, ok := processed[entry.URL]; ok {
-				entry.Status = previous.Status
-				continue
-			}
-			if !retryable(entry.Status.Code) {
-				continue
-			}
-			input, err := retryInput(entry.URL)
-			if err != nil {
-				return err
-			}
-			for attempt := 0; attempt < budget; attempt++ {
-				time.Sleep(time.Second << attempt)
-				next, err := check(options, []string{input})
-				if err != nil {
-					os.Remove(input)
-					return err
-				}
-				if *next.Total != 1 || *next.Unique != 1 || *next.Unknown != 0 || *next.Unsupported != 0 || *next.Timeouts != 0 || *next.Excludes != 0 {
-					os.Remove(input)
-					return fmt.Errorf("incomplete retry observation for %s", entry.URL)
-				}
-				if *next.Successful == 1 && *next.Errors == 0 {
-					for _, successes := range next.SuccessMap {
-						if len(successes) != 1 || successes[0].URL != entry.URL {
-							os.Remove(input)
-							return fmt.Errorf("retry success did not name the requested URL")
-						}
-					}
-					recovered[entry.URL] = true
-					break
-				}
-				failures := 0
-				for _, values := range next.ErrorMap {
-					for _, value := range values {
-						if value.URL != entry.URL {
-							os.Remove(input)
-							return fmt.Errorf("retry reported an unexpected URL: %s", value.URL)
-						}
-						entry.Status = value.Status
-						failures++
-					}
-				}
-				if *next.Errors != 1 || failures != 1 {
-					os.Remove(input)
-					return fmt.Errorf("incomplete retry failure for %s", entry.URL)
-				}
-				if !retryable(entry.Status.Code) {
-					break
-				}
-			}
-			os.Remove(input)
-			processed[entry.URL] = *entry
+	for i, entry := range failures {
+		if previous, ok := processed[entry.URL]; ok {
+			failures[i] = previous
+			continue
 		}
-		result.ErrorMap[source] = links
+		if !entry.retryable() || budget == 0 {
+			continue
+		}
+		latest, passed, err := retryLink(options, entry, budget)
+		if err != nil {
+			return err
+		}
+		failures[i] = latest
+		processed[entry.URL] = latest
+		if passed {
+			recovered[entry.URL] = true
+		}
 	}
-	fmt.Printf("Checked %d unique links; recovered %d temporary HTTP errors\n", *result.Unique, len(recovered))
-	remaining := *result.Errors - len(recovered)
-	if remaining < 0 {
-		return fmt.Errorf("inconsistent error accounting")
-	}
-	fmt.Printf("Errors............%d\n", remaining+*result.Timeouts+*result.Unknown)
+	fmt.Printf("Checked %d unique links; recovered %d temporary link failures\n", *result.Unique, len(recovered))
+	remaining := len(failures) - len(recovered) + *result.Unknown
+	fmt.Printf("Errors............%d\n", remaining)
 	fmt.Printf("Unsupported.......%d\n", *result.Unsupported)
-	if remaining != 0 || *result.Timeouts != 0 || *result.Unknown != 0 {
+	if remaining != 0 {
 		fmt.Printf("Documentation inputs: %s\n", strings.Join(inputs, ", "))
 	}
-	for _, links := range result.ErrorMap {
-		for _, entry := range links {
-			if !recovered[entry.URL] {
-				fmt.Printf("[%d] %s | %s\n", entry.Status.Code, entry.URL, entry.Status.Text)
-			}
+	for _, entry := range failures {
+		if recovered[entry.URL] {
+			continue
 		}
-	}
-	for _, links := range result.TimeoutMap {
-		for _, entry := range links {
+		if entry.timedOut {
 			fmt.Printf("[timeout] %s | %s\n", entry.URL, entry.Status.Text)
+		} else {
+			fmt.Printf("[%d] %s | %s\n", entry.Status.Code, entry.URL, entry.Status.Text)
 		}
 	}
 	if *result.Unknown != 0 {
 		fmt.Printf("Unknown...........%d\n", *result.Unknown)
 	}
-	if remaining != 0 || *result.Unknown != 0 || *result.Timeouts != 0 {
+	if remaining != 0 {
 		return fmt.Errorf("documentation links failed validation")
 	}
 	return nil
+}
+
+func (r report) failedLinks() []link {
+	failures := make([]link, 0, *r.Errors+*r.Timeouts)
+	for _, links := range r.ErrorMap {
+		failures = append(failures, links...)
+	}
+	for _, links := range r.TimeoutMap {
+		for _, entry := range links {
+			entry.timedOut = true
+			failures = append(failures, entry)
+		}
+	}
+	return failures
+}
+
+func retryLink(options []string, entry link, budget int) (link, bool, error) {
+	input, err := retryInput(entry.URL)
+	if err != nil {
+		return entry, false, err
+	}
+	defer os.Remove(input)
+	for attempt := 0; attempt < budget; attempt++ {
+		time.Sleep(time.Second << attempt)
+		next, err := check(options, []string{input})
+		if err != nil {
+			return entry, false, err
+		}
+		if *next.Total != 1 || *next.Unique != 1 || *next.Unknown != 0 || *next.Unsupported != 0 || *next.Excludes != 0 {
+			return entry, false, fmt.Errorf("incomplete retry observation for %s", entry.URL)
+		}
+		if *next.Successful == 1 {
+			for _, successes := range next.SuccessMap {
+				for _, success := range successes {
+					if success.URL != entry.URL {
+						return entry, false, fmt.Errorf("retry success did not name the requested URL")
+					}
+				}
+			}
+			return entry, true, nil
+		}
+		failures := next.failedLinks()
+		if len(failures) != 1 || failures[0].URL != entry.URL {
+			return entry, false, fmt.Errorf("incomplete retry failure for %s", entry.URL)
+		}
+		entry = failures[0]
+		if !entry.retryable() {
+			break
+		}
+	}
+	return entry, false, nil
 }
 
 // Native extraction sees every original input and applies the production
@@ -216,8 +223,11 @@ func extract(options, inputs []string) (string, error) {
 	return file.Name(), nil
 }
 
-func retryable(status int) bool {
-	switch status {
+func (entry link) retryable() bool {
+	if entry.timedOut {
+		return true
+	}
+	switch entry.Status.Code {
 	case 429, 503, 504:
 		return true
 	default:
