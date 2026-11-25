@@ -183,12 +183,13 @@ if "$script" prepare devantler-tech/world-at-ruin "$work/prepared-bad2" >/dev/nu
 if "$script" commit-prepared devantler-tech/world-at-ruin "$work/missing" >/dev/null 2>&1; then fail "commit-prepared accepted a missing preparation"; fi
 
 # 7. The workflow runs on a schedule from the default branch with a read-only token, and only
-# the commit step, after go has run, sees the App token.
+# the commit step, after go has run, sees the App token, which comes from the GitHub token broker
+# under .github/chainguard/dependabot-server-tidy.sts.yaml (contents write only, from either botantler App).
 cd "$root"
 command -v yq >/dev/null || fail "yq is required"
 [ "$(yq '.permissions | length' "$workflow")" = 0 ] || fail "workflow-level permissions must be empty"
 [ "$(yq '.on | keys | join(",")' "$workflow")" = schedule,workflow_dispatch ] || fail "the workflow must only run on a schedule or by hand"
-[ "$(yq -o=json -I=0 '.jobs.tidy.permissions' "$workflow")" = '{"contents":"read","pull-requests":"read"}' ] || fail "the job's GITHUB_TOKEN must only read"
+[ "$(yq -o=json -I=0 '.jobs.tidy.permissions' "$workflow")" = '{"contents":"read","pull-requests":"read","id-token":"write"}' ] || fail "the job's GITHUB_TOKEN must only read; id-token only proves the job to the GitHub token broker"
 [ "$(yq '.jobs | keys | join(",")' "$workflow")" = tidy ] || fail "expected the one tidy job"
 checkouts='[.jobs.tidy.steps[] | select(.uses == "actions/checkout@*")]'
 [ "$(yq "$checkouts | length" "$workflow")" = 1 ] || fail "expected one checkout"
