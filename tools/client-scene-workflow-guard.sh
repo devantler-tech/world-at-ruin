@@ -8,7 +8,7 @@ if ! yq -o=json . "${1:-$root/.github/workflows/ci.yaml}" | jq -e '
     .=={uses:"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
       with:{"fetch-depth":0,"persist-credentials":false}};
   def setup:
-    .=={uses:"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    .=={uses:"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
       with:{"go-version-file":"server/go.mod",cache:false}};
   def build:
     .run=="GOTOOLCHAIN=local GOWORK=off go build -o \"$RUNNER_TEMP/client-scene-plan\" tools/client-scene-plan/main.go";
