@@ -11,4 +11,3 @@ claim_pattern:
   job_workflow_ref: devantler-tech/world-at-ruin/\.github/workflows/dependabot-server-tidy\.yaml@refs/heads/main
 permissions:
   contents: write
-app: botantler-2
