@@ -38,7 +38,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: devantler-tech/.github/.github/workflows/create-release.yaml@0e02148c251bcd65cfddc1cc7bec49ccce2eea42 # v22.7.0
+    uses: devantler-tech/.github/.github/workflows/create-release.yaml@61d8f70f25d7d5deb8bd914136b329b5a59ff43b # v22.7.4
     with:
       # Skip semantic-release's success/fail hooks, which comment on referenced
       # issues and PRs. A bare `fix #N` meant for another repository otherwise
